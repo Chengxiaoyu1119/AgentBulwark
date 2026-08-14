@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...data import get_attack_surfaces, get_policies, get_scenarios
-from ...datasets import build_attack_case_dataset
 from ...paths import SANDBOX_REPORTS_DIR
-from ...supervisor import decide
+from ...storage.data import get_attack_surfaces, get_policies, get_scenarios
+from ..evaluations.datasets import build_attack_case_dataset
+from ..governance.supervisor import decide
 from .surface_pack_html import render_briefing_sheet_index_html, render_surface_briefing_sheet_html
 
 REPORT_ROOT = SANDBOX_REPORTS_DIR

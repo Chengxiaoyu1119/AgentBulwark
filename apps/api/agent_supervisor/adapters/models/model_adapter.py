@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable
 
-from ...model_runtime_config import (
+from .model_runtime_config import (
     effective_provider_priority,
     runtime_model_override,
     runtime_provider_priority,

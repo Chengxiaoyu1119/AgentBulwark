@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...assessment import build_attack_effectiveness, build_requirement_alignment
-from ...benign_workflows import evaluate_benign_workflows
-from ...calibration import build_anomaly_calibration
-from ...data import get_attack_surfaces, get_scenarios
-from ...openclaw_adapter import build_openclaw_plugin_package_summary
+from ...adapters.integrations.openclaw_adapter import build_openclaw_plugin_package_summary
 from ...paths import REPO_ROOT, SANDBOX_REPORTS_DIR
+from ...storage.data import get_attack_surfaces, get_scenarios
+from ..evaluations.assessment import build_attack_effectiveness, build_requirement_alignment
+from ..evaluations.benign_workflows import evaluate_benign_workflows
+from ..evaluations.calibration import build_anomaly_calibration
 from .briefing_export import load_briefing_sheet_export_report
 from .surface_pack import build_surface_evidence_index
 

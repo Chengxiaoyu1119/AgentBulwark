@@ -6,9 +6,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from apps.api.agent_supervisor import data as policy_data
-from apps.api.agent_supervisor import memory_governance
-from apps.api.agent_supervisor import openclaw_plugin_package as openclaw_pkg
 from apps.api.agent_supervisor.adapters.integrations import openclaw_plugin_package as openclaw_impl
 from apps.api.agent_supervisor.adapters.integrations.agent_integrations import build_agent_integration_bundle
 from apps.api.agent_supervisor.domains.evaluations.assessment import _expected_decisions
@@ -32,12 +29,14 @@ from apps.api.agent_supervisor.domains.reports.readiness_checks import (
     _submission_materials_check,
     _supervisor_check,
 )
+from apps.api.agent_supervisor.domains.runtime import memory_governance
+from apps.api.agent_supervisor.storage import data as policy_data
 from apps.api.agent_supervisor.storage.data import DEFAULT_POLICY_SETTINGS
 
 
 class SupervisorPolicyBranchTest(unittest.TestCase):
     def _decide(self, tool_call: dict, *, prompt: str = "", context_sources: list[str] | None = None):
-        with patch("apps.api.agent_supervisor.supervisor.is_policy_enabled", return_value=True):
+        with patch("apps.api.agent_supervisor.domains.governance.supervisor.is_policy_enabled", return_value=True):
             return decide(tool_call, guard_enabled=True, prompt=prompt, context_sources=context_sources or [])
 
     def test_default_allow_keeps_low_risk_path_auditable(self):
@@ -729,11 +728,11 @@ class OpenClawValidationTest(unittest.TestCase):
     def test_runtime_validation_records_missing_cli_as_external_gap(self):
         with tempfile.TemporaryDirectory() as tmp:
             with (
-                patch.object(openclaw_pkg.shutil, "which", return_value=None),
-                patch.object(openclaw_pkg, "_run_command_check", side_effect=self._passed_check),
-                patch.object(openclaw_pkg, "_run_plugin_contract_check", side_effect=self._passed_contract),
+                patch.object(openclaw_impl.shutil, "which", return_value=None),
+                patch.object(openclaw_impl, "_run_command_check", side_effect=self._passed_check),
+                patch.object(openclaw_impl, "_run_plugin_contract_check", side_effect=self._passed_contract),
             ):
-                validation = openclaw_pkg.validate_openclaw_plugin_package(output_root=tmp, inspect_runtime=True)
+                validation = openclaw_impl.validate_openclaw_plugin_package(output_root=tmp, inspect_runtime=True)
 
         self.assertEqual(validation["overall_status"], "contract-e2e-validated")
         self.assertTrue(validation["contract_e2e_passed"])
@@ -744,7 +743,7 @@ class OpenClawValidationTest(unittest.TestCase):
         self.assertTrue(validation["remaining_gap"])
 
     def test_plugin_defaults_to_authenticated_blind_evaluation(self):
-        files = openclaw_pkg.build_openclaw_plugin_package_files()
+        files = openclaw_impl.build_openclaw_plugin_package_files()
         manifest = json.loads(files["openclaw.plugin.json"])
         runtime = files["dist/index.js"]
         properties = manifest["configSchema"]["properties"]
@@ -771,7 +770,7 @@ class OpenClawValidationTest(unittest.TestCase):
                 result["stdout"] = json.dumps(
                     {
                         "plugin": {
-                            "id": openclaw_pkg.OPENCLAW_PLUGIN_ID,
+                            "id": openclaw_impl.OPENCLAW_PLUGIN_ID,
                             "status": "loaded",
                             "enabled": True,
                         },
@@ -782,11 +781,11 @@ class OpenClawValidationTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with (
-                patch.object(openclaw_pkg.shutil, "which", return_value="C:/OpenClaw/openclaw.exe"),
-                patch.object(openclaw_pkg, "_run_command_check", side_effect=fake_command_check),
-                patch.object(openclaw_pkg, "_run_plugin_contract_check", side_effect=self._passed_contract),
+                patch.object(openclaw_impl.shutil, "which", return_value="C:/OpenClaw/openclaw.exe"),
+                patch.object(openclaw_impl, "_run_command_check", side_effect=fake_command_check),
+                patch.object(openclaw_impl, "_run_plugin_contract_check", side_effect=self._passed_contract),
             ):
-                validation = openclaw_pkg.validate_openclaw_plugin_package(output_root=tmp, inspect_runtime=True)
+                validation = openclaw_impl.validate_openclaw_plugin_package(output_root=tmp, inspect_runtime=True)
 
         self.assertEqual(validation["overall_status"], "runtime-validated")
         self.assertTrue(validation["runtime_inspect_passed"])
@@ -796,7 +795,7 @@ class OpenClawValidationTest(unittest.TestCase):
         self.assertIn("plugins inspect", observed_labels[3])
 
     def test_generated_plugin_contract_executes_auth_blind_and_block_paths(self):
-        result = openclaw_impl._run_plugin_contract_check(files=openclaw_pkg.build_openclaw_plugin_package_files())
+        result = openclaw_impl._run_plugin_contract_check(files=openclaw_impl.build_openclaw_plugin_package_files())
 
         self.assertTrue(result["passed"], result.get("stderr"))
         self.assertTrue(result["details"]["authenticated"])

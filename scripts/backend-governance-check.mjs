@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs';
+import fs from 'node:fs';
 import path from 'node:path';
 
 const root = process.cwd();
@@ -60,7 +60,7 @@ const movedModules = {
   target_lab: 'domains/attacks/target_lab.py',
   tools: 'domains/runtime/tools.py'
 };
-const allowedRootPythonFiles = new Set([...coreRootPythonFiles, ...Object.keys(movedModules).map((name) => `${name}.py`)]);
+const allowedRootPythonFiles = new Set(coreRootPythonFiles);
 const allowedDomainDirectories = new Set(['attacks', 'evaluations', 'governance', 'reports', 'runtime']);
 const allowedAdapterDirectories = new Set(['integrations', 'models', 'proxy']);
 const allowedTopLevelPackageFiles = new Set(['__init__.py']);
@@ -125,20 +125,12 @@ const missingMovedModules = Object.entries(movedModules)
   .filter(([, relativeTarget]) => !fs.existsSync(path.join(apiRoot, relativeTarget)))
   .map(([name, relativeTarget]) => ({ name, target: `apps/api/agent_supervisor/${relativeTarget}` }));
 
-const compatibilityWrappers = Object.entries(movedModules).map(([name, relativeTarget]) => {
-  const rootFile = path.join(apiRoot, `${name}.py`);
-  const text = readMaybe(rootFile);
-  const dottedTarget = relativeTarget.replace(/\.py$/, '').replaceAll('/', '.');
-  const expectedImport = `from .${dottedTarget} import *`;
-  return {
-    file: relative(rootFile),
-    target: `apps/api/agent_supervisor/${relativeTarget}`,
-    lines: countLines(rootFile),
-    has_expected_import: text.includes(expectedImport),
-    is_compatibility_wrapper: text.includes('Compatibility wrapper') && text.includes(expectedImport) && countLines(rootFile) <= 12
-  };
-});
-const invalidCompatibilityWrappers = compatibilityWrappers.filter((item) => !item.is_compatibility_wrapper);
+const legacyWrapperFiles = Object.entries(movedModules)
+  .filter(([name]) => fs.existsSync(path.join(apiRoot, `${name}.py`)))
+  .map(([name, relativeTarget]) => ({
+    file: `apps/api/agent_supervisor/${name}.py`,
+    target: `apps/api/agent_supervisor/${relativeTarget}`
+  }));
 
 const rootPythonSummary = rootEntries
   .filter((entry) => entry.isFile() && entry.name.endsWith('.py'))
@@ -148,11 +140,11 @@ const rootPythonSummary = rootEntries
     return {
       file: relative(fullPath),
       lines: countLines(fullPath),
-      kind: coreRootPythonFiles.has(entry.name) ? 'core' : movedModules[moduleName] ? 'compatibility_wrapper' : 'unexpected'
+      kind: coreRootPythonFiles.has(entry.name) ? 'core' : 'unexpected'
     };
   })
   .sort((a, b) => b.lines - a.lines || a.file.localeCompare(b.file));
-const oversizedRootFiles = rootPythonSummary.filter((item) => item.kind !== 'compatibility_wrapper' && item.lines > 120);
+const oversizedRootFiles = rootPythonSummary.filter((item) => item.kind === 'core' && item.lines > 120);
 
 const packageInitMissing = [];
 for (const dir of ['adapters', 'adapters/integrations', 'adapters/models', 'adapters/proxy', 'commands', 'domains', 'domains/attacks', 'domains/evaluations', 'domains/governance', 'domains/reports', 'domains/runtime', 'schemas', 'storage']) {
@@ -171,7 +163,7 @@ const budgets = {
   unexpected_adapter_directory_max: 0,
   unexpected_adapter_file_max: 0,
   missing_moved_module_max: 0,
-  invalid_compatibility_wrapper_max: 0,
+  legacy_wrapper_file_max: 0,
   oversized_root_file_max: 0,
   package_init_missing_max: 0,
   pycache_file_max: 0
@@ -186,7 +178,7 @@ if (unexpectedDomainFiles.length) violations.push(`Unexpected files under domain
 if (unexpectedAdapterDirectories.length) violations.push(`Unexpected backend adapter directories: ${unexpectedAdapterDirectories.join(', ')}`);
 if (unexpectedAdapterFiles.length) violations.push(`Unexpected files under adapters root: ${unexpectedAdapterFiles.join(', ')}`);
 if (missingMovedModules.length) violations.push(`Missing moved backend modules: ${missingMovedModules.map((item) => item.target).join(', ')}`);
-if (invalidCompatibilityWrappers.length) violations.push(`Invalid compatibility wrappers: ${invalidCompatibilityWrappers.map((item) => `${item.file} -> ${item.target}`).join(', ')}`);
+if (legacyWrapperFiles.length) violations.push(`Legacy compatibility wrappers must be removed: ${legacyWrapperFiles.map((item) => `${item.file} -> ${item.target}`).join(', ')}`);
 if (oversizedRootFiles.length) violations.push(`Oversized backend root files: ${oversizedRootFiles.map((item) => `${item.file} ${item.lines} lines`).join(', ')}`);
 if (packageInitMissing.length) violations.push(`Missing package __init__.py files: ${packageInitMissing.join(', ')}`);
 if (pycacheFiles.length) violations.push(`Python cache files should not be committed: ${pycacheFiles.join(', ')}`);
@@ -196,7 +188,7 @@ const result = {
   moved_module_count: Object.keys(movedModules).length,
   root_python_file_count: rootPythonSummary.length,
   core_root_files: Array.from(coreRootPythonFiles).sort().map((name) => `apps/api/agent_supervisor/${name}`),
-  compatibility_wrapper_count: compatibilityWrappers.length,
+  legacy_wrapper_count: legacyWrapperFiles.length,
   unexpected_root_directories: unexpectedRootDirectories,
   unexpected_root_python_files: unexpectedRootPythonFiles,
   root_non_python_files: rootNonPythonFiles,
@@ -205,8 +197,7 @@ const result = {
   unexpected_adapter_directories: unexpectedAdapterDirectories,
   unexpected_adapter_files: unexpectedAdapterFiles,
   missing_moved_modules: missingMovedModules,
-  compatibility_wrappers: compatibilityWrappers,
-  invalid_compatibility_wrappers: invalidCompatibilityWrappers,
+  legacy_wrapper_files: legacyWrapperFiles,
   oversized_root_files: oversizedRootFiles,
   package_init_missing: packageInitMissing,
   pycache_files: pycacheFiles,
@@ -215,9 +206,9 @@ const result = {
   budget_status: violations.length ? 'failed' : 'passed',
   violations,
   recommendations: [
-    'Keep only core entry files and compatibility wrappers in apps/api/agent_supervisor root.',
+    'Keep only core entry files (__init__.py, auth.py, main.py, paths.py) in apps/api/agent_supervisor root.',
     'Put new business code under domains/<domain>, external integrations under adapters/<type>, data access under storage, and schemas under schemas.',
-    'Compatibility wrappers should stay tiny, re-export moved modules, and preserve old module identity for legacy imports.',
+    'Import moved modules via their new canonical paths; legacy root wrappers are forbidden.',
     'Run npm run api:architecture before committing backend structure changes.'
   ]
 };
