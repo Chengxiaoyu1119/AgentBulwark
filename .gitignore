@@ -80,3 +80,9 @@ PROJECT_ARCHITECTURE.md
 # 本地临时会话和实验导出
 session.md
 apps/api/sandbox/competition-package
+
+# BERT training runtime artifacts (checkpoint/logging/cached variants/model binaries, dataset results and reports are committed)
+training/dataset/variant_checkpoint.json
+training/dataset/generation*.log
+training/model/*.onnx
+training/checkpoints/
