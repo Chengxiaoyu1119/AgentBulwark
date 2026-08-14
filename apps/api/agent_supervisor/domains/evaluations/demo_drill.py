@@ -20,7 +20,12 @@ def run_judge_demo_drill(output_root: str | Path | None = None) -> dict[str, Any
     stages = []
 
     for index, event in enumerate(_drill_events(), start=1):
-        supervisor_result = evaluate_agent_event(event, guard_enabled=True, execute_in_sandbox=False)
+        supervisor_result = evaluate_agent_event(
+            event,
+            guard_enabled=True,
+            execute_in_sandbox=False,
+            review_scope="demo",
+        )
         approval_result = _auto_review(supervisor_result, event)
         stages.append(_stage_record(index, event, supervisor_result, approval_result))
 

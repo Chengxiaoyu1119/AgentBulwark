@@ -120,7 +120,9 @@ def run_learning_attack(request: dict[str, Any]) -> dict[str, Any]:
     }
 
     vulnerable = _run_without_guard(scenario_id, deepcopy(event), execute_in_sandbox)
-    guarded = evaluate_agent_event(deepcopy(event), guard_enabled=True, execute_in_sandbox=execute_in_sandbox)
+    guarded = evaluate_agent_event(
+        deepcopy(event), guard_enabled=True, execute_in_sandbox=execute_in_sandbox, review_scope="experiment"
+    )
     vulnerable_output = vulnerable["target_response"]
     guarded_output = str(guarded["audit_log"].get("tool_output", {}).get("output", ""))
     compromised_assets = _compromised_assets(vulnerable_output)
@@ -211,7 +213,9 @@ def _build_tool_call(scenario_id: str, attack_input: str) -> dict[str, Any]:
 
 
 def _run_without_guard(scenario_id: str, event: dict[str, Any], execute_in_sandbox: bool) -> dict[str, Any]:
-    evaluated = evaluate_agent_event(event, guard_enabled=False, execute_in_sandbox=execute_in_sandbox)
+    evaluated = evaluate_agent_event(
+        event, guard_enabled=False, execute_in_sandbox=execute_in_sandbox, review_scope="experiment"
+    )
     if scenario_id == "prompt-injection-mail":
         tool_output = evaluated["audit_log"].get("tool_output", {})
         target_response = _prompt_injection_mail_response(event["tool_call"], tool_output)

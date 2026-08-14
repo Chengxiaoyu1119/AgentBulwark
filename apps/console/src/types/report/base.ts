@@ -26,6 +26,24 @@ export interface ReportSummary {
   anomaly_recommended_threshold?: number;
   anomaly_attack_recall_rate?: number;
   anomaly_false_alarm_rate?: number;
+  holdout_sample_count?: number;
+  holdout_attack_recall_rate?: number;
+  holdout_false_positive_rate?: number;
+  holdout_expected_match_rate?: number;
+  real_model_case_count?: number;
+  real_model_tool_call_success_count?: number;
+  real_model_api_case_count?: number;
+  real_model_api_coverage_rate?: number;
+  real_model_attack_reproduced_rate?: number;
+  real_model_defense_effective_rate?: number;
+  real_model_receipt_complete_rate?: number;
+  real_model_task_alignment_rate?: number;
+  real_model_expected_control_match_rate?: number;
+  real_model_benign_task_completion_rate?: number;
+  real_model_causal_integrity_rate?: number;
+  real_model_provider_evidence_coverage_rate?: number;
+  real_model_report_integrity_valid?: boolean;
+  real_model_strict_ready?: boolean;
 }
 
 export interface ReportSurfaceCoverage {

@@ -62,14 +62,28 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
 
   useEffect(() => {
     Promise.all([
-      fetchAttackCaseDataset().then(setAttackDataset).catch(ignore),
-      fetchOpenClawIntegrationBundle().then(setIntegrationBundle).catch(ignore),
       fetchAgentIntegrationBundle().then(setAgentIntegrationBundle).catch(ignore),
-      fetchDemoDrill().then(setDemoDrill).catch(ignore),
-      fetchCompetitionReadiness().then(setCompetitionReadiness).catch(ignore),
       fetchModelConfig().then(setModelConfig).catch(ignore)
     ]);
   }, []);
+
+  async function ensureOpenClawIntegration() {
+    if (integrationBundle) return integrationBundle;
+    const bundle = await fetchOpenClawIntegrationBundle();
+    setIntegrationBundle(bundle);
+    return bundle;
+  }
+
+  async function ensureDeliveryData() {
+    const [dataset, drill, readiness] = await Promise.all([
+      attackDataset ? Promise.resolve(attackDataset) : fetchAttackCaseDataset(),
+      demoDrill ? Promise.resolve(demoDrill) : fetchDemoDrill(),
+      competitionReadiness ? Promise.resolve(competitionReadiness) : fetchCompetitionReadiness()
+    ]);
+    setAttackDataset(dataset);
+    setDemoDrill(drill);
+    setCompetitionReadiness(readiness);
+  }
 
   async function handleEvaluateEvent() {
     setEvaluating(true);
@@ -242,6 +256,8 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       clearExternalResults,
       handleBatchEvaluate,
       handleEvaluateEvent,
+      ensureDeliveryData,
+      ensureOpenClawIntegration,
       handleRunDemoDrill,
       handleRunExternalAgentDemo,
       handleRunReadiness,

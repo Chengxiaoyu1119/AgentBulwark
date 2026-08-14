@@ -65,7 +65,7 @@ export function DashboardFeatureMap({
       points: [
         { label: '防护控制率', value: `${guardedControlRate}%`, page: 'policy' },
         { label: '告警阻断记录', value: `${overview.alerts.length} 条`, page: 'alerts' },
-        { label: '报告证据包', value: `${overview.recent_runs.length} 次运行`, page: 'report' }
+        { label: '按需证据导出', value: `${overview.recent_runs.length} 次运行`, page: 'report' }
       ]
     }
   ];

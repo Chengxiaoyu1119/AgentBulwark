@@ -13,7 +13,11 @@ type AuthorizedTargetPreviewProps = {
 
 function payloadKind(path: string) {
   if (path.endsWith('/v1/chat/completions')) return 'openai-compatible-chat';
-  if (path.includes('/api/supervisor/evaluate') || path.includes('/api/integrations/openclaw/events'))
+  if (
+    path.includes('/api/runtime/evaluate') ||
+    path.includes('/api/supervisor/evaluate') ||
+    path.includes('/api/integrations/openclaw/events')
+  )
     return 'supervisor-event';
   return 'generic-agent-run';
 }

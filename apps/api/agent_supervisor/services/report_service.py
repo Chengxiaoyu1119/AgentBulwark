@@ -10,37 +10,53 @@ from apps.api.agent_supervisor.domains.evaluations.benign import evaluate_benign
 from apps.api.agent_supervisor.domains.evaluations.benign_workflows import evaluate_benign_workflows
 from apps.api.agent_supervisor.domains.evaluations.calibration import build_anomaly_calibration
 from apps.api.agent_supervisor.domains.evaluations.evidence import build_output_filter_evidence, build_surface_conclusions
+from apps.api.agent_supervisor.domains.evaluations.holdout import evaluate_adversarial_holdout
+from apps.api.agent_supervisor.domains.runtime.runtime_evaluation import load_real_model_evaluation_report
 from apps.api.agent_supervisor.storage.data import get_attack_surfaces, get_policies, get_scenarios
-from apps.api.agent_supervisor.storage.database import latest_runs
+from apps.api.agent_supervisor.storage.database import latest_runs, latest_scenario_run_pairs
 
 from ..domains.reports.roadmap import build_project_roadmap
-from .package_service import build_competition_package
+from .package_service import load_competition_package_snapshot
+
+REPORT_RUN_LIMIT = 50
 
 
 def build_report() -> dict:
-    runs = latest_runs(500)
+    # The report UI only needs a bounded realtime sample for counters and
+    # latency. Fixed attack evidence is queried independently below, so a
+    # larger payload neither improves the competition metrics nor their
+    # correctness.
+    runs = latest_runs(REPORT_RUN_LIMIT)
     surfaces = get_attack_surfaces()
     scenarios = get_scenarios()
+    evidence_runs = latest_scenario_run_pairs([scenario["id"] for scenario in scenarios])
     policies = get_policies()
     benign_eval = evaluate_benign_cases()
     benign_workflow_eval = evaluate_benign_workflows()
     surface_conclusion_eval = build_surface_conclusions(runs)
     output_filter_eval = build_output_filter_evidence()
-    attack_effectiveness_eval = build_attack_effectiveness(runs)
+    attack_effectiveness_eval = build_attack_effectiveness(evidence_runs)
     policy_ablation_eval = load_policy_ablation_report()
-    project_roadmap_eval = build_project_roadmap(runs)
+    project_roadmap_eval = build_project_roadmap(evidence_runs)
+    openclaw_dimension = cast(
+        dict[str, Any],
+        next(
+            (item for item in project_roadmap_eval["dimensions"] if item["name"] == "OpenClaw/外部 Agent 接入"),
+            {"score": 0, "evidence": "OpenClaw 接入证据未生成。"},
+        ),
+    )
     anomaly_calibration_eval = build_anomaly_calibration()
+    holdout_eval = evaluate_adversarial_holdout()
+    real_model_eval = load_real_model_evaluation_report()
+    real_model_summary = (real_model_eval or {}).get("summary", {})
+    real_model_strict_ready = bool(real_model_summary.get("strict_real_api_ready"))
+    real_model_has_api = int(real_model_summary.get("real_api_case_count") or 0) > 0
+    competition_package = load_competition_package_snapshot(evidence_runs)
     surface_name = {surface["id"]: surface["name"] for surface in surfaces}
     scenario_name = {scenario["id"]: scenario["title"] for scenario in scenarios}
 
     total = len(runs)
     guarded_runs = [run for run in runs if run["guard_enabled"]]
-    controlled_runs = [
-        run
-        for run in guarded_runs
-        if run["metrics"]["blocked_count"] or run["metrics"]["asked_count"] or run["metrics"]["isolated_count"]
-    ]
-    attack_successes = [run for run in runs if run["attack_success"]]
     avg_latency = round(sum(run["metrics"]["detection_latency_ms"] for run in runs) / total) if total else 0
 
     policy_counter: Counter[str] = Counter()
@@ -69,7 +85,7 @@ def build_report() -> dict:
 
     scenario_matrix = []
     for scenario in scenarios:
-        latest = next((run for run in runs if run["scenario"]["id"] == scenario["id"]), None)
+        latest = next((run for run in evidence_runs if run["scenario"]["id"] == scenario["id"]), None)
         scenario_matrix.append(
             {
                 "id": scenario["id"],
@@ -86,7 +102,7 @@ def build_report() -> dict:
             }
         )
 
-    deliverables = [
+    deliverables: list[dict[str, Any]] = [
         {
             "name": "安全风险分析报告",
             "status": "已覆盖",
@@ -119,8 +135,8 @@ def build_report() -> dict:
         },
         {
             "name": "OpenClaw 源码级工具调用 Hook",
-            "status": "已提供插件包",
-            "evidence": "可生成 OpenClaw native plugin 包，使用 before_tool_call 接入智安哨监督器；真实运行验收需在 OpenClaw 环境执行。",
+            "status": "已验证" if openclaw_dimension["score"] >= 90 else "已提供插件包",
+            "evidence": openclaw_dimension["evidence"],
         },
         {
             "name": "基座模型检测或过滤原型",
@@ -138,9 +154,42 @@ def build_report() -> dict:
             "evidence": f"{benign_eval['summary']['case_count']} 个正常业务任务样本，误报率 {benign_eval['summary']['false_positive_rate']}%。",
         },
         {
+            "name": "独立对抗留出集评测",
+            "status": "已实现",
+            "evidence": (
+                f"{holdout_eval['summary']['sample_count']} 条固定留出样本，"
+                f"攻击召回率 {holdout_eval['summary']['attack_recall_rate']}%，"
+                f"正常误报率 {holdout_eval['summary']['benign_false_positive_rate']}%。"
+            ),
+        },
+        {
             "name": "连续正常业务任务流程误报评测",
             "status": "已实现",
             "evidence": f"{benign_workflow_eval['summary']['workflow_count']} 条比赛任务流程，{benign_workflow_eval['summary']['step_count']} 个工具步骤，误报率 {benign_workflow_eval['summary']['false_positive_rate']}%。",
+        },
+        {
+            "name": "真实模型工具调用盲测",
+            "status": (
+                "严格证据通过"
+                if real_model_strict_ready
+                else "混合证据待补跑"
+                if real_model_has_api
+                else "待运行"
+            ),
+            "evidence": (
+                f"{real_model_summary.get('case_count', 0)} 个样本，模型生成工具调用 {real_model_summary.get('model_tool_call_success_count', 0)} 个，"
+                f"真实 API 覆盖率 {real_model_summary.get('real_api_coverage_rate', 0)}%，"
+                f"无防护攻击副作用复现率 {real_model_summary.get('attack_reproduced_rate', 0)}%，"
+                f"有防护有效控制率 {real_model_summary.get('defense_effective_rate', 0)}%，"
+                f"执行回执完整率 {real_model_summary.get('receipt_complete_rate', 0)}%，"
+                f"任务工具对齐率 {real_model_summary.get('task_alignment_rate', 0)}%，"
+                f"预期决策匹配率 {real_model_summary.get('expected_control_match_rate', 0)}%，"
+                f"因果一致性 {real_model_summary.get('causal_integrity_rate', 0)}%，"
+                f"供应商响应指纹覆盖率 {real_model_summary.get('provider_evidence_coverage_rate', 0)}%，"
+                f"报告 Hash 校验 {'通过' if real_model_summary.get('report_integrity_valid') else '未通过'}。"
+                if real_model_eval
+                else "运行真实模型盲测后，将展示模型来源、无防护副作用、有防护控制结果和双分支执行回执。"
+            ),
         },
         {
             "name": "监督端实时告警或阻断记录",
@@ -155,8 +204,8 @@ def build_report() -> dict:
         "scenario_count": len(scenarios),
         "run_count": total,
         "guarded_run_count": len(guarded_runs),
-        "attack_success_rate": round((len(attack_successes) / total) * 100) if total else 0,
-        "control_rate": round((len(controlled_runs) / len(guarded_runs)) * 100) if guarded_runs else 0,
+        "attack_success_rate": attack_effectiveness_eval["summary"]["attack_reproduced_rate"],
+        "control_rate": attack_effectiveness_eval["summary"]["defense_effective_rate"],
         "avg_latency_ms": avg_latency,
         "enabled_policy_count": sum(1 for policy in policies if policy.get("enabled")),
         "policy_count": len(policies),
@@ -178,6 +227,28 @@ def build_report() -> dict:
         "anomaly_recommended_threshold": anomaly_calibration_eval["summary"]["recommended_threshold"],
         "anomaly_attack_recall_rate": anomaly_calibration_eval["summary"]["attack_recall_rate"],
         "anomaly_false_alarm_rate": anomaly_calibration_eval["summary"]["benign_false_alarm_rate"],
+        "holdout_sample_count": holdout_eval["summary"]["sample_count"],
+        "holdout_attack_recall_rate": holdout_eval["summary"]["attack_recall_rate"],
+        "holdout_false_positive_rate": holdout_eval["summary"]["benign_false_positive_rate"],
+        "holdout_expected_match_rate": holdout_eval["summary"]["expected_match_rate"],
+        "real_model_case_count": int(real_model_summary.get("case_count") or 0),
+        "real_model_tool_call_success_count": int(real_model_summary.get("model_tool_call_success_count") or 0),
+        "real_model_api_case_count": int(real_model_summary.get("real_api_case_count") or 0),
+        "real_model_api_coverage_rate": int(real_model_summary.get("real_api_coverage_rate") or 0),
+        "real_model_attack_reproduced_rate": int(real_model_summary.get("attack_reproduced_rate") or 0),
+        "real_model_defense_effective_rate": int(real_model_summary.get("defense_effective_rate") or 0),
+        "real_model_receipt_complete_rate": int(real_model_summary.get("receipt_complete_rate") or 0),
+        "real_model_task_alignment_rate": int(real_model_summary.get("task_alignment_rate") or 0),
+        "real_model_expected_control_match_rate": int(real_model_summary.get("expected_control_match_rate") or 0),
+        "real_model_benign_task_completion_rate": int(
+            real_model_summary.get("benign_task_completion_rate") or 0
+        ),
+        "real_model_causal_integrity_rate": int(real_model_summary.get("causal_integrity_rate") or 0),
+        "real_model_provider_evidence_coverage_rate": int(
+            real_model_summary.get("provider_evidence_coverage_rate") or 0
+        ),
+        "real_model_report_integrity_valid": bool(real_model_summary.get("report_integrity_valid")),
+        "real_model_strict_ready": real_model_strict_ready,
     }
 
     lines = [
@@ -193,17 +264,30 @@ def build_report() -> dict:
         f"- 攻击脚本数量：{summary['scenario_count']} 个",
         f"- 已记录实验：{summary['run_count']} 次",
         f"- 防护开启实验：{summary['guarded_run_count']} 次",
-        f"- 防护控制率：{summary['control_rate']}%",
+        f"- 固定脚本有防护控制率：{summary['control_rate']}%",
         f"- 正常业务任务误报率：{summary['false_positive_rate']}%",
         f"- 连续比赛任务流程误报率：{summary['benign_workflow_false_positive_rate']}%",
         f"- 期望决策匹配率：{summary['expected_match_rate']}%",
         f"- 输出过滤阻断率：{summary['output_filter_block_rate']}%",
-        f"- 无防护攻击复现率：{summary['attack_reproduced_rate']}%",
-        f"- 有防护有效控制率：{summary['defense_effective_rate']}%",
-            f"- 证据完整率：{summary['evidence_complete_rate']}%",
+        f"- 固定脚本无防护攻击复现率：{summary['attack_reproduced_rate']}%",
+        f"- 固定脚本有防护有效控制率：{summary['defense_effective_rate']}%",
+            f"- 固定脚本证据完整率：{summary['evidence_complete_rate']}%",
             f"- 异常检测推荐阈值：{summary['anomaly_recommended_threshold']}",
             f"- 异常检测攻击召回率：{summary['anomaly_attack_recall_rate']}%",
             f"- 异常检测正常误报率：{summary['anomaly_false_alarm_rate']}%",
+            f"- 对抗留出集攻击召回率：{summary['holdout_attack_recall_rate']}%",
+            f"- 对抗留出集正常误报率：{summary['holdout_false_positive_rate']}%",
+            f"- 真实模型盲测样本：{summary['real_model_case_count']}（模型工具调用 {summary['real_model_tool_call_success_count']}，真实 API 覆盖率 {summary['real_model_api_coverage_rate']}%）",
+            f"- 真实模型无防护攻击副作用复现率：{summary['real_model_attack_reproduced_rate']}%",
+            f"- 真实模型有防护有效控制率：{summary['real_model_defense_effective_rate']}%",
+            f"- 真实模型双分支执行回执完整率：{summary['real_model_receipt_complete_rate']}%",
+            f"- 真实模型任务工具对齐率：{summary['real_model_task_alignment_rate']}%",
+            f"- 真实模型预期决策匹配率：{summary['real_model_expected_control_match_rate']}%",
+            f"- 真实模型正常任务双分支完成率：{summary['real_model_benign_task_completion_rate']}%",
+            f"- 真实模型因果一致性通过率：{summary['real_model_causal_integrity_rate']}%",
+            f"- 真实模型供应商响应指纹覆盖率：{summary['real_model_provider_evidence_coverage_rate']}%",
+            f"- 真实模型报告 Hash 校验：{'通过' if summary['real_model_report_integrity_valid'] else '未通过'}",
+            f"- 真实模型严格证据判定：{'通过' if summary['real_model_strict_ready'] else '未通过'}",
             f"- 平均检测延迟：{summary['avg_latency_ms']}ms",
         "",
         "## 3. 攻击面覆盖",
@@ -392,7 +476,7 @@ def build_report() -> dict:
             "|---:|---:|---:|---:|",
         ]
     )
-    for item in anomaly_calibration_eval["threshold_curve"]:
+    for item in cast(list[dict[str, Any]], anomaly_calibration_eval["threshold_curve"]):
         if item["threshold"] in {45, 50, 55, 60, 65, 70, 75}:
             lines.append(
                 f"| {item['threshold']} | {item['attack_recall_rate']}% | {item['benign_false_alarm_rate']}% | {item['precision_rate']}% |"
@@ -411,7 +495,7 @@ def build_report() -> dict:
             "|---|---|---:|---|",
         ]
     )
-    for item in project_roadmap_eval["dimensions"]:
+    for item in cast(list[dict[str, Any]], project_roadmap_eval["dimensions"]):
         lines.append(f"| {item['name']} | {item['status']} | {item['score']} | {'；'.join(item['next_actions'])} |")
 
     lines.extend(
@@ -439,6 +523,25 @@ def build_report() -> dict:
     if not runs:
         lines.append("| 暂无 | 暂无 | 暂无 | 暂无 | 0 | 0 | 0 | 0ms |")
 
+    if real_model_eval:
+        lines.extend(
+            [
+                "",
+                "## 15. 真实模型工具调用盲测",
+                "",
+                "该节读取最近一次已落盘的盲测报告，不会在生成总报告时再次调用模型。",
+                "",
+                "| 样本 | 标签 | 模型来源 | 工具 | 决策 | 监督延迟 |",
+                "|---|---|---|---|---|---:|",
+            ]
+        )
+        for item in real_model_eval.get("results", []):
+            tool_call = item.get("tool_call") or {}
+            lines.append(
+                f"| {item.get('id', '-')} | {item.get('label', '-')} | {item.get('provider', '-')} / {item.get('mode', '-')} | "
+                f"`{tool_call.get('tool', '-')}` | {item.get('decision', '-')} | {item.get('supervisor_latency_ms', '-')}ms |"
+            )
+
     return {
         "markdown": "\n".join(lines),
         "summary": summary,
@@ -454,7 +557,9 @@ def build_report() -> dict:
         "attack_effectiveness": attack_effectiveness_eval,
         "policy_ablation": policy_ablation_eval,
         "anomaly_calibration": anomaly_calibration_eval,
+        "adversarial_holdout": holdout_eval,
         "project_roadmap": project_roadmap_eval,
+        "real_model_evaluation": real_model_eval,
         "runs": runs,
-        "competition_package": build_competition_package(runs),
+        "competition_package": competition_package,
     }

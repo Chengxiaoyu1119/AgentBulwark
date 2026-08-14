@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Any
 
+from apps.api.agent_supervisor.domains.governance.tool_contract import normalize_tool_call, recipients_are_internal
+from apps.api.agent_supervisor.storage.data import get_policy_settings
+
 MAX_CHAIN_EVENTS = 20
 CHAIN_WINDOW = timedelta(minutes=10)
 
@@ -32,6 +35,7 @@ _CHAINS: dict[str, deque[dict[str, Any]]] = defaultdict(lambda: deque(maxlen=MAX
 
 def assess_cross_agent_chain(event: dict[str, Any], tool_call: dict[str, Any]) -> dict[str, Any]:
     """Track recent conversation-level tool calls and detect multi-step exfiltration chains."""
+    tool_call = normalize_tool_call(tool_call)
     conversation_id = str(event.get("conversation_id") or "external-conversation")
     agent_id = str(event.get("agent_id") or "external-agent")
     now = datetime.now(timezone.utc)
@@ -110,7 +114,8 @@ def _profile_tool_call(tool_call: dict[str, Any], event: dict[str, Any]) -> dict
     )
     bulk_export = tool == "api.call" and any(marker in endpoint for marker in ("export", "dump", "all", "batch"))
     memory_sensitive = tool == "memory.read" and _contains_sensitive(query)
-    external_transfer = tool == "mail.send" and "@" in recipient and not recipient.endswith("@internal.example")
+    internal_domains = {str(item).lower() for item in get_policy_settings().get("internal_email_domains", [])}
+    external_transfer = tool == "mail.send" and not recipients_are_internal(recipient, internal_domains)
     untrusted_context = any(marker in prompt_text for marker in ("忽略", "绕过", "ignore previous", "trusted notice")) or any(
         marker in sources.lower() for marker in ("web", "browser", "retrieved", "tool")
     )
@@ -127,4 +132,4 @@ def _profile_tool_call(tool_call: dict[str, Any], event: dict[str, Any]) -> dict
 
 def _contains_sensitive(text: str) -> bool:
     lowered = text.lower()
-    return any(marker in lowered for marker in SENSITIVE_MARKERS)
+    return any(marker in lowered for marker in (*SENSITIVE_MARKERS, "all", "everything", "全部", "所有", "*"))

@@ -2,7 +2,7 @@ import { type ReactNode, Suspense, useEffect, useMemo } from 'react';
 import { ConfigProvider, Drawer, Layout, Menu, Space, Spin, Typography, theme as antdTheme } from 'antd';
 import { Activity, Menu as MenuIcon, Moon, Play, Sun } from 'lucide-react';
 import { UiAlert, UiButton } from '../components/ui';
-import { navGroups, navItems, type PageKey } from './navigation';
+import { navGroups, pageLabel, type PageKey } from './navigation';
 
 const { Sider, Header, Content } = Layout;
 const { darkAlgorithm, defaultAlgorithm } = antdTheme;
@@ -107,7 +107,7 @@ export function AppShell({
                 智安哨
               </Typography.Title>
               <Typography.Text type="secondary" className="zh-text-meta">
-                LLM Agent Attack Lab
+                AI Agent Runtime Security
               </Typography.Text>
             </div>
           </div>
@@ -137,7 +137,7 @@ export function AppShell({
             <Space>
               <UiButton type="text" icon={<MenuIcon size={20} />} onClick={onOpenDrawer} className="mobile-menu-btn" />
               <Typography.Title level={3} className="zh-app-header-title">
-                {navItems.find((item) => item.key === page)?.label}
+                {pageLabel(page)}
               </Typography.Title>
             </Space>
             <Space>
@@ -152,7 +152,7 @@ export function AppShell({
                 <span className="hide-on-mobile">刷新数据</span>
               </UiButton>
               <UiButton type="primary" icon={<Play size={16} />} onClick={onOpenLab}>
-                <span className="hide-on-mobile">攻击实验</span>
+                <span className="hide-on-mobile">攻防验证</span>
               </UiButton>
             </Space>
           </Header>

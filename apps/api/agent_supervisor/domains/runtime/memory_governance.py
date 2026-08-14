@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Any
 
-from apps.api.agent_supervisor.paths import MEMORY_DIR
+from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
 from apps.api.agent_supervisor.domains.runtime.tools import init_sandbox
+from apps.api.agent_supervisor.paths import MEMORY_DIR
+from apps.api.agent_supervisor.storage.database import append_runtime_event
 
 MEMORY_FILE = MEMORY_DIR / "memory.json"
 ACTIVE_STATUS = "active"
@@ -61,7 +64,27 @@ def update_memory_status(memory_id: str, status: str, operator: str = "security-
             item["updated_by"] = operator or "security-analyst"
             item["trust_score"] = _trust_score(item)
             _save_memory_items(items)
-            return {"updated": True, "before": before, "after": item}
+            evidence = {
+                "memory_id": memory_id,
+                "operator": operator or "security-analyst",
+                "before_status": str(before.get("status", "")),
+                "after_status": status,
+                "before_hash": _memory_hash(before),
+                "after_hash": _memory_hash(item),
+                "changed_at": str(item["updated_at"]),
+            }
+            journal_event = append_runtime_event("memory-governance-change", evidence, created_at=evidence["changed_at"])
+            publish_runtime_event(
+                "memory-governance-change",
+                {**evidence, "event_id": journal_event["event_id"]},
+            )
+            return {
+                "updated": True,
+                "before": before,
+                "after": item,
+                "event_id": journal_event["event_id"],
+                "evidence": evidence,
+            }
     raise KeyError(memory_id)
 
 
@@ -141,6 +164,11 @@ def _trust_score(item: dict[str, Any]) -> int:
 def _save_memory_items(items: list[dict[str, Any]]) -> None:
     MEMORY_DIR.mkdir(parents=True, exist_ok=True)
     MEMORY_FILE.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _memory_hash(item: dict[str, Any]) -> str:
+    encoded = json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _now() -> str:

@@ -24,6 +24,13 @@ export function ReportDeliveryTab({
   return (
     <Space orientation="vertical" size="large" className="zh-tab-stack">
       <ReportBriefingExportGallery />
+      {!competitionPackage && (
+        <PanelCard title="成果交付材料包" variant="borderless">
+          <Typography.Text type="secondary">
+            交付材料快照尚未生成；管理员可调用 POST /api/deliverables/refresh 生成，报告概览与攻防评测不受影响。
+          </Typography.Text>
+        </PanelCard>
+      )}
       {competitionPackage && (
         <PanelCard
           title={

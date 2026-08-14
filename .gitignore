@@ -75,3 +75,8 @@ up.zip
 # 本地仓库说明快照
 AGENTS.md
 PROJECT_ARCHITECTURE.md
+.trae/
+
+# 本地临时会话和实验导出
+session.md
+apps/api/sandbox/competition-package

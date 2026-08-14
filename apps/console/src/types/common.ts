@@ -58,6 +58,19 @@ export interface PolicySettings {
   anomaly_reject_threshold: number;
   approval_sla_minutes: number;
   high_risk_auto_escalation: boolean;
+  internal_email_domains: string[];
+  sensitive_path_markers: string[];
+  sensitive_api_markers: string[];
+  agent_tool_allowlists: Record<string, string[]>;
+  agent_tool_mappings?: Record<string, Record<string, AgentToolMappingConfig>>;
+}
+
+export interface AgentToolMappingConfig {
+  capability: string;
+  argument_mapping: Record<string, string>;
+  required_arguments: string[];
+  risk_hint: string;
+  description: string;
 }
 
 export interface PolicyVersion {
@@ -78,9 +91,11 @@ export interface PolicyConfig {
 
 export interface AuthContext {
   role: 'admin' | 'analyst' | 'observer' | string;
+  agent_id: string | null;
   permissions: {
     can_edit_policy: boolean;
     can_review_approval: boolean;
+    can_execute_runtime: boolean;
     can_view: boolean;
   };
 }
@@ -99,6 +114,12 @@ export interface ObservabilityMetrics {
     pending_review_count: number;
     resolved_review_count: number;
     policy_version_count: number;
+    execution_receipt_count?: number;
+    execution_completed_count?: number;
+    execution_failed_count?: number;
+    execution_not_executed_count?: number;
+    execution_unconfirmed_count?: number;
+    execution_control_verified_count?: number;
   };
   decision_distribution: Record<string, number>;
   policy_hit_distribution: Record<string, number>;

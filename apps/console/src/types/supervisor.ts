@@ -1,5 +1,6 @@
 import type { GuardDecision, RiskLevel } from './common';
 import type { AlertItem, AuditLog } from './runtime';
+import type { AttackEnvironmentBranch } from './customAttack';
 
 export type ApprovalStatus = '待复核' | '已批准' | '已驳回';
 
@@ -12,6 +13,9 @@ export interface ApprovalReview {
   approval_action: string;
   tool: string;
   arguments: Record<string, unknown>;
+  standard_capability?: string;
+  standard_arguments?: Record<string, unknown>;
+  tool_mapping?: Record<string, unknown> | null;
   policy_id: string;
   risk_level: RiskLevel;
   risk_score?: number;
@@ -22,6 +26,7 @@ export interface ApprovalReview {
   recommendation: string;
   source_app: string;
   agent_id: string;
+  scope?: 'operational' | 'experiment' | 'demo' | string;
   conversation_id: string;
   model_input_excerpt: string;
   model_output_excerpt: string;
@@ -39,6 +44,23 @@ export interface ApprovalReview {
   sla_breached?: boolean;
   escalation_level?: string;
   execution_note: string;
+  tool_call_hash?: string;
+  execution_status?:
+    | 'pending_review'
+    | 'ready_to_resume'
+    | 'claimed'
+    | 'completed'
+    | 'failed'
+    | 'rejected'
+    | 'sandbox_replayed';
+  execution_claim_id?: string;
+  execution_claim_agent_id?: string;
+  execution_claimed_at?: string;
+  execution_completed_at?: string;
+  execution_result_hash?: string;
+  execution_receipt_id?: string;
+  execution_receipt_hash?: string;
+  execution_receipt_signature?: string;
   sandbox_replay_requested?: boolean;
   sandbox_replayed_at?: string;
   sandbox_replay?: {
@@ -153,6 +175,7 @@ export interface TargetLabState {
 }
 
 export interface AttackLabRunResult {
+  comparison_id: string;
   module: AttackLabModule & {
     target_model: string;
     planner_mode: string;
@@ -161,7 +184,7 @@ export interface AttackLabRunResult {
   tool_call: {
     tool: string;
     arguments: Record<string, unknown>;
-    risk_hint: string;
+    risk_hint?: string;
   };
   model_plan: {
     provider: string;
@@ -173,10 +196,35 @@ export interface AttackLabRunResult {
     provider_failures?: Array<Record<string, unknown>>;
     fallback_reason?: string;
   };
+  model_evidence?: {
+    status: string;
+    valid: boolean;
+    model_output?: string;
+    content_hash?: string;
+    provider?: string;
+    model?: string;
+    mode?: string;
+    fallback_reason?: string;
+  };
   context_sources: string[];
   without_guard: SupervisorEvaluation;
   with_guard: SupervisorEvaluation;
   target_lab: TargetLabState;
+  environment_comparison: {
+    comparison_id: string;
+    integrity: {
+      same_initial_state: boolean;
+      initial_state_hash: string;
+      guarded_initial_state_hash: string;
+      same_tool_call: boolean;
+      tool_call_hash: string;
+      risk_hint_used: boolean;
+      only_variable: string;
+      isolated_conversation_history?: boolean;
+    };
+    without_guard: AttackEnvironmentBranch;
+    with_guard: AttackEnvironmentBranch;
+  };
   summary: {
     exposed_without_guard: boolean;
     controlled_with_guard: boolean;
@@ -185,44 +233,14 @@ export interface AttackLabRunResult {
     execution_mode: string;
     risk_score: number;
     anomaly_score: number;
+    outcome_source: string;
+    same_initial_state: boolean;
+    self_labeled_risk: boolean;
+    model_evidence_status?: string;
+    model_evidence_valid?: boolean;
   };
   explanation: Array<{
     title: string;
     text: string;
   }>;
-}
-
-export interface ExternalAgentDemoRecord {
-  task_id: string;
-  title: string;
-  tool: string;
-  arguments: Record<string, unknown>;
-  decision: string;
-  policy_id: string;
-  reason: string;
-  executed: boolean;
-  tool_result: Record<string, unknown> | string | null;
-  run_id?: string;
-  audit_id?: string;
-  audit_hash?: string;
-  risk_level?: RiskLevel;
-  risk_score?: number;
-  anomaly_score?: number;
-}
-
-export interface ExternalAgentDemoResult {
-  generated_at: string;
-  supervisor_url: string;
-  summary: {
-    task_count: number;
-    controlled_count: number;
-    executed_count: number;
-    control_rate: number;
-    executed_tools: string[];
-    audit_hash_count: number;
-  };
-  records: ExternalAgentDemoRecord[];
-  runtime_dir: string;
-  json_path: string;
-  markdown_path: string;
 }

@@ -144,6 +144,62 @@ def _real_model_evaluation_material() -> str:
     )
 
 
+def _competition_benchmark_material() -> str:
+    markdown_path = SANDBOX_REPORTS_DIR / "200条冻结集与基线性能评测.md"
+    if markdown_path.exists():
+        return markdown_path.read_text(encoding="utf-8")
+    return "\n".join(
+        [
+            "# 200条冻结集、四组基线与性能评测",
+            "",
+            "当前按需证据包未检测到已写入的冻结集评测报告。",
+            "请先执行 `node scripts/agent-supervisor-cli.mjs competition-benchmark --output apps/api/sandbox/reports` 生成证据。",
+        ]
+    )
+
+
+def _http_e2e_benchmark_material() -> str:
+    markdown_path = SANDBOX_REPORTS_DIR / "HTTP-SQLite-审计完整链路性能评测.md"
+    if markdown_path.exists():
+        return markdown_path.read_text(encoding="utf-8")
+    return "\n".join(
+        [
+            "# HTTP、SQLite 与审计完整链路性能评测",
+            "",
+            "当前报告材料中心未检测到完整链路性能报告。",
+            "请先执行 `node scripts/agent-supervisor-cli.mjs http-e2e-benchmark --output apps/api/sandbox/reports` 生成证据。",
+        ]
+    )
+
+
+def _reproducibility_material() -> str:
+    markdown_path = SANDBOX_REPORTS_DIR / "独立复现一致性验收报告.md"
+    if markdown_path.exists():
+        return markdown_path.read_text(encoding="utf-8")
+    return "\n".join(
+        [
+            "# 独立复现一致性验收报告",
+            "",
+            "当前报告材料中心未检测到独立复现一致性报告。",
+            "请执行 `node scripts/agent-supervisor-cli.mjs repro-check --trials 3 --output apps/api/sandbox/reports` 生成证据。",
+        ]
+    )
+
+
+def _eligibility_material() -> str:
+    markdown_path = SANDBOX_REPORTS_DIR / "上海信息安全参赛资格审查.md"
+    if markdown_path.exists():
+        return markdown_path.read_text(encoding="utf-8")
+    return "\n".join(
+        [
+            "# 上海信息安全作品赛参赛资格审查",
+            "",
+            "当前材料中心未检测到资格审查报告。",
+            "请执行 `python -X utf8 scripts/audit_shanghai_eligibility.py` 生成证据。",
+        ]
+    )
+
+
 def _real_model_evaluation_evidence_files() -> dict[str, str]:
     files: dict[str, str] = {}
     sources = {
@@ -258,20 +314,14 @@ def _copy_release_artifacts(support_dir: Path) -> list[Path]:
 
 def _copy_formal_submission_documents(package_dir: Path) -> list[Path]:
     target_dir = package_dir / "03_正式提交材料草稿"
-    source_dir = REPO_ROOT / "docs" / "信息安全"
-    source_names = [
-        "作品报告-智安哨-队伍信息待填写.docx",
-        "作品报告-智安哨-队伍信息待填写.pdf",
-        "作品原创性声明-智安哨-待签署.docx",
-        "提交材料清单-智安哨.md",
-    ]
+    source_dir = REPO_ROOT / "docs" / "上海信息安全" / "参赛材料草稿"
+    sources = sorted(source_dir.glob("*")) if source_dir.exists() else []
     copied: list[Path] = []
-    for name in source_names:
-        source = source_dir / name
-        if not source.exists():
+    for source in sources:
+        if not source.is_file() or source.suffix.lower() not in {".docx", ".xlsx", ".pdf", ".md"}:
             continue
         target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / name
+        target = target_dir / source.name
         shutil.copy2(source, target)
         copied.append(target)
     return copied
@@ -415,7 +465,7 @@ def _supervisor_spec(policies: list[dict[str, Any]]) -> str:
             "",
             "## 外部智能体适配方式",
             "",
-            "平台提供 `/api/supervisor/evaluate` 通用监督接口和 `/api/integrations/openclaw/events` 兼容接口。OpenClaw 或其他开源智能体应用只需要在工具执行前把工具调用事件转发给监督器，即可获得允许、拒绝、询问、隔离决策。",
+            "平台提供强制开启防护的 `/api/runtime/evaluate` 通用监督接口和 `/api/integrations/openclaw/events` 兼容接口。OpenClaw 或其他开源智能体应用只需要在工具执行前把工具调用事件转发给监督器，即可获得允许、拒绝、询问、隔离决策。",
             "",
             "外部事件会被写入 `audit_logs` 和 `alerts`，因此它不是只能运行内置样例，也可以作为旁路安全插件接入真实智能体应用的工具调用链。",
         ]
@@ -496,6 +546,20 @@ def _checklist(
     runs: list[dict[str, Any]],
     alerts_count: int,
 ) -> list[dict[str, str]]:
+    external_agent_ready = False
+    external_agent_report = SANDBOX_REPORTS_DIR / "最小外部Agent接入运行证据.json"
+    if external_agent_report.exists():
+        try:
+            payload = json.loads(external_agent_report.read_text(encoding="utf-8"))
+            summary = payload.get("summary", {})
+            external_agent_ready = bool(
+                payload.get("schema_version") == "agent-supervisor.external-agent-e2e.v1"
+                and payload.get("risk_hint_used") is False
+                and summary.get("task_count", 0) >= 4
+                and summary.get("audit_hash_count") == summary.get("task_count")
+            )
+        except (OSError, json.JSONDecodeError):
+            pass
     surface_count = len({scenario["surface_id"] for scenario in scenarios})
     complete_scenarios = [
         scenario
@@ -529,9 +593,13 @@ def _checklist(
             "evidence": "策略中心和审计日志已覆盖四类决策。",
         },
         {
-            "requirement": "提供开源智能化应用或适配目标",
-            "status": "基本满足",
-            "evidence": "内置智能体受控实验环境，提供 OpenClaw 事件适配结构和可安装 native plugin 包；真实 OpenClaw 运行验收需在安装 OpenClaw 的环境中执行。",
+            "requirement": "通用智能体工具执行链接入",
+            "status": "满足" if external_agent_ready else "待补证",
+            "evidence": (
+                "AgentToolGuard 已完成正常放行、风险控制、真实工具执行和审计落库端到端验证，且输入不包含 risk_hint。"
+                if external_agent_ready
+                else "已提供通用 HTTP、OpenAI Agents SDK、LangChain 和 LangGraph 接入示例；需运行通用 Agent 端到端演示生成证据。"
+            ),
         },
         {
             "requirement": "本地受控环境业务工具",

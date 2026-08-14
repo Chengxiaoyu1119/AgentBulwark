@@ -1,13 +1,9 @@
 import type { JSX } from 'react';
 import {
-  ClipboardList,
-  FileWarning,
-  FlaskConical,
-  GitBranch,
+  Activity,
   Play,
   ScrollText,
   Settings2,
-  ShieldAlert,
   ShieldCheck
 } from 'lucide-react';
 
@@ -38,46 +34,45 @@ export const defaultPage: PageKey = 'dashboard';
 
 export const navGroups: NavGroup[] = [
   {
-    key: 'research',
-    label: '攻击研究',
+    key: 'operations',
+    label: '运行与处置',
     items: [
-      { key: 'dashboard', label: '总览与攻击面', icon: <FlaskConical size={18} /> },
-      { key: 'scenarios', label: '脚本与样本库', icon: <ClipboardList size={18} /> }
+      { key: 'dashboard', label: '运行总览', icon: <Activity size={18} /> },
+      { key: 'audit', label: '事件与复核', icon: <ScrollText size={18} /> }
     ]
   },
   {
-    key: 'replay',
-    label: '复现运行',
-    items: [
-      { key: 'lab', label: '攻击复现实验台', icon: <Play size={18} /> },
-      { key: 'chain', label: '多 Agent 攻击链', icon: <GitBranch size={18} /> }
-    ]
+    key: 'validation',
+    label: '验证',
+    items: [{ key: 'lab', label: '攻防验证', icon: <Play size={18} /> }]
   },
   {
-    key: 'defense',
-    label: '监督防御',
-    items: [
-      { key: 'audit', label: '工具调用审计', icon: <ScrollText size={18} /> },
-      { key: 'policy', label: '策略防御中心', icon: <ShieldCheck size={18} /> },
-      { key: 'alerts', label: '告警与阻断', icon: <ShieldAlert size={18} /> }
-    ]
+    key: 'protection',
+    label: '配置',
+    items: [{ key: 'policy', label: '防护策略', icon: <ShieldCheck size={18} /> }]
   },
   {
-    key: 'model',
-    label: '模型接入',
-    items: [{ key: 'settings', label: '模型与系统设置', icon: <Settings2 size={18} /> }]
-  },
-  {
-    key: 'delivery',
-    label: '证据交付',
-    items: [{ key: 'report', label: '评测报告', icon: <FileWarning size={18} /> }]
+    key: 'integration',
+    label: '接入',
+    items: [{ key: 'settings', label: 'Agent 接入', icon: <Settings2 size={18} /> }]
   }
 ];
 
 export const navItems: NavItem[] = navGroups.flatMap((group) => group.items);
+const allPageKeys: PageKey[] = [
+  'dashboard',
+  'scenarios',
+  'lab',
+  'chain',
+  'audit',
+  'policy',
+  'alerts',
+  'report',
+  'settings'
+];
 
 export function isPageKey(value: string): value is PageKey {
-  return navItems.some((item) => item.key === value);
+  return allPageKeys.includes(value as PageKey);
 }
 
 export function pageFromHash(hash: string): PageKey {
@@ -87,4 +82,12 @@ export function pageFromHash(hash: string): PageKey {
 
 export function pageToHash(page: PageKey) {
   return `#/${page}`;
+}
+
+export function pageLabel(page: PageKey) {
+  if (page === 'report') return '证据导出（按需）';
+  if (page === 'scenarios') return '攻击场景与样本';
+  if (page === 'chain') return '多 Agent 攻击链';
+  if (page === 'alerts') return '安全事件与阻断';
+  return navItems.find((item) => item.key === page)?.label ?? '安全工作台';
 }

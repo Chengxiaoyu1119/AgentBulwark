@@ -13,7 +13,7 @@ title: 外部 Agent 接入
 
 | 模式 | 说明 |
 | --- | --- |
-| 事件转发 | 外部 Agent 在工具执行前调用 `/api/supervisor/evaluate` |
+| 事件转发 | 外部 Agent 在工具执行前调用 `/api/runtime/evaluate` |
 | OpenClaw 兼容 | 使用 `/api/integrations/openclaw/events`，返回 OpenClaw 风格字段 |
 | 插件包生成 | 生成本地 OpenClaw native plugin 包和验证报告 |
 | 最小演示 | 使用仓库内样例事件验证监督服务可用 |
@@ -23,7 +23,7 @@ title: 外部 Agent 接入
 通用入口：
 
 ```text
-POST /api/supervisor/evaluate
+POST /api/runtime/evaluate
 ```
 
 OpenClaw 兼容入口：
@@ -43,8 +43,7 @@ POST /api/integrations/openclaw/events
     "tool": "file.read",
     "arguments": {
       "path": "confidential/customers.csv"
-    },
-    "risk_hint": "sensitive_file"
+    }
   },
   "guard_enabled": true,
   "execute_in_sandbox": false
@@ -91,6 +90,8 @@ npm run cli -- openclaw-plugin --output apps/api/sandbox/reports
 npm run cli -- openclaw-plugin-validate --output apps/api/sandbox/reports
 ```
 
+验证会实际执行生成后的插件代码，检查 `before_tool_call`/`after_tool_call` 注册、Bearer Token、默认不发送 `risk_hint`、风险阻断和正常放行。该检查属于插件契约端到端验收；真实 OpenClaw 加载状态另由 runtime inspect 证明。
+
 如果当前环境安装了 OpenClaw CLI，可以追加 `--inspect-runtime` 做 runtime inspect：
 
 ```powershell
@@ -102,5 +103,7 @@ npm run cli -- openclaw-plugin-validate --inspect-runtime --output apps/api/sand
 - 监督服务默认只给决策，不替外部系统执行真实工具。
 - `execute_in_sandbox=true` 只会调用本地沙箱工具。
 - 外部 Agent 应在执行真实工具前等待监督结果。
+- 插件支持 `apiToken` 配置或 `AGENT_SUPERVISOR_API_TOKEN` 环境变量；正式部署开启后端鉴权时必须配置。
+- `emitRiskHint` 默认是 `false`，评测时由监督器依据工具名、参数、上下文和历史行为独立判定。
 - `询问` 决策应进入人工复核流程，不应自动放行。
 - 工具返回内容应作为低信任数据处理，不能覆盖系统规则或授权判断。

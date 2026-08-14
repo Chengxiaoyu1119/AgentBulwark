@@ -38,3 +38,10 @@ Object.defineProperty(window, 'ResizeObserver', {
   writable: true,
   value: TestResizeObserver
 });
+
+const nativeGetComputedStyle = window.getComputedStyle.bind(window);
+Object.defineProperty(window, 'getComputedStyle', {
+  writable: true,
+  value: (element: Element, pseudoElement?: string | null) =>
+    nativeGetComputedStyle(element, pseudoElement ? undefined : pseudoElement)
+});

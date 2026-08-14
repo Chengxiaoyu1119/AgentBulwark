@@ -236,6 +236,7 @@ export interface AuthorizedTargetRunResult {
   authorization_note?: string;
   preflight: SupervisorEvaluation;
   http_status: number;
+  resolved_ip: string;
   target_response: string;
   request_preview?: Record<string, unknown>;
   output_filter: {

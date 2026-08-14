@@ -82,6 +82,15 @@ export interface OutputFilterEvidence {
   cases: OutputFilterCase[];
 }
 
+export interface AttackEffectAssertion {
+  tool: string;
+  observed: boolean;
+  reason: string;
+  executed: boolean;
+  sandboxed: boolean;
+  fixture_source: string;
+}
+
 export interface AttackEffectivenessCase {
   scenario_id: string;
   surface_id: string;
@@ -105,6 +114,8 @@ export interface AttackEffectivenessCase {
     anomaly_scores?: number[];
     audit_hashes?: string[];
     alert_count: number;
+    attack_outcome_source?: string;
+    attack_assertions?: AttackEffectAssertion[];
   } | null;
   with_guard: {
     run_id: string;
@@ -117,6 +128,8 @@ export interface AttackEffectivenessCase {
     anomaly_scores?: number[];
     audit_hashes?: string[];
     alert_count: number;
+    attack_outcome_source?: string;
+    attack_assertions?: AttackEffectAssertion[];
   } | null;
   unguarded_hash_status?: {
     valid: boolean;

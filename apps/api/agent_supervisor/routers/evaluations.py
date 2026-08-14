@@ -1,10 +1,20 @@
+import json
 import re
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
-from apps.api.agent_supervisor.auth import current_security_role, require_api_token, require_role
+from apps.api.agent_supervisor.auth import (
+    current_agent_identity,
+    current_security_role,
+    require_agent_identity,
+    require_any_role,
+    require_api_token,
+    require_role,
+    restrict_executor_scope,
+)
 from apps.api.agent_supervisor.domains.attacks.agents import batch_compare_scenarios
 from apps.api.agent_supervisor.domains.evaluations.ablation import (
     build_policy_ablation,
@@ -23,6 +33,11 @@ from apps.api.agent_supervisor.domains.evaluations.calibration import (
     build_anomaly_calibration_markdown,
     write_anomaly_calibration_report,
 )
+from apps.api.agent_supervisor.domains.evaluations.competition_benchmark import (
+    build_competition_benchmark,
+    build_competition_benchmark_markdown,
+    write_competition_benchmark_report,
+)
 from apps.api.agent_supervisor.domains.evaluations.datasets import build_attack_case_dataset, build_attack_case_markdown
 from apps.api.agent_supervisor.domains.evaluations.demo_drill import (
     build_judge_demo_drill_markdown,
@@ -36,20 +51,31 @@ from apps.api.agent_supervisor.domains.evaluations.evidence import (
     build_surface_conclusions_markdown,
 )
 from apps.api.agent_supervisor.domains.evaluations.gap_rerun import run_gap_rerun
+from apps.api.agent_supervisor.domains.evaluations.holdout import evaluate_adversarial_holdout
 from apps.api.agent_supervisor.domains.governance.approvals import (
     build_approval_review_markdown,
+    claim_approval_execution,
+    complete_approval_execution,
     decide_approval_review,
+    get_approval_review,
     list_approval_reviews,
     write_approval_review_report,
 )
 from apps.api.agent_supervisor.domains.runtime.runtime_evaluation import (
     build_real_model_evaluation,
     build_real_model_evaluation_markdown,
+    load_real_model_evaluation_report,
     write_real_model_evaluation_report,
 )
 from apps.api.agent_supervisor.paths import SANDBOX_REPORTS_DIR
-from apps.api.agent_supervisor.schemas.main_models import ApprovalDecisionRequest, RealModelEvaluationRequest
-from apps.api.agent_supervisor.storage.database import latest_runs
+from apps.api.agent_supervisor.schemas.main_models import (
+    ApprovalDecisionRequest,
+    ApprovalExecutionClaimRequest,
+    ApprovalExecutionCompleteRequest,
+    RealModelEvaluationRequest,
+)
+from apps.api.agent_supervisor.storage.data import get_scenarios
+from apps.api.agent_supervisor.storage.database import latest_runs, latest_scenario_run_pairs
 
 from ..domains.reports.briefing_export import (
     EXPORT_DIR_NAME,
@@ -76,7 +102,11 @@ from ..domains.reports.surface_pack import (
 )
 from ..services.report_service import build_report
 
-router = APIRouter(dependencies=[Depends(require_api_token)])
+router = APIRouter(dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)])
+
+
+def _competition_evidence_runs() -> list[dict[str, Any]]:
+    return latest_scenario_run_pairs([scenario["id"] for scenario in get_scenarios()])
 
 
 @router.get("/api/evaluations/real_model")
@@ -94,18 +124,67 @@ def real_model_evaluation_markdown(force_real: bool = True) -> Response:
 def write_real_model_evaluation(request: RealModelEvaluationRequest) -> dict:
     return write_real_model_evaluation_report(force_real=request.force_real)
 
+
+@router.get("/api/evaluations/real_model/latest")
+def latest_real_model_evaluation() -> dict:
+    data = load_real_model_evaluation_report()
+    if data is None:
+        return {"available": False, "message": "尚未生成真实模型工具调用盲测报告。"}
+    return {"available": True, **data}
+
+
+@router.get("/api/evaluations/real_model/latest.md")
+def latest_real_model_evaluation_markdown() -> Response:
+    data = load_real_model_evaluation_report()
+    if data is None:
+        return Response("尚未生成真实模型工具调用盲测报告。", media_type="text/markdown; charset=utf-8")
+    return Response(build_real_model_evaluation_markdown(data), media_type="text/markdown; charset=utf-8")
+
+
+@router.get("/api/evaluations/competition_benchmark")
+def competition_benchmark(
+    repeats: int = Query(3, ge=1, le=50),
+    concurrency: int = Query(20, ge=1, le=100),
+) -> dict:
+    return build_competition_benchmark(performance_repeats=repeats, concurrency=concurrency)
+
+
+@router.get("/api/evaluations/competition_benchmark.md")
+def competition_benchmark_markdown(
+    repeats: int = Query(3, ge=1, le=50),
+    concurrency: int = Query(20, ge=1, le=100),
+) -> Response:
+    data = build_competition_benchmark(performance_repeats=repeats, concurrency=concurrency)
+    return Response(build_competition_benchmark_markdown(data), media_type="text/markdown; charset=utf-8")
+
+
+@router.post("/api/evaluations/competition_benchmark/write")
+def write_competition_benchmark(
+    repeats: int = Query(10, ge=1, le=50),
+    concurrency: int = Query(20, ge=1, le=100),
+) -> dict:
+    return write_competition_benchmark_report(performance_repeats=repeats, concurrency=concurrency)
+
 @router.get("/api/approvals")
-def approval_reviews(status: str = "全部", limit: int = Query(100, ge=1, le=500)) -> dict:
+def approval_reviews(
+    status: str = "全部",
+    scope: str = "全部",
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
     try:
-        return list_approval_reviews(status=status, limit=limit)
+        return list_approval_reviews(status=status, limit=limit, scope=scope)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/approvals.md")
-def approval_reviews_markdown(status: str = "全部", limit: int = Query(100, ge=1, le=500)) -> Response:
+def approval_reviews_markdown(
+    status: str = "全部",
+    scope: str = "全部",
+    limit: int = Query(100, ge=1, le=500),
+) -> Response:
     try:
-        data = list_approval_reviews(status=status, limit=limit)
+        data = list_approval_reviews(status=status, limit=limit, scope=scope)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return Response(build_approval_review_markdown(data), media_type="text/markdown; charset=utf-8")
@@ -114,6 +193,54 @@ def approval_reviews_markdown(status: str = "全部", limit: int = Query(100, ge
 @router.post("/api/approvals/write")
 def write_approval_reviews() -> dict:
     return write_approval_review_report()
+
+
+@router.get("/api/approvals/{review_id}")
+def approval_review_detail(review_id: str) -> dict:
+    try:
+        return get_approval_review(review_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"未知复核单：{review_id}") from exc
+
+
+@router.post("/api/approvals/{review_id}/claim")
+def approval_execution_claim(
+    review_id: str,
+    request: ApprovalExecutionClaimRequest,
+    role: str = Depends(current_security_role),
+    authenticated_agent_id: str | None = Depends(current_agent_identity),
+) -> dict:
+    require_any_role({"executor", "admin"}, role)
+    require_agent_identity(request.agent_id, role, authenticated_agent_id)
+    try:
+        return claim_approval_execution(review_id, request.agent_id, request.tool_call)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"未知复核单：{review_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/approvals/{review_id}/complete")
+def approval_execution_complete(
+    review_id: str,
+    request: ApprovalExecutionCompleteRequest,
+    role: str = Depends(current_security_role),
+    authenticated_agent_id: str | None = Depends(current_agent_identity),
+) -> dict:
+    require_any_role({"executor", "admin"}, role)
+    require_agent_identity(request.agent_id, role, authenticated_agent_id)
+    try:
+        return complete_approval_execution(
+            review_id,
+            request.claim_id,
+            request.agent_id,
+            succeeded=request.succeeded,
+            result_hash=request.result_hash,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"未知复核单：{review_id}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/api/approvals/{review_id}/decision")
@@ -149,32 +276,32 @@ def attack_cases_markdown(surface_id: str | None = None) -> Response:
 
 @router.get("/api/project_roadmap")
 def project_roadmap() -> dict:
-    return build_project_roadmap(latest_runs(500))
+    return build_project_roadmap(_competition_evidence_runs())
 
 
 @router.get("/api/project_roadmap.md")
 def project_roadmap_markdown() -> Response:
-    return Response(build_project_roadmap_markdown(latest_runs(500)), media_type="text/markdown; charset=utf-8")
+    return Response(build_project_roadmap_markdown(_competition_evidence_runs()), media_type="text/markdown; charset=utf-8")
 
 
 @router.post("/api/project_roadmap/write")
 def write_project_roadmap_report() -> dict:
-    return write_project_roadmap(runs=latest_runs(500))
+    return write_project_roadmap(runs=_competition_evidence_runs())
 
 
 @router.get("/api/readiness")
 def competition_readiness() -> dict:
-    return build_competition_readiness(latest_runs(500))
+    return build_competition_readiness(_competition_evidence_runs())
 
 
 @router.get("/api/readiness.md")
 def competition_readiness_markdown() -> Response:
-    return Response(build_competition_readiness_markdown(build_competition_readiness(latest_runs(500))), media_type="text/markdown; charset=utf-8")
+    return Response(build_competition_readiness_markdown(build_competition_readiness(_competition_evidence_runs())), media_type="text/markdown; charset=utf-8")
 
 
 @router.post("/api/readiness/write")
 def write_competition_readiness() -> dict:
-    return write_competition_readiness_report()
+    return write_competition_readiness_report(runs=_competition_evidence_runs())
 
 
 @router.get("/api/demo_drill")
@@ -202,6 +329,11 @@ def anomaly_calibration() -> dict:
     return build_anomaly_calibration()
 
 
+@router.get("/api/evaluations/adversarial_holdout")
+def adversarial_holdout() -> dict:
+    return evaluate_adversarial_holdout()
+
+
 @router.get("/api/evaluations/anomaly_calibration.md")
 def anomaly_calibration_markdown() -> Response:
     return Response(build_anomaly_calibration_markdown(), media_type="text/markdown; charset=utf-8")
@@ -214,22 +346,22 @@ def write_anomaly_calibration() -> dict:
 
 @router.get("/api/attack_surfaces/evidence_packs")
 def attack_surface_evidence_packs() -> dict:
-    return build_surface_evidence_index(latest_runs(500))
+    return build_surface_evidence_index(_competition_evidence_runs())
 
 
 @router.get("/api/attack_surfaces/evidence_packs.md")
 def attack_surface_evidence_packs_markdown() -> Response:
-    return Response(build_surface_evidence_index_markdown(latest_runs(500)), media_type="text/markdown; charset=utf-8")
+    return Response(build_surface_evidence_index_markdown(_competition_evidence_runs()), media_type="text/markdown; charset=utf-8")
 
 
 @router.post("/api/attack_surfaces/evidence_packs/write")
 def write_attack_surface_evidence_packs() -> dict:
-    return write_all_surface_evidence_packs(runs=latest_runs(500))
+    return write_all_surface_evidence_packs(runs=_competition_evidence_runs())
 
 
 @router.post("/api/attack_surfaces/briefing_sheets/write")
 def write_attack_surface_briefing_sheets() -> dict:
-    return write_all_surface_briefing_sheets(runs=latest_runs(500))
+    return write_all_surface_briefing_sheets(runs=_competition_evidence_runs())
 
 
 @router.get("/api/attack_surfaces/briefing_sheets/export")
@@ -284,7 +416,7 @@ def attack_surface_briefing_sheet_export_file(surface_id: str, file_format: str)
 @router.get("/api/attack_surfaces/{surface_id}/evidence_pack")
 def attack_surface_evidence_pack(surface_id: str) -> dict:
     try:
-        return build_surface_evidence_pack(surface_id, latest_runs(500))
+        return build_surface_evidence_pack(surface_id, _competition_evidence_runs())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"未知攻击面：{surface_id}") from exc
 
@@ -292,7 +424,7 @@ def attack_surface_evidence_pack(surface_id: str) -> dict:
 @router.get("/api/attack_surfaces/{surface_id}/evidence_pack.md")
 def attack_surface_evidence_pack_markdown(surface_id: str) -> Response:
     try:
-        return Response(build_surface_evidence_pack_markdown(surface_id, latest_runs(500)), media_type="text/markdown; charset=utf-8")
+        return Response(build_surface_evidence_pack_markdown(surface_id, _competition_evidence_runs()), media_type="text/markdown; charset=utf-8")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"未知攻击面：{surface_id}") from exc
 
@@ -300,7 +432,7 @@ def attack_surface_evidence_pack_markdown(surface_id: str) -> Response:
 @router.post("/api/attack_surfaces/{surface_id}/evidence_pack/write")
 def write_attack_surface_evidence_pack(surface_id: str) -> dict:
     try:
-        return write_surface_evidence_pack(surface_id, runs=latest_runs(500))
+        return write_surface_evidence_pack(surface_id, runs=_competition_evidence_runs())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"未知攻击面：{surface_id}") from exc
 
@@ -308,7 +440,7 @@ def write_attack_surface_evidence_pack(surface_id: str) -> dict:
 @router.get("/api/attack_surfaces/{surface_id}/briefing_sheet.html")
 def attack_surface_briefing_sheet(surface_id: str) -> Response:
     try:
-        return Response(build_surface_briefing_sheet_html(surface_id, latest_runs(500)), media_type="text/html; charset=utf-8")
+        return Response(build_surface_briefing_sheet_html(surface_id, _competition_evidence_runs()), media_type="text/html; charset=utf-8")
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"未知攻击面：{surface_id}") from exc
 
@@ -316,7 +448,7 @@ def attack_surface_briefing_sheet(surface_id: str) -> Response:
 @router.post("/api/attack_surfaces/{surface_id}/briefing_sheet/write")
 def write_attack_surface_briefing_sheet(surface_id: str) -> dict:
     try:
-        return write_surface_briefing_sheet(surface_id, runs=latest_runs(500))
+        return write_surface_briefing_sheet(surface_id, runs=_competition_evidence_runs())
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"未知攻击面：{surface_id}") from exc
 
@@ -377,7 +509,7 @@ def output_filter_markdown() -> Response:
 
 @router.get("/api/evaluations/attack_effectiveness")
 def attack_effectiveness() -> dict:
-    return build_attack_effectiveness(latest_runs(500))
+    return build_attack_effectiveness(_competition_evidence_runs())
 
 
 @router.post("/api/evaluations/attack_effectiveness/run")
@@ -385,7 +517,7 @@ def run_attack_effectiveness() -> dict:
     run_result = batch_compare_scenarios()
     return {
         "run_result": run_result,
-        "attack_effectiveness": build_attack_effectiveness(latest_runs(500)),
+        "attack_effectiveness": build_attack_effectiveness(_competition_evidence_runs()),
     }
 
 
@@ -411,7 +543,7 @@ def write_policy_ablation() -> dict:
 
 @router.get("/api/evaluations/requirements")
 def requirement_alignment() -> list[dict]:
-    return build_attack_effectiveness(latest_runs(500))["requirement_alignment"]
+    return build_attack_effectiveness(_competition_evidence_runs())["requirement_alignment"]
 
 
 @router.post("/api/submission_package")
@@ -425,5 +557,9 @@ def clean_submission_package() -> dict:
 
 
 @router.get("/api/report")
-def report() -> dict:
-    return build_report()
+def report() -> Response:
+    return Response(
+        content=json.dumps(build_report(), ensure_ascii=False),
+        media_type="application/json",
+        headers={"Cache-Control": "no-store"},
+    )

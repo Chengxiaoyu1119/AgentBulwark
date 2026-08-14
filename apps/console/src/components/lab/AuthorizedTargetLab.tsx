@@ -244,6 +244,7 @@ export function AuthorizedTargetLab({ refresh }: AuthorizedTargetLabProps) {
                       <LabelTag color="blue">{result.summary.payload_kind ?? '未执行'}</LabelTag>
                     </Descriptions.Item>
                     <Descriptions.Item label="目标类型">{result.summary.target_type ?? targetType}</Descriptions.Item>
+                    <Descriptions.Item label="固定解析 IP">{result.resolved_ip || '预检阶段未连接'}</Descriptions.Item>
                     <Descriptions.Item label="Token 配置">
                       {result.summary.token_configured ? '已填写' : '未填写'}
                     </Descriptions.Item>

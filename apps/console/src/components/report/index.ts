@@ -5,3 +5,4 @@ export { ReportOverviewTab } from './ReportOverviewTab';
 export { ReportAttackEvaluationTab } from './ReportAttackEvaluationTab';
 export { ReportNormalEvaluationTab } from './ReportNormalEvaluationTab';
 export { ReportDeliveryTab } from './ReportDeliveryTab';
+export { RealModelEvidencePanel } from './RealModelEvidencePanel';

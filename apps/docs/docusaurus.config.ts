@@ -13,7 +13,7 @@ const consoleUrl =
   (isProduction ? 'https://xa.chengxiaoyu.top:46858' : 'http://127.0.0.1:5178');
 
 const config: Config = {
-  title: '大模型智能体攻击面研究与行为监督平台 文档',
+  title: '大模型智能体运行时行为防火墙与评测系统 文档',
   tagline: '工具调用监督、攻击复现和 Agent 安全集成手册',
   favicon: 'img/logo.svg',
   url: siteUrl,

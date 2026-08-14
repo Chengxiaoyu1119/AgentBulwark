@@ -50,11 +50,11 @@ def _submission_readme(package: dict[str, Any]) -> str:
         [
             "# 智安哨初赛提交包",
             "",
-            "项目名称：智安哨：大模型智能体攻击面研究与行为监督平台",
+            "项目名称：智安哨：面向大模型智能体工具调用链的运行时行为防火墙与评测系统",
             "",
             "## 项目定位",
             "",
-            "本项目面向赛道一“面向大模型及其应用的安全性研究”，构建红队攻击面研究、攻击样本复现、智能体行为监督、防御策略评测和报告导出闭环。",
+            "本项目参加信息安全作品赛软件作品的安全检测方向，构建智能体工具执行前监督、风险处置、审计取证、攻击评测和报告导出闭环。",
             "",
             "## 当前提交包统计",
             "",
@@ -109,7 +109,7 @@ def _run_guide() -> str:
             "node scripts/agent-supervisor-cli.mjs evaluate --input apps/api/sandbox/examples/agent-event.json",
             "```",
             "",
-            "也可以把真实智能体的工具调用事件 POST 到 `/api/supervisor/evaluate`。外部事件会写入审计日志和告警记录。",
+            "也可以把真实智能体的工具调用事件 POST 到 `/api/runtime/evaluate`。外部事件会写入审计日志和告警记录。",
             "",
             "批量评估真实智能体事件：",
             "",
@@ -206,8 +206,8 @@ def _api_inventory() -> str:
             "| `/api/run` | POST | 运行单个攻击脚本 |",
             "| `/api/compare` | POST | 单脚本无防护/有防护对比 |",
             "| `/api/batch_compare` | POST | 批量对比全部攻击脚本 |",
-            "| `/api/supervisor/evaluate` | POST | 通用外部智能体工具调用事件评估，并写入审计证据 |",
-            "| `/api/supervisor/batch_evaluate` | POST | 批量评估外部智能体工具调用事件，返回控制率并写入审计证据 |",
+            "| `/api/runtime/evaluate` | POST | 强制开启防护的通用外部智能体工具调用事件评估，并写入审计证据 |",
+            "| `/api/runtime/batch_evaluate` | POST | 强制开启防护的批量外部智能体事件评估，返回控制率并写入审计证据 |",
             "| `/api/audit_logs` | GET | 行为监督审计日志 |",
             "| `/api/alerts` | GET | 告警与阻断记录 |",
             "| `/api/approvals` | GET | 人工复核队列 JSON，可按待复核、已批准、已驳回筛选 |",
@@ -218,7 +218,7 @@ def _api_inventory() -> str:
             "| `/api/demo_drill.md` | GET | 查看最近一次答辩复现实验 Markdown 报告 |",
             "| `/api/demo_drill/run` | POST | 运行四步答辩复现流程，串联正常放行、人工复核和记忆隔离 |",
             "| `/api/demo_drill/write` | POST | 运行并在本地生成答辩复现实验 JSON 与 Markdown |",
-            "| `/api/report` | GET | 初赛报告素材中心数据 |",
+            "| `/api/report` | GET | 按需证据导出数据；运行时防护不依赖该接口 |",
             "| `/api/attack_surfaces/evidence_packs` | GET | 全部攻击面的证据包索引 JSON，含完整度、控制率和缺口提示 |",
             "| `/api/attack_surfaces/evidence_packs.md` | GET | 全部攻击面证据包索引 Markdown |",
             "| `/api/attack_surfaces/evidence_packs/write` | POST | 一键生成全部攻击面的 JSON、Markdown 和总索引文件 |",
@@ -358,7 +358,7 @@ def _real_integration_guide() -> str:
         [
             "# 真实接入与攻击面扩展说明",
             "",
-            "外部智能体可以在工具执行前 POST 到 `/api/supervisor/evaluate`，平台返回监督决策并写入审计日志。",
+            "外部智能体可以在工具执行前 POST 到 `/api/runtime/evaluate`，平台返回监督决策并写入审计日志。",
         ]
     )
 
@@ -539,12 +539,14 @@ def _readiness_record() -> str:
             "- 正常业务任务单步误报评测",
             "- 连续正常业务任务流程误报评测",
             "- 异常检测阈值校准",
-            "- OpenClaw 插件静态验收和 runtime inspect 缺口",
+            "- OpenClaw 插件静态、契约端到端和 runtime inspect 证据",
+            "- 200条冻结集、四组基线与性能证据",
             "- 初赛提交包、manifest 和复现截图完整性",
             "",
-            "## 仍需补证",
+            "## 当前证据状态",
             "",
-            "- 当前本机没有 OpenClaw CLI，因此真实 runtime inspect 仍是 P0 外部环境补证项。",
+            "- OpenClaw 插件已完成鉴权、去自标注、阻断/放行契约检查和真实 runtime inspect。",
+            "- 200条内部冻结集已绑定SHA-256，并完成四组基线与2000次性能判定。",
         ]
     )
 
@@ -620,7 +622,7 @@ def _screenshot_checklist() -> str:
             "5. 行为监督记录：展示工具调用、代码执行、文件访问、API 调用审计。",
             "6. 告警与阻断：展示告警证据、策略命中和处置建议。",
             "7. 防御策略中心：展示允许、拒绝、询问、隔离策略配置。",
-            "8. 评测报告：展示交付材料包和验收清单。",
+            "8. 按需证据：展示交付材料包和验收清单。",
             "9. 全量证据索引：展示 7 类攻击面的完整度、控制率和缺口状态。",
             "10. 攻击面评测单页：展示单个攻击面的攻击链路、监督命中、工具覆盖和验收闭环。",
             "11. 项目成熟度路线图：展示方向判断、成熟度、P0 缺口和下一轮计划。",

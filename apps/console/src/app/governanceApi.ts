@@ -37,15 +37,15 @@ export async function fetchMemoryGovernance(): Promise<MemoryGovernance> {
   return request<MemoryGovernance>('/api/memory_governance');
 }
 
-export async function updateMemoryStatus(memoryId: string, status: string): Promise<{ updated: boolean }> {
-  return request<{ updated: boolean }>(`/api/memory_governance/${encodeURIComponent(memoryId)}`, {
+export async function updateMemoryStatus(memoryId: string, status: string): Promise<{ updated: boolean; event_id?: number }> {
+  return request<{ updated: boolean; event_id?: number }>(`/api/memory_governance/${encodeURIComponent(memoryId)}`, {
     method: 'PATCH',
     body: JSON.stringify({ status, operator: 'security-analyst' })
   });
 }
 
-export async function rollbackLatestMemory(): Promise<{ updated: boolean; reason?: string }> {
-  return request<{ updated: boolean; reason?: string }>('/api/memory_governance/rollback_latest', {
+export async function rollbackLatestMemory(): Promise<{ updated: boolean; reason?: string; event_id?: number }> {
+  return request<{ updated: boolean; reason?: string; event_id?: number }>('/api/memory_governance/rollback_latest', {
     method: 'POST',
     body: JSON.stringify({ operator: 'security-analyst' })
   });

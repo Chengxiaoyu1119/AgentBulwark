@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any
 
 from apps.api.agent_supervisor.domains.governance.integrity import verify_audit_hashes
-from apps.api.agent_supervisor.domains.governance.supervisor import decide
-from apps.api.agent_supervisor.storage.data import get_attack_surfaces, get_scenarios
+from apps.api.agent_supervisor.paths import SANDBOX_REPORTS_DIR
+from apps.api.agent_supervisor.storage.data import get_attack_surfaces, get_evaluation_ground_truth, get_scenarios
 
 REQUIREMENT_ALIGNMENT = [
     {
@@ -61,6 +62,7 @@ def build_attack_effectiveness(runs: list[dict[str, Any]]) -> dict[str, Any]:
 
     surfaces = get_attack_surfaces()
     scenarios = get_scenarios()
+    ground_truth = get_evaluation_ground_truth()
     surface_name = {surface["id"]: surface["name"] for surface in surfaces}
     latest_runs = _latest_run_index(runs)
 
@@ -68,7 +70,7 @@ def build_attack_effectiveness(runs: list[dict[str, Any]]) -> dict[str, Any]:
     for scenario in scenarios:
         without_guard = latest_runs.get((scenario["id"], False))
         with_guard = latest_runs.get((scenario["id"], True))
-        expected = _expected_decisions(scenario)
+        expected = _expected_decisions(scenario, ground_truth)
         guarded_logs = with_guard.get("audit_logs", []) if with_guard else []
         guarded_hash = _hash_status(with_guard)
         unguarded_hash = _hash_status(without_guard)
@@ -120,6 +122,7 @@ def build_attack_effectiveness(runs: list[dict[str, Any]]) -> dict[str, Any]:
     surface_counter = Counter(item["surface_id"] for item in cases if item["defense_effective_with_guard"])
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "label_source": ground_truth.get("label_source", "unknown"),
         "summary": {
             "scenario_count": total,
             "surface_count": len(surfaces),
@@ -149,6 +152,7 @@ def build_requirement_alignment(cases: list[dict[str, Any]] | None = None) -> li
             return 0
         return _rate(sum(1 for case in cases if case.get(key)), len(cases))
 
+    openclaw_status, openclaw_evidence = _openclaw_requirement_evidence()
     checks = {
         "risk-report": {
             "status": "满足" if len(covered_surfaces) >= 3 else "不足",
@@ -171,8 +175,8 @@ def build_requirement_alignment(cases: list[dict[str, Any]] | None = None) -> li
             "evidence": f"当前脚本中的工具：{', '.join(sorted(scenario_tools))}。",
         },
         "open-agent": {
-            "status": "基本满足",
-            "evidence": "已提供 /api/integrations/openclaw/events 兼容事件入口；后续应接真实 OpenClaw 钩子。",
+            "status": openclaw_status,
+            "evidence": openclaw_evidence,
         },
         "model-filter": {
             "status": "满足" if any(tool == "model.respond" for tool in scenario_tools) else "需补强",
@@ -186,6 +190,26 @@ def build_requirement_alignment(cases: list[dict[str, Any]] | None = None) -> li
     return [{**item, **checks[item["id"]]} for item in REQUIREMENT_ALIGNMENT]
 
 
+def _openclaw_requirement_evidence() -> tuple[str, str]:
+    path = SANDBOX_REPORTS_DIR / "OpenClaw源码级插件包验收报告.json"
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            validation = payload.get("validation", payload)
+            if (
+                isinstance(validation, dict)
+                and validation.get("contract_e2e_passed") is True
+                and validation.get("runtime_inspect_passed") is True
+            ):
+                return (
+                    "满足",
+                    "OpenClaw native plugin 已通过鉴权、去自标注、阻断/放行契约端到端检查；真实 runtime inspect 确认 before_tool_call/after_tool_call 已加载。",
+                )
+        except (OSError, json.JSONDecodeError):
+            pass
+    return "基本满足", "已提供 OpenClaw 兼容事件入口和 native plugin 包，验收时需同时检查安全契约与真实 runtime inspect。"
+
+
 def _latest_run_index(runs: list[dict[str, Any]]) -> dict[tuple[str, bool], dict[str, Any]]:
     index: dict[tuple[str, bool], dict[str, Any]] = {}
     for run in sorted(runs, key=lambda item: item.get("created_at", "")):
@@ -195,21 +219,31 @@ def _latest_run_index(runs: list[dict[str, Any]]) -> dict[tuple[str, bool], dict
     return index
 
 
-def _expected_decisions(scenario: dict[str, Any]) -> list[dict[str, Any]]:
-    expected = []
-    for tool_call in scenario["tool_calls"]:
-        decision = decide(tool_call, True, scenario["adversarial_prompt"])
-        expected.append(
+def _expected_decisions(
+    scenario: dict[str, Any],
+    ground_truth: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    labels = ground_truth or get_evaluation_ground_truth()
+    raw_scenarios = labels.get("scenarios")
+    scenarios: dict[str, Any] = raw_scenarios if isinstance(raw_scenarios, dict) else {}
+    raw_expected = scenarios.get(str(scenario.get("id", "")), [])
+    expected: list[Any] = raw_expected if isinstance(raw_expected, list) else []
+    normalized = []
+    for item in expected:
+        if not isinstance(item, dict):
+            continue
+        decisions = [str(value) for value in item.get("decisions", [])]
+        policies = [str(value) for value in item.get("policies", [])]
+        normalized.append(
             {
-                "tool": tool_call["tool"],
-                "decision": decision.decision,
-                "policy_id": decision.policy_id,
-                "risk_level": decision.risk_level,
-                "risk_score": decision.risk_score,
-                "anomaly_score": decision.anomaly_score,
+                **item,
+                "decisions": decisions,
+                "policies": policies,
+                "decision": " / ".join(decisions),
+                "policy_id": " / ".join(policies),
             }
         )
-    return expected
+    return normalized
 
 
 def _expected_match(expected: list[dict[str, Any]], observed: list[dict[str, Any]]) -> bool:
@@ -219,9 +253,13 @@ def _expected_match(expected: list[dict[str, Any]], observed: list[dict[str, Any
         actual = observed[index]
         if actual.get("tool") != item["tool"]:
             return False
-        if actual.get("decision") != item["decision"]:
+        raw_decisions = item.get("decisions")
+        raw_policies = item.get("policies")
+        decisions: list[Any] = raw_decisions if isinstance(raw_decisions, list) else []
+        policies: list[Any] = raw_policies if isinstance(raw_policies, list) else []
+        if actual.get("decision") not in decisions:
             return False
-        if actual.get("policy_id") != item["policy_id"]:
+        if actual.get("policy_id") not in policies:
             return False
     return True
 
@@ -278,6 +316,22 @@ def _hash_status(run: dict[str, Any] | None) -> dict[str, Any]:
 def _run_brief(run: dict[str, Any] | None) -> dict[str, Any] | None:
     if not run:
         return None
+    raw_outcome = run.get("attack_outcome")
+    outcome: dict[str, Any] = raw_outcome if isinstance(raw_outcome, dict) else {}
+    raw_assertions = outcome.get("assertions")
+    assertions = raw_assertions if isinstance(raw_assertions, list) else []
+    assertion_briefs = [
+        {
+            "tool": str(assertion.get("tool", "")),
+            "observed": bool(assertion.get("observed")),
+            "reason": str(assertion.get("reason", "")),
+            "executed": bool(assertion.get("executed")),
+            "sandboxed": bool(assertion.get("sandboxed", True)),
+            "fixture_source": str(assertion.get("fixture_source", "")),
+        }
+        for assertion in assertions
+        if isinstance(assertion, dict)
+    ]
     return {
         "run_id": run.get("run_id"),
         "created_at": run.get("created_at"),
@@ -289,6 +343,8 @@ def _run_brief(run: dict[str, Any] | None) -> dict[str, Any] | None:
         "anomaly_scores": [log.get("anomaly_score") for log in run.get("audit_logs", [])],
         "audit_hashes": [log.get("audit_hash") for log in run.get("audit_logs", [])],
         "alert_count": len(run.get("alerts", [])),
+        "attack_outcome_source": outcome.get("source", ""),
+        "attack_assertions": assertion_briefs,
     }
 
 

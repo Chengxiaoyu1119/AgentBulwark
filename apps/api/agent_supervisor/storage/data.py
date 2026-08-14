@@ -16,6 +16,33 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
     "anomaly_reject_threshold": 85,
     "approval_sla_minutes": 30,
     "high_risk_auto_escalation": True,
+    "internal_email_domains": ["internal.example"],
+    "sensitive_path_markers": [
+        "confidential",
+        "secret",
+        "secrets",
+        "token",
+        "tokens",
+        "credential",
+        "credentials",
+        ".env",
+        "private-key",
+        "private_key",
+    ],
+    "sensitive_api_markers": [
+        "admin",
+        "scoreboard",
+        "challenge",
+        "seed",
+        "judge",
+        "session",
+        "campus-net",
+    ],
+    "agent_tool_allowlists": {
+        "judge-demo-agent": ["file.read", "mail.send", "api.call", "memory.write"],
+        "minimal-external-agent": ["file.read", "api.call", "mail.send"],
+    },
+    "agent_tool_mappings": {},
 }
 
 
@@ -76,14 +103,99 @@ def _load_policy_settings() -> dict[str, Any]:
         return dict(DEFAULT_POLICY_SETTINGS)
     if not isinstance(raw, dict):
         return dict(DEFAULT_POLICY_SETTINGS)
-    settings = {**DEFAULT_POLICY_SETTINGS, **raw}
+    settings = _normalize_policy_settings({**DEFAULT_POLICY_SETTINGS, **raw})
+
+    return settings
+
+
+def _normalize_policy_settings(settings: dict[str, Any]) -> dict[str, Any]:
     settings["anomaly_review_threshold"] = _clamp_int(settings.get("anomaly_review_threshold"), 1, 100)
     settings["anomaly_reject_threshold"] = _clamp_int(settings.get("anomaly_reject_threshold"), 1, 100)
     if settings["anomaly_reject_threshold"] < settings["anomaly_review_threshold"]:
         settings["anomaly_reject_threshold"] = settings["anomaly_review_threshold"]
     settings["approval_sla_minutes"] = _clamp_int(settings.get("approval_sla_minutes"), 1, 24 * 60)
     settings["high_risk_auto_escalation"] = bool(settings.get("high_risk_auto_escalation", True))
+    settings["internal_email_domains"] = _string_list(
+        settings.get("internal_email_domains"), DEFAULT_POLICY_SETTINGS["internal_email_domains"], max_items=50
+    )
+    settings["sensitive_path_markers"] = _string_list(
+        settings.get("sensitive_path_markers"), DEFAULT_POLICY_SETTINGS["sensitive_path_markers"], max_items=100
+    )
+    settings["sensitive_api_markers"] = _string_list(
+        settings.get("sensitive_api_markers"), DEFAULT_POLICY_SETTINGS["sensitive_api_markers"], max_items=100
+    )
+    settings["agent_tool_allowlists"] = _tool_allowlists(settings.get("agent_tool_allowlists"))
+    settings["agent_tool_mappings"] = _tool_mappings(settings.get("agent_tool_mappings"))
     return settings
+
+
+def _string_list(value: Any, default: list[str], *, max_items: int) -> list[str]:
+    if not isinstance(value, list):
+        return list(default)
+    result: list[str] = []
+    for item in value[:max_items]:
+        normalized = str(item).strip().lower()
+        if normalized and normalized not in result:
+            result.append(normalized)
+    return result or list(default)
+
+
+def _tool_allowlists(value: Any) -> dict[str, list[str]]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for raw_agent_id, raw_tools in list(value.items())[:100]:
+        agent_id = str(raw_agent_id).strip()
+        if not agent_id or not isinstance(raw_tools, list):
+            continue
+        tools: list[str] = []
+        for raw_tool in raw_tools[:100]:
+            tool = str(raw_tool).strip().lower()
+            if tool and tool not in tools:
+                tools.append(tool)
+        result[agent_id] = tools
+    return result
+
+
+def _tool_mappings(value: Any) -> dict[str, dict[str, dict[str, Any]]]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, dict[str, dict[str, Any]]] = {}
+    for raw_agent_id, raw_mappings in list(value.items())[:100]:
+        agent_id = str(raw_agent_id).strip()
+        if not agent_id or not isinstance(raw_mappings, dict):
+            continue
+        mappings: dict[str, dict[str, Any]] = {}
+        for raw_tool, raw_config in list(raw_mappings.items())[:100]:
+            tool = str(raw_tool).strip().lower()
+            if not tool or not isinstance(raw_config, dict):
+                continue
+            raw_argument_mapping = raw_config.get("argument_mapping", {})
+            argument_mapping = (
+                {
+                    str(source).strip(): str(target).strip()
+                    for source, target in list(raw_argument_mapping.items())[:100]
+                    if str(source).strip() and str(target).strip()
+                }
+                if isinstance(raw_argument_mapping, dict)
+                else {}
+            )
+            raw_required = raw_config.get("required_arguments", [])
+            required_arguments = (
+                list(dict.fromkeys(str(item).strip() for item in raw_required[:100] if str(item).strip()))
+                if isinstance(raw_required, list)
+                else []
+            )
+            mappings[tool] = {
+                "capability": str(raw_config.get("capability", "")).strip().lower(),
+                "argument_mapping": argument_mapping,
+                "required_arguments": required_arguments,
+                "risk_hint": str(raw_config.get("risk_hint", "")).strip().lower()[:160],
+                "description": str(raw_config.get("description", "")).strip()[:500],
+            }
+        if mappings:
+            result[agent_id] = mappings
+    return result
 
 
 def _save_policy_settings(settings: dict[str, Any]) -> None:
@@ -128,6 +240,14 @@ def get_policies() -> list[dict[str, Any]]:
 
 def get_scenarios() -> list[dict[str, Any]]:
     return deepcopy(_load_json_list("scenarios.json"))
+
+
+def get_evaluation_ground_truth() -> dict[str, Any]:
+    return deepcopy(_load_json_dict("evaluation_ground_truth.json"))
+
+
+def get_holdout_evaluation_samples() -> dict[str, Any]:
+    return deepcopy(_load_json_dict("holdout_evaluation.json"))
 
 
 def set_policy_enabled(policy_id: str, enabled: bool) -> dict[str, Any]:
@@ -182,13 +302,9 @@ def get_policy_settings() -> dict[str, Any]:
 
 def update_policy_settings(updates: dict[str, Any]) -> dict[str, Any]:
     before = _load_policy_settings()
-    settings = {**before, **{key: value for key, value in updates.items() if key in DEFAULT_POLICY_SETTINGS}}
-    settings["anomaly_review_threshold"] = _clamp_int(settings.get("anomaly_review_threshold"), 1, 100)
-    settings["anomaly_reject_threshold"] = _clamp_int(settings.get("anomaly_reject_threshold"), 1, 100)
-    if settings["anomaly_reject_threshold"] < settings["anomaly_review_threshold"]:
-        settings["anomaly_reject_threshold"] = settings["anomaly_review_threshold"]
-    settings["approval_sla_minutes"] = _clamp_int(settings.get("approval_sla_minutes"), 1, 24 * 60)
-    settings["high_risk_auto_escalation"] = bool(settings.get("high_risk_auto_escalation", True))
+    settings = _normalize_policy_settings(
+        {**before, **{key: value for key, value in updates.items() if key in DEFAULT_POLICY_SETTINGS}}
+    )
     _save_policy_settings(settings)
     record_policy_version(
         policy_id="__runtime_settings__",

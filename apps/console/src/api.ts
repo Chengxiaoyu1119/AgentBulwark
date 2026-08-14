@@ -192,7 +192,7 @@ export async function compareAttackChain(chainId: string): Promise<AttackChainCo
 }
 
 export async function fetchReport(): Promise<ReportData> {
-  return request<ReportData>('/api/report', undefined, { timeoutMs: 45000 });
+  return request<ReportData>('/api/report', undefined, { timeoutMs: 45000, retry: 0 });
 }
 
 export async function fetchAttackCaseDataset(): Promise<AttackCaseDataset> {
@@ -276,7 +276,7 @@ export async function runExternalAgentDemo(): Promise<ExternalAgentDemoResult> {
 }
 
 export async function evaluateSupervisorEvent(event: Record<string, unknown>): Promise<SupervisorEvaluation> {
-  return request<SupervisorEvaluation>('/api/supervisor/evaluate', {
+  return request<SupervisorEvaluation>('/api/runtime/evaluate', {
     method: 'POST',
     body: JSON.stringify(event)
   });
@@ -284,13 +284,12 @@ export async function evaluateSupervisorEvent(event: Record<string, unknown>): P
 
 export async function evaluateSupervisorBatch(
   events: Record<string, unknown>[],
-  options: { guard_enabled?: boolean; execute_in_sandbox?: boolean } = {}
+  options: { execute_in_sandbox?: boolean } = {}
 ): Promise<SupervisorBatchEvaluation> {
-  return request<SupervisorBatchEvaluation>('/api/supervisor/batch_evaluate', {
+  return request<SupervisorBatchEvaluation>('/api/runtime/batch_evaluate', {
     method: 'POST',
     body: JSON.stringify({
       events,
-      guard_enabled: options.guard_enabled ?? true,
       execute_in_sandbox: options.execute_in_sandbox ?? false
     })
   });

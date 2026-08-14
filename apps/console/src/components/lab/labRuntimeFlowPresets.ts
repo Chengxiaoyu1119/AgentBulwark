@@ -7,8 +7,8 @@ export function attackFunctionFlowSteps(
   return [
     { label: '输入构造', detail: '读取当前攻击文本和工具参数', tone: 'active' },
     {
-      label: plannerMode === 'model' ? '模型规划' : '规则规划',
-      detail: plannerMode === 'model' ? '调用后端配置模型生成工具调用' : '使用模块映射生成可复核调用',
+      label: plannerMode === 'model' ? '模型规划' : '固定规划',
+      detail: plannerMode === 'model' ? '调用后端配置模型生成工具调用' : '锁定相同工具调用，稳定复现唯一变量',
       tone: plannerMode === 'model' ? 'success' : 'warning'
     },
     { label: '本地受控环境', detail: executeInSandbox ? '沙箱工具执行并改变环境状态' : '只生成判定证据' },
@@ -51,7 +51,11 @@ export const dualModelFlowSteps: LabRuntimeFlowStep[] = [
 
 export function refusalRewriteFlowSteps(iterationCount: number, forceRealTarget: boolean): LabRuntimeFlowStep[] {
   return [
-    { label: '首轮主模型', detail: forceRealTarget ? '优先调用真实目标模型' : '使用本地可复现拒答样例', tone: 'active' },
+    {
+      label: '首轮主模型',
+      detail: forceRealTarget ? '优先调用真实目标模型' : '使用本地可复现拒答样例',
+      tone: 'active'
+    },
     { label: '拒答命中', detail: '检查抱歉、无法协助等拒答词并记录证据' },
     { label: '副模型改写', detail: `最多 ${iterationCount} 轮，复现拒答后重写链`, tone: 'success' },
     { label: '监督审计', detail: '识别 rewrite_evasion、refusal_rewrite、prompt_pollution 风险', tone: 'success' }

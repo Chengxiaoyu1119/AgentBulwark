@@ -76,6 +76,15 @@ describe('api client', () => {
     await expect(fetchReport()).resolves.toEqual(report);
     const init = fetchMock.mock.calls[0]?.[1];
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.cache).toBe('no-store');
+  });
+
+  it('does not repeat the expensive report request after a network failure', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchReport()).rejects.toMatchObject({ code: 'network_error', path: '/api/report' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('adds an authorization header when a token provider is configured', async () => {

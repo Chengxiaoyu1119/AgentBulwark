@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -8,7 +9,7 @@ APPS_ROOT = API_ROOT.parent
 REPO_ROOT = APPS_ROOT.parent
 
 ROOT_DOCS_DIR = REPO_ROOT / "docs"
-RUNTIME_DIR = API_ROOT / "runtime"
+RUNTIME_DIR = Path(os.getenv("AGENT_SUPERVISOR_RUNTIME_DIR", str(API_ROOT / "runtime"))).resolve()
 SANDBOX_DIR = API_ROOT / "sandbox"
 SANDBOX_FIXTURES_DIR = SANDBOX_DIR / "fixtures"
 SANDBOX_EXAMPLES_DIR = SANDBOX_DIR / "examples"

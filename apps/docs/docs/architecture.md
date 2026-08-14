@@ -33,12 +33,12 @@ agent-security-supervisor/
 
 ```text
 Agent 或控制台发起工具调用
--> POST /api/run、/api/supervisor/evaluate 或 /api/integrations/openclaw/events
+-> POST /api/run、/api/runtime/evaluate 或 /api/integrations/openclaw/events
 -> FastAPI 路由解析请求
 -> supervisor 计算策略命中、风险分和异常信号
 -> 返回允许、拒绝、询问或隔离
 -> 写入审计日志、告警、复核项和运行结果
--> 控制台或 CLI 读取结果并生成报告
+-> 控制台实时展示结果；需要复核或交付时再由控制台/CLI生成报告
 ```
 
 ## 监督决策

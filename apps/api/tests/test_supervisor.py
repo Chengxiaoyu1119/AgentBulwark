@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -8,10 +9,11 @@ from fastapi import HTTPException
 
 from apps.api.agent_supervisor import benign_workflows, tools
 from apps.api.agent_supervisor import data as policy_data
-from apps.api.agent_supervisor.auth import require_api_token
+from apps.api.agent_supervisor.auth import current_agent_identity, current_security_role, require_api_token
 from apps.api.agent_supervisor.domains.governance.correlation import reset_correlation_state
 from apps.api.agent_supervisor.domains.governance.supervisor import decide
 from apps.api.agent_supervisor.domains.runtime.events import evaluate_agent_event
+from apps.api.agent_supervisor.domains.runtime.server_security import configure_server_security
 
 
 class ApiTokenAuthTest(unittest.TestCase):
@@ -58,6 +60,189 @@ class ApiTokenAuthTest(unittest.TestCase):
             require_api_token(authorization="Bearer wrong-token", x_agent_supervisor_api_token=None)
 
         self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_shared_token_uses_server_side_default_role(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN": "shared-token",
+                "AGENT_SUPERVISOR_DEFAULT_ROLE": "observer",
+            },
+            clear=True,
+        ):
+            role = current_security_role(authorization="Bearer shared-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(role, "observer")
+
+
+class ServerSecurityTest(unittest.TestCase):
+    def test_loopback_keeps_local_demo_default(self):
+        with patch.dict(os.environ, {}, clear=True):
+            configure_server_security("127.0.0.1")
+            self.assertEqual(os.environ["AGENT_SUPERVISOR_AUTH_DISABLED"], "true")
+
+    def test_public_bind_requires_token_and_hmac(self):
+        with patch.dict(os.environ, {"AGENT_SUPERVISOR_AUTH_DISABLED": "false"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "API Token"):
+                configure_server_security("0.0.0.0")
+
+    def test_public_bind_accepts_hardened_configuration(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN": "test-token",
+                "AGENT_SUPERVISOR_AUDIT_HMAC_KEY": "test-hmac",
+            },
+            clear=True,
+        ):
+            configure_server_security("0.0.0.0")
+
+    def test_public_bind_accepts_agent_bound_executor_token(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_AGENT_TOKENS_JSON": json.dumps({"agent-1": "executor-token"}),
+                "AGENT_SUPERVISOR_AUDIT_HMAC_KEY": "test-hmac",
+            },
+            clear=True,
+        ):
+            configure_server_security("0.0.0.0")
+
+    def test_public_bind_rejects_unbound_shared_executor_token(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN_EXECUTOR": "shared-executor-token",
+                "AGENT_SUPERVISOR_AUDIT_HMAC_KEY": "test-hmac",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "绑定"):
+                configure_server_security("0.0.0.0")
+
+    def test_agent_bound_token_sets_executor_role_and_identity(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_AGENT_TOKENS_JSON": json.dumps({"agent-1": "executor-token"}),
+            },
+            clear=True,
+        ):
+            require_api_token(authorization="Bearer executor-token", x_agent_supervisor_api_token=None)
+            role = current_security_role(authorization="Bearer executor-token", x_agent_supervisor_api_token=None)
+            agent_id = current_agent_identity(authorization="Bearer executor-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(role, "executor")
+        self.assertEqual(agent_id, "agent-1")
+
+    def test_duplicate_agent_tokens_fail_closed(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_AGENT_TOKENS_JSON": json.dumps(
+                    {"agent-1": "duplicate-agent-token", "agent-2": "duplicate-agent-token"}
+                ),
+            },
+            clear=True,
+        ):
+            with self.assertRaises(HTTPException) as context:
+                require_api_token(authorization="Bearer duplicate-agent-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(context.exception.status_code, 503)
+
+    def test_invalid_agent_token_configs_fail_closed(self):
+        invalid_configs = (
+            "{",
+            "[]",
+            '{"agent-1": 123}',
+            '{"agent-1": ""}',
+            '{" agent-1": "agent-token"}',
+            '{"agent-1": "first-token", "agent-1": "second-token"}',
+        )
+        for raw_config in invalid_configs:
+            with self.subTest(raw_config=raw_config):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                        "AGENT_SUPERVISOR_AGENT_TOKENS_JSON": raw_config,
+                    },
+                    clear=True,
+                ):
+                    with self.assertRaises(HTTPException) as context:
+                        require_api_token(authorization="Bearer agent-token", x_agent_supervisor_api_token=None)
+                self.assertEqual(context.exception.status_code, 503)
+
+    def test_agent_token_cannot_reuse_shared_or_role_token(self):
+        reserved_token_envs = (
+            "AGENT_SUPERVISOR_API_TOKEN",
+            "AGENT_SUPERVISOR_API_TOKEN_OBSERVER",
+            "AGENT_SUPERVISOR_API_TOKEN_EXECUTOR",
+            "AGENT_SUPERVISOR_API_TOKEN_ANALYST",
+            "AGENT_SUPERVISOR_API_TOKEN_ADMIN",
+        )
+        for env_name in reserved_token_envs:
+            with self.subTest(env_name=env_name):
+                with patch.dict(
+                    os.environ,
+                    {
+                        "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                        "AGENT_SUPERVISOR_AGENT_TOKENS_JSON": json.dumps({"agent-1": "reserved-token"}),
+                        env_name: "reserved-token",
+                    },
+                    clear=True,
+                ):
+                    with self.assertRaises(HTTPException) as context:
+                        require_api_token(authorization="Bearer reserved-token", x_agent_supervisor_api_token=None)
+                self.assertEqual(context.exception.status_code, 503)
+
+    def test_agent_token_rotation_takes_effect_without_restart(self):
+        environment = {
+            "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+            "AGENT_SUPERVISOR_AGENT_TOKENS_JSON": json.dumps({"agent-1": "old-agent-token"}),
+        }
+        with patch.dict(os.environ, environment, clear=True):
+            require_api_token(authorization="Bearer old-agent-token", x_agent_supervisor_api_token=None)
+            os.environ["AGENT_SUPERVISOR_AGENT_TOKENS_JSON"] = json.dumps({"agent-1": "new-agent-token"})
+            with self.assertRaises(HTTPException) as context:
+                require_api_token(authorization="Bearer old-agent-token", x_agent_supervisor_api_token=None)
+            require_api_token(authorization="Bearer new-agent-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(context.exception.status_code, 401)
+
+    def test_role_specific_token_sets_role_on_server(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN_ADMIN": "admin-token",
+            },
+            clear=True,
+        ):
+            require_api_token(authorization="Bearer admin-token", x_agent_supervisor_api_token=None)
+            role = current_security_role(authorization="Bearer admin-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(role, "admin")
+
+    def test_duplicate_role_token_uses_least_privilege(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN_ADMIN": "duplicate-token",
+                "AGENT_SUPERVISOR_API_TOKEN_OBSERVER": "duplicate-token",
+            },
+            clear=True,
+        ):
+            role = current_security_role(authorization="Bearer duplicate-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(role, "observer")
 
 
 class PolicyPersistenceTest(unittest.TestCase):
@@ -148,32 +333,57 @@ class RuntimeGovernanceTest(unittest.TestCase):
         reset_correlation_state()
 
     def test_cross_agent_chain_requires_review_before_internal_send(self):
-        evaluate_agent_event(
-            {
-                "conversation_id": "chain-test",
-                "agent_id": "collector-agent",
-                "model_input": "请导出全部参赛队伍明细。",
-                "tool_call": {"tool": "api.call", "arguments": {"endpoint": "/competition/teams/export-all"}},
-            },
-            guard_enabled=True,
-        )
-
-        result = evaluate_agent_event(
-            {
-                "conversation_id": "chain-test",
-                "agent_id": "sender-agent",
-                "model_input": "请把上一条队伍导出结果发给 security@internal.example。",
-                "tool_call": {
-                    "tool": "mail.send",
-                    "arguments": {"to": "security@internal.example", "body": "队伍导出结果"},
+        with (
+            patch("apps.api.agent_supervisor.domains.runtime.events.write_run"),
+            patch("apps.api.agent_supervisor.domains.runtime.events.create_approval_review", return_value=None),
+        ):
+            evaluate_agent_event(
+                {
+                    "conversation_id": "chain-test",
+                    "agent_id": "collector-agent",
+                    "model_input": "请导出全部参赛队伍明细。",
+                    "tool_call": {"tool": "api.call", "arguments": {"endpoint": "/competition/teams/export-all"}},
                 },
-            },
-            guard_enabled=True,
-        )
+                guard_enabled=True,
+            )
+
+            result = evaluate_agent_event(
+                {
+                    "conversation_id": "chain-test",
+                    "agent_id": "sender-agent",
+                    "model_input": "请把上一条队伍导出结果发给 security@internal.example。",
+                    "tool_call": {
+                        "tool": "mail.send",
+                        "arguments": {"to": "security@internal.example", "body": "队伍导出结果"},
+                    },
+                },
+                guard_enabled=True,
+            )
 
         self.assertEqual(result["decision"], "询问")
         self.assertEqual(result["policy_id"], "cross-agent-chain")
         self.assertTrue(result["risk_evidence"]["cross_agent_chain"]["escalated"])
+
+    def test_runtime_audit_response_redacts_credentials_and_email(self):
+        with patch("apps.api.agent_supervisor.domains.runtime.events.write_run"):
+            result = evaluate_agent_event(
+                {
+                    "conversation_id": "redaction-test",
+                    "agent_id": "reader-agent",
+                    "model_input": "Authorization: Bearer abcdefghijklmnop",
+                    "model_output": "send to reviewer@example.com",
+                    "tool_call": {
+                        "tool": "file.read",
+                        "arguments": {"path": "public/项目说明.md", "api_key": "super-secret-value"},
+                    },
+                },
+                guard_enabled=True,
+            )
+
+        serialized = str(result)
+        self.assertNotIn("super-secret-value", serialized)
+        self.assertNotIn("abcdefghijklmnop", serialized)
+        self.assertNotIn("reviewer@example.com", serialized)
 
     def test_quarantined_memory_is_not_returned_by_default_read(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -9,6 +9,7 @@ import { AnomalyCalibrationBlock } from './AnomalyCalibrationBlock';
 import { ProjectRoadmapBlock } from './ProjectRoadmapBlock';
 import { ReportMaturityActions } from './ReportMaturityActions';
 import { ReportOverviewSurfaceDistribution } from './ReportOverviewSurfaceDistribution';
+import { RealModelEvidencePanel } from './RealModelEvidencePanel';
 
 type ReportOverviewTabProps = {
   report: ReportData;
@@ -48,7 +49,7 @@ export function ReportOverviewTab({ report, onRefreshReport, onRefreshRuntime, o
       label: '防护控制率',
       value: report.summary.control_rate,
       color: 'var(--ant-color-success)',
-      description: '有监督器时，危险工具调用被拒绝、询问、隔离或过滤的比例。'
+      description: '22 个固定攻击脚本在有防护分支中成功阻断副作用的比例。'
     },
     {
       label: '攻击成功率',
@@ -113,7 +114,7 @@ export function ReportOverviewTab({ report, onRefreshReport, onRefreshRuntime, o
           <Metric label="攻击脚本" value={`${report.summary.scenario_count}`} tone="amber" />
         </Col>
         <Col xs={24} sm={12} md={8} lg={4}>
-          <Metric label="防护控制率" value={`${report.summary.control_rate}%`} tone="green" />
+          <Metric label="固定脚本防护率" value={`${report.summary.control_rate}%`} tone="green" />
         </Col>
         <Col xs={24} sm={12} md={8} lg={4}>
           <Metric
@@ -130,10 +131,11 @@ export function ReportOverviewTab({ report, onRefreshReport, onRefreshRuntime, o
           />
         </Col>
         <Col xs={24} sm={12} md={8} lg={4}>
-          <Metric label="平均延迟" value={`${report.summary.avg_latency_ms}ms`} tone="red" />
+          <Metric label="实时事件均延迟" value={`${report.summary.avg_latency_ms}ms`} tone="red" />
         </Col>
       </Row>
       <ReportMaturityActions onRefreshReport={onRefreshReport} onRefreshRuntime={onRefreshRuntime} />
+      <RealModelEvidencePanel evaluation={report.real_model_evaluation} />
       {report.project_roadmap && <ProjectRoadmapBlock roadmap={report.project_roadmap} onOpenPage={onOpenPage} />}
       {report.anomaly_calibration && (
         <AnomalyCalibrationBlock
@@ -145,14 +147,14 @@ export function ReportOverviewTab({ report, onRefreshReport, onRefreshRuntime, o
       <Row gutter={[24, 24]}>
         <Col xs={24} lg={13}>
           <PanelCard
-            title={<SectionTitle title="核心评测曲线" meta={`${report.summary.run_count} 次实验运行`} />}
+            title={<SectionTitle title="核心评测曲线" meta={`固定脚本证据 + ${report.summary.run_count} 条实时运行`} />}
             variant="borderless"
             className="zh-full-height"
           >
             <Space orientation="vertical" className="zh-full-width zh-report-curve-stack">
               <div className="zh-report-card-toolbar">
                 <Typography.Text type="secondary">
-                  运行攻击脚本后自动刷新控制率、攻击成功率、误报率和输出过滤结果。
+                  攻防指标取每个固定脚本最新对照；平均延迟取近期实时运行，两个口径互不混用。
                 </Typography.Text>
                 <UiButton
                   size="small"

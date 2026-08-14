@@ -81,7 +81,7 @@ export function BatchResultPanel({ batch }: { batch: BatchCompareResult }) {
         bordered
       />
       <Typography.Paragraph type="secondary" className="zh-note-text">
-        * 批量运行会写入实验日志，评测报告页会自动统计这些运行记录，便于一键查看整体防护效果。
+        * 批量运行会写入实验日志；需要复核或交付时，再到“证据导出（按需）”生成固定证据。
       </Typography.Paragraph>
     </PanelCard>
   );

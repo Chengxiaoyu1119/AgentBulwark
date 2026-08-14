@@ -15,4 +15,5 @@ export interface ExperimentLabProps {
   compareResult: CompareResult | null;
   batchResult: BatchCompareResult | null;
   refresh?: () => Promise<unknown>;
+  onOpenAgentChain: () => void;
 }

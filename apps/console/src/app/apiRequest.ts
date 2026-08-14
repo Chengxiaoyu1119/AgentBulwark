@@ -131,6 +131,7 @@ export async function request<T>(path: string, init?: RequestInit, options: Requ
     try {
       const response = await fetch(path, {
         ...requestInit,
+        cache: requestMethod(init) === 'GET' ? 'no-store' : requestInit.cache,
         headers: await buildRequestHeaders(headers, init, options),
         signal: controller?.signal ?? signal
       });

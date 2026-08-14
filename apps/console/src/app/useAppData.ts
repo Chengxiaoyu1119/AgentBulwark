@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchAlerts,
   fetchAttackChains,
@@ -45,10 +45,13 @@ export function useAppData(page: PageKey) {
   const [running, setRunning] = useState(false);
   const [guardEnabled, setGuardEnabled] = useState(true);
   const [report, setReport] = useState<ReportData | null>(null);
+  const [reportSource, setReportSource] = useState<'backend' | 'fallback' | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
   const [apiNotice, setApiNotice] = useState('');
   const [apiAvailable, setApiAvailable] = useState<boolean | null>(null);
   const [realtimeStatus, setRealtimeStatus] = useState<'connected' | 'reconnecting' | 'offline'>('offline');
   const [lastRealtimeEvent, setLastRealtimeEvent] = useState('');
+  const reportRequestRef = useRef<Promise<void> | null>(null);
 
   const refresh = useCallback(async () => {
     const backendHealthy = await fetchHealth();
@@ -72,11 +75,29 @@ export function useAppData(page: PageKey) {
   }, []);
 
   const loadReport = useCallback(async () => {
+    if (reportRequestRef.current) {
+      return reportRequestRef.current;
+    }
+    setReportLoading(true);
+    const requestPromise = (async () => {
+      try {
+        const data = await fetchReport();
+        setReport(data);
+        setReportSource('backend');
+      } catch {
+        setReport(createFallbackReport());
+        setReportSource('fallback');
+        setApiNotice('评测报告接口调用失败，当前报告页明确展示内置模拟数据，不作为参赛证据。');
+      }
+    })();
+    reportRequestRef.current = requestPromise;
     try {
-      const data = await fetchReport();
-      setReport(data);
-    } catch {
-      setReport(createFallbackReport());
+      await requestPromise;
+    } finally {
+      if (reportRequestRef.current === requestPromise) {
+        reportRequestRef.current = null;
+      }
+      setReportLoading(false);
     }
   }, []);
 
@@ -118,16 +139,13 @@ export function useAppData(page: PageKey) {
   }, [refresh]);
 
   useEffect(() => {
-    if (page === 'report') {
-      void Promise.resolve().then(() => loadReport());
-    }
     if (page === 'audit') {
       void Promise.resolve().then(() => loadAuditLogs());
     }
     if (page === 'alerts') {
       void Promise.resolve().then(() => loadAlerts());
     }
-  }, [loadAlerts, loadAuditLogs, loadReport, page]);
+  }, [loadAlerts, loadAuditLogs, page]);
 
   useEffect(() => {
     if (!apiAvailable) {
@@ -149,8 +167,12 @@ export function useAppData(page: PageKey) {
               window.clearTimeout(refreshTimer);
             }
             refreshTimer = window.setTimeout(() => {
-              void refresh();
-            }, 180);
+              void Promise.resolve().then(async () => {
+                await refresh();
+                if (page === 'audit') await loadAuditLogs();
+                if (page === 'alerts') await loadAlerts();
+              });
+            }, 500);
           }, controller.signal);
         } catch {
           if (!stopped) {
@@ -170,7 +192,7 @@ export function useAppData(page: PageKey) {
         window.clearTimeout(refreshTimer);
       }
     };
-  }, [apiAvailable, refresh]);
+  }, [apiAvailable, loadAlerts, loadAuditLogs, page, refresh]);
 
   const activeScenario = useMemo(
     () => scenarios.find((scenario) => scenario.id === selectedScenario) ?? scenarios[0],
@@ -204,6 +226,8 @@ export function useAppData(page: PageKey) {
     guardEnabled,
     setGuardEnabled,
     report,
+    reportSource,
+    reportLoading,
     apiNotice,
     apiAvailable,
     realtimeStatus,

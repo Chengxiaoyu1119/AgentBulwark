@@ -3,6 +3,8 @@ import { Row, Col, Typography, Switch, Space, Descriptions, Flex } from 'antd';
 import { updatePolicyDetail, updatePolicyEnabled } from '@/api';
 import type { Policy } from '@/types';
 import { DecisionPill, LabelTag, MetricCard as Metric, PanelCard, UiAlert, UiButton, UiInput, UiSelect } from '../ui';
+import { RuntimeGovernanceTab } from '../settings/RuntimeGovernanceTab';
+import { useRuntimeGovernanceController } from '../settings/useRuntimeGovernanceController';
 import { PolicyDisableImpactPreview } from './PolicyDisableImpactPreview';
 
 export function PolicyCenter({
@@ -27,6 +29,7 @@ export function PolicyCenter({
   const [editingPolicyId, setEditingPolicyId] = useState('');
   const [policyDraft, setPolicyDraft] = useState<Partial<Policy>>({});
   const [pendingDisablePolicyId, setPendingDisablePolicyId] = useState('');
+  const governance = useRuntimeGovernanceController(setPolicyError);
 
   async function savePolicyEnabled(id: string, enabled: boolean) {
     const current = policies.find((policy) => policy.id === id);
@@ -97,7 +100,7 @@ export function PolicyCenter({
       <Flex justify="space-between" align="center" wrap="wrap" gap={16}>
         <Space orientation="vertical" size={4}>
           <Typography.Title level={2} className="zh-title-flush">
-            防御策略中心
+            防护策略中心
           </Typography.Title>
           <Typography.Text type="secondary">
             {enabledCount}/{policies.length} 已启用
@@ -268,6 +271,23 @@ export function PolicyCenter({
           </Col>
         ))}
       </Row>
+
+      <RuntimeGovernanceTab
+        authContext={governance.authContext}
+        policySettings={governance.policySettings}
+        metrics={governance.observabilityMetrics}
+        memoryGovernance={governance.memoryGovernance}
+        savingSettings={governance.savingSettings}
+        refreshingGovernance={governance.refreshingGovernance}
+        notice={governance.governanceNotice}
+        error={governance.governanceError}
+        busyMemoryId={governance.busyMemoryId}
+        onSettingsChange={governance.setPolicySettings}
+        onSaveSettings={governance.handleSavePolicySettings}
+        onRefreshGovernance={governance.handleRefreshGovernance}
+        onMemoryStatus={governance.handleMemoryStatus}
+        onRollbackMemory={governance.handleRollbackMemory}
+      />
     </div>
   );
 }

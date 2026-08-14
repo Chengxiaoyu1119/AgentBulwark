@@ -1,4 +1,4 @@
-import { Col, Flex, Row, Space, Steps, Typography } from 'antd';
+import { Col, Collapse, Flex, Row, Space, Typography } from 'antd';
 import { LabelTag, PanelCard, UiButton } from '../ui';
 import { OpenClawPluginPanel } from './OpenClawPluginPanel';
 import type {
@@ -17,6 +17,7 @@ type ExternalIntegrationTabProps = {
   validatingOpenClawPlugin: boolean;
   handleWriteOpenClawPlugin: () => void | Promise<void>;
   handleValidateOpenClawPlugin: () => void | Promise<void>;
+  ensureOpenClawIntegration: () => void | Promise<unknown>;
 };
 
 export function ExternalIntegrationTab({
@@ -27,7 +28,8 @@ export function ExternalIntegrationTab({
   writingOpenClawPlugin,
   validatingOpenClawPlugin,
   handleWriteOpenClawPlugin,
-  handleValidateOpenClawPlugin
+  handleValidateOpenClawPlugin,
+  ensureOpenClawIntegration
 }: ExternalIntegrationTabProps) {
   const integrationChecks = [
     {
@@ -36,25 +38,25 @@ export function ExternalIntegrationTab({
       ready: Boolean(agentIntegrationBundle)
     },
     {
-      label: 'OpenClaw 兼容事件',
-      value: integrationBundle ? `${integrationBundle.endpoints.length} 个入口` : '读取中',
-      ready: Boolean(integrationBundle)
+      label: '接入适配状态',
+      value: agentIntegrationBundle ? 'HTTP + 执行回执已实现' : '读取中',
+      ready: Boolean(agentIntegrationBundle)
     },
     {
-      label: '源码级插件包',
-      value: openClawPluginPackage ? `${openClawPluginPackage.file_count} 个文件` : '待生成',
-      ready: Boolean(openClawPluginPackage)
+      label: '执行前强制闸门',
+      value: 'AgentToolGuard 已实现',
+      ready: Boolean(agentIntegrationBundle)
     },
     {
-      label: '插件验收',
-      value: openClawPluginValidation?.validation.overall_status ?? '待验收',
-      ready: Boolean(openClawPluginValidation?.validation.static_passed)
+      label: '接入协议',
+      value: '判定 + 执行回执',
+      ready: Boolean(agentIntegrationBundle)
     }
   ];
 
   return (
     <Space orientation="vertical" size="large" className="zh-tab-stack">
-      <PanelCard title="外部智能体监督接入" type="inner">
+      <PanelCard title="Agent运行时安全接入" type="inner">
         <Row gutter={[16, 16]} className="zh-settings-status-grid">
           {integrationChecks.map((item) => (
             <Col xs={24} sm={12} lg={6} key={item.label}>
@@ -84,7 +86,7 @@ export function ExternalIntegrationTab({
                 HTTP 接口
               </Typography.Text>
               <Typography.Text code className="zh-settings-code-wrap">
-                POST /api/supervisor/evaluate
+                POST /api/runtime/evaluate
               </Typography.Text>
             </PanelCard>
           </Col>
@@ -111,10 +113,10 @@ export function ExternalIntegrationTab({
           <Col xs={24} sm={12} lg={6}>
             <PanelCard size="small" type="inner" className="zh-full-height">
               <Typography.Text type="secondary" className="zh-settings-info-label">
-                CLI 验证
+                执行回执
               </Typography.Text>
               <Typography.Text code className="zh-settings-code-wrap">
-                npm run cli -- external-agent-demo
+                POST /api/runtime/executions/&#123;audit_id&#125;/complete
               </Typography.Text>
             </PanelCard>
           </Col>
@@ -154,7 +156,7 @@ export function ExternalIntegrationTab({
             </Row>
             <Flex justify="space-between" align="center" wrap="wrap" gap={16}>
               <Typography.Text code className="zh-settings-code-wrap zh-settings-code-md">
-                POST /api/supervisor/evaluate
+                POST /api/integrations/agents/model_driven_demo
               </Typography.Text>
               <Space wrap>
                 <UiButton size="small" href="/api/integrations/agents/bundle" target="_blank">
@@ -168,127 +170,112 @@ export function ExternalIntegrationTab({
           </PanelCard>
         )}
 
-        {integrationBundle && (
-          <PanelCard
-            title={
-              <Space>
-                OpenClaw 兼容接入包{' '}
-                <LabelTag variant="filled" color="blue">
-                  {integrationBundle.version}
-                </LabelTag>
-              </Space>
+        <Collapse
+          ghost
+          onChange={(keys) => {
+            const nextKeys = Array.isArray(keys) ? keys.map(String) : [String(keys)];
+            if (nextKeys.includes('optional-adapters')) {
+              void ensureOpenClawIntegration();
             }
-            className="zh-mb-24 zh-settings-muted-body"
-            type="inner"
-            variant="borderless"
-          >
-            <Typography.Paragraph>{integrationBundle.purpose}</Typography.Paragraph>
-            <Row gutter={[16, 16]} className="zh-mb-24">
-              <Col xs={12} md={6}>
-                <PanelCard size="small" variant="borderless">
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    接口数量
-                  </Typography.Text>
-                  <Typography.Text strong className="zh-settings-stat-value">
-                    {integrationBundle.endpoints.length}
-                  </Typography.Text>
-                </PanelCard>
-              </Col>
-              <Col xs={12} md={6}>
-                <PanelCard size="small" variant="borderless">
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    样例事件
-                  </Typography.Text>
-                  <Typography.Text strong className="zh-settings-stat-value">
-                    {integrationBundle.sample_events.length}
-                  </Typography.Text>
-                </PanelCard>
-              </Col>
-              <Col xs={12} md={6}>
-                <PanelCard size="small" variant="borderless">
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    最低控制
-                  </Typography.Text>
-                  <Typography.Text strong className="zh-settings-stat-value">
-                    {integrationBundle.validation.expected.controlled_min}
-                  </Typography.Text>
-                </PanelCard>
-              </Col>
-              <Col xs={12} md={6}>
-                <PanelCard size="small" variant="borderless">
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    安全默认
-                  </Typography.Text>
-                  <Typography.Text strong className="zh-settings-stat-value">
-                    {integrationBundle.event_contract.safe_default.includes('false') ? '只审计' : '需确认'}
-                  </Typography.Text>
-                </PanelCard>
-              </Col>
-            </Row>
+          }}
+          items={[
+            {
+              key: 'optional-adapters',
+              label: '可选框架适配器',
+              children: (
+                <>
+                  {integrationBundle && (
+                    <PanelCard
+                      title={
+                        <Space>
+                          OpenClaw 可选兼容接入包{' '}
+                          <LabelTag variant="filled" color="blue">
+                            {integrationBundle.version}
+                          </LabelTag>
+                        </Space>
+                      }
+                      className="zh-mb-24 zh-settings-muted-body"
+                      type="inner"
+                      variant="borderless"
+                    >
+                      <Typography.Paragraph>{integrationBundle.purpose}</Typography.Paragraph>
+                      <Row gutter={[16, 16]} className="zh-mb-24">
+                        <Col xs={12} md={6}>
+                          <PanelCard size="small" variant="borderless">
+                            <Typography.Text type="secondary" className="zh-meta-block">
+                              接口数量
+                            </Typography.Text>
+                            <Typography.Text strong className="zh-settings-stat-value">
+                              {integrationBundle.endpoints.length}
+                            </Typography.Text>
+                          </PanelCard>
+                        </Col>
+                        <Col xs={12} md={6}>
+                          <PanelCard size="small" variant="borderless">
+                            <Typography.Text type="secondary" className="zh-meta-block">
+                              样例事件
+                            </Typography.Text>
+                            <Typography.Text strong className="zh-settings-stat-value">
+                              {integrationBundle.sample_events.length}
+                            </Typography.Text>
+                          </PanelCard>
+                        </Col>
+                        <Col xs={12} md={6}>
+                          <PanelCard size="small" variant="borderless">
+                            <Typography.Text type="secondary" className="zh-meta-block">
+                              最低控制
+                            </Typography.Text>
+                            <Typography.Text strong className="zh-settings-stat-value">
+                              {integrationBundle.validation.expected.controlled_min}
+                            </Typography.Text>
+                          </PanelCard>
+                        </Col>
+                        <Col xs={12} md={6}>
+                          <PanelCard size="small" variant="borderless">
+                            <Typography.Text type="secondary" className="zh-meta-block">
+                              安全默认
+                            </Typography.Text>
+                            <Typography.Text strong className="zh-settings-stat-value">
+                              {integrationBundle.event_contract.safe_default.includes('false') ? '只审计' : '需确认'}
+                            </Typography.Text>
+                          </PanelCard>
+                        </Col>
+                      </Row>
 
-            <Space orientation="vertical" className="zh-settings-stack zh-settings-stack--mb-24" size="middle">
-              {integrationBundle.endpoints.map((endpoint) => (
-                <PanelCard key={endpoint.path} size="small" bodyPadding={12}>
-                  <Flex justify="space-between" align="flex-start" wrap="wrap" gap={8}>
-                    <div>
-                      <Typography.Text strong className="zh-settings-endpoint-title">
-                        {endpoint.name}
-                      </Typography.Text>
-                      <Typography.Text type="secondary" className="zh-settings-endpoint-description">
-                        {endpoint.description}
-                      </Typography.Text>
-                    </div>
-                    <LabelTag variant="filled" color="purple" className="zh-settings-code-tag">
-                      {endpoint.method} {endpoint.path}
-                    </LabelTag>
-                  </Flex>
-                </PanelCard>
-              ))}
-            </Space>
+                      <PanelCard size="small" className="zh-settings-soft-panel" variant="borderless">
+                        <Flex justify="space-between" align="center" wrap="wrap" gap={16}>
+                          <Typography.Text code className="zh-settings-code-wrap zh-settings-code-md">
+                            {integrationBundle.validation.cli}
+                          </Typography.Text>
+                          <Space wrap>
+                            <UiButton size="small" href="/api/integrations/openclaw/bundle" target="_blank">
+                              查看接入包 JSON
+                            </UiButton>
+                            <UiButton size="small" href="/api/integrations/openclaw/schema" target="_blank">
+                              查看事件结构
+                            </UiButton>
+                            <UiButton size="small" href="/api/integrations/openclaw/adapter.py" target="_blank">
+                              查看适配器代码
+                            </UiButton>
+                          </Space>
+                        </Flex>
+                      </PanelCard>
+                    </PanelCard>
+                  )}
 
-            <PanelCard size="small" className="zh-settings-soft-panel" variant="borderless">
-              <Flex justify="space-between" align="center" wrap="wrap" gap={16}>
-                <Typography.Text code className="zh-settings-code-wrap zh-settings-code-md">
-                  {integrationBundle.validation.cli}
-                </Typography.Text>
-                <Space wrap>
-                  <UiButton size="small" href="/api/integrations/openclaw/bundle" target="_blank">
-                    查看接入包 JSON
-                  </UiButton>
-                  <UiButton size="small" href="/api/integrations/openclaw/schema" target="_blank">
-                    查看事件结构
-                  </UiButton>
-                  <UiButton size="small" href="/api/integrations/openclaw/adapter.py" target="_blank">
-                    查看适配器代码
-                  </UiButton>
-                </Space>
-              </Flex>
-            </PanelCard>
-
-            <div className="zh-settings-section-top">
-              <Typography.Title level={5} className="zh-settings-section-title">
-                接入步骤
-              </Typography.Title>
-              <Steps
-                orientation="vertical"
-                size="small"
-                current={integrationBundle.acceptance_steps.length}
-                items={integrationBundle.acceptance_steps.map((step) => ({
-                  title: <Typography.Text>{step}</Typography.Text>
-                }))}
-              />
-            </div>
-          </PanelCard>
-        )}
-
-        <OpenClawPluginPanel
-          integrationBundle={integrationBundle}
-          openClawPluginPackage={openClawPluginPackage}
-          openClawPluginValidation={openClawPluginValidation}
-          writingOpenClawPlugin={writingOpenClawPlugin}
-          validatingOpenClawPlugin={validatingOpenClawPlugin}
-          handleWriteOpenClawPlugin={handleWriteOpenClawPlugin}
-          handleValidateOpenClawPlugin={handleValidateOpenClawPlugin}
+                  <OpenClawPluginPanel
+                    integrationBundle={integrationBundle}
+                    openClawPluginPackage={openClawPluginPackage}
+                    openClawPluginValidation={openClawPluginValidation}
+                    writingOpenClawPlugin={writingOpenClawPlugin}
+                    validatingOpenClawPlugin={validatingOpenClawPlugin}
+                    handleWriteOpenClawPlugin={handleWriteOpenClawPlugin}
+                    handleValidateOpenClawPlugin={handleValidateOpenClawPlugin}
+                  />
+                </>
+              )
+            }
+          ]}
         />
       </PanelCard>
     </Space>

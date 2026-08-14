@@ -2,6 +2,12 @@ import type {
   AttackLabModulesResponse,
   AttackLabRunRequest,
   AttackLabRunResult,
+  CustomAttackCompareRequest,
+  CustomAttackCompareResult,
+  CustomAttackChainResult,
+  ExternalExecutionReceiptRequest,
+  ExternalExecutionReceiptResult,
+  ExternalExecutionReceiptState,
   AttackTestsetRunRequest,
   AttackTestsetRunResult,
   AttackTestsetsResponse,
@@ -15,6 +21,7 @@ import type {
   LearningLabRunRequest,
   LearningLabRunResult,
   LearningLabScenariosResponse,
+  ModelDrivenAgentResult,
   RefusalRewriteEvasionRequest,
   RefusalRewriteEvasionResult,
   TargetLabState
@@ -26,9 +33,62 @@ export async function fetchAttackLabModules(): Promise<AttackLabModulesResponse>
 }
 
 export async function runAttackLabModule(payload: AttackLabRunRequest): Promise<AttackLabRunResult> {
-  return request<AttackLabRunResult>('/api/attack_lab/run', {
-    method: 'POST',
-    body: JSON.stringify(payload)
+  return request<AttackLabRunResult>(
+    '/api/attack_lab/run',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    },
+    { timeoutMs: 180000, retry: 0 }
+  );
+}
+
+export async function runCustomAttackCompare(payload: CustomAttackCompareRequest): Promise<CustomAttackCompareResult> {
+  return request<CustomAttackCompareResult>(
+    '/api/attack_lab/custom_compare',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    },
+    { timeoutMs: 90000, retry: 0 }
+  );
+}
+
+export async function runCustomAttackChain(result: CustomAttackCompareResult): Promise<CustomAttackChainResult> {
+  return request<CustomAttackChainResult>(
+    '/api/attack_lab/custom_chain/run',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        ...result.request,
+        arguments: result.tool_call.arguments,
+        command: '',
+        execution_mode: 'sandbox',
+        source_comparison_id: result.comparison_id
+      })
+    },
+    { timeoutMs: 90000, retry: 0 }
+  );
+}
+
+export async function submitExternalExecutionReceipt(
+  auditId: string,
+  payload: ExternalExecutionReceiptRequest
+): Promise<ExternalExecutionReceiptResult> {
+  return request<ExternalExecutionReceiptResult>(
+    `/api/runtime/executions/${encodeURIComponent(auditId)}/complete`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    },
+    { timeoutMs: 30000, retry: 0 }
+  );
+}
+
+export async function fetchExternalExecutionReceipt(auditId: string): Promise<ExternalExecutionReceiptState> {
+  return request<ExternalExecutionReceiptState>(`/api/runtime/executions/${encodeURIComponent(auditId)}`, undefined, {
+    timeoutMs: 15000,
+    retry: 0
   });
 }
 
@@ -55,6 +115,21 @@ export async function runCapabilityReplay(): Promise<CapabilityReplayResult> {
       body: JSON.stringify({})
     },
     { timeoutMs: 60000 }
+  );
+}
+
+export async function runModelDrivenAgent(payload: {
+  task: string;
+  force_real_model: boolean;
+  target_model?: string;
+}): Promise<ModelDrivenAgentResult> {
+  return request<ModelDrivenAgentResult>(
+    '/api/integrations/agents/model_driven_demo',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    },
+    { timeoutMs: 120000 }
   );
 }
 

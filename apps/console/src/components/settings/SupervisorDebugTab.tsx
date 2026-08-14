@@ -93,6 +93,16 @@ export function SupervisorDebugTab({
               <Col xs={12} sm={8} md={4}>
                 <Metric label="审计 hash" value={`${externalAgentDemo.summary.audit_hash_count}`} />
               </Col>
+              <Col xs={12} sm={8} md={4}>
+                <Metric
+                  label="执行回执"
+                  value={`${externalAgentDemo.summary.receipt_confirmed_count ?? 0}/${externalAgentDemo.summary.task_count}`}
+                  tone={(externalAgentDemo.summary.receipt_unconfirmed_count ?? 0) > 0 ? 'red' : 'green'}
+                />
+              </Col>
+              <Col xs={12} sm={8} md={4}>
+                <Metric label="防护闭环" value={`${externalAgentDemo.summary.control_verified_count ?? 0}`} tone="green" />
+              </Col>
             </Row>
             <Space orientation="vertical" className="zh-settings-stack zh-settings-stack--mb-24">
               <Space wrap>
@@ -136,11 +146,17 @@ export function SupervisorDebugTab({
                         <LabelTag variant="filled" color={record.executed ? 'success' : 'default'}>
                           {record.executed ? '已执行' : '未执行'}
                         </LabelTag>
+                        <LabelTag variant="filled" color={record.receipt_confirmed ? 'success' : 'warning'}>
+                          {record.receipt_confirmed ? `${record.execution_target ?? 'unknown'} / ${record.execution_status ?? 'unknown'}` : '回执未确认'}
+                        </LabelTag>
                         <Typography.Text type="secondary" className="zh-settings-meta-sm">
                           {record.policy_id}
                         </Typography.Text>
                         <Typography.Text type="secondary" className="zh-settings-mono-sm">
                           {record.audit_hash ? record.audit_hash.slice(0, 12) : 'no-hash'}
+                        </Typography.Text>
+                        <Typography.Text type="secondary" className="zh-settings-mono-sm">
+                          receipt {record.execution_receipt?.receipt_hash?.slice(0, 12) ?? 'unconfirmed'}
                         </Typography.Text>
                       </Space>
                     </Col>

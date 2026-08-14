@@ -28,7 +28,7 @@ export function OpenClawPluginPanel({
 }: OpenClawPluginPanelProps) {
   return (
     <PanelCard
-      title="OpenClaw 源码级插件包"
+      title="可选兼容：OpenClaw 源码级插件包"
       className="zh-mb-24"
       type="inner"
       extra={
@@ -48,7 +48,7 @@ export function OpenClawPluginPanel({
       }
     >
       <Typography.Paragraph type="secondary">
-        生成可安装的 native plugin 目录，使用 before_tool_call 在 OpenClaw 工具执行前接入智安哨监督器。
+        这是通用 Agent 接入之外的可选适配，生成 native plugin 并在 before_tool_call 阶段接入智安哨监督器。
       </Typography.Paragraph>
       <Space className="zh-settings-action-row" wrap>
         <UiButton href="/api/integrations/openclaw/plugin_package" target="_blank">

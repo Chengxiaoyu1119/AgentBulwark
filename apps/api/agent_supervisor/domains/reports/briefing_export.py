@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...database import latest_runs
+from ...data import get_scenarios
+from ...database import latest_scenario_run_pairs
 from ...paths import REPO_ROOT, SANDBOX_REPORTS_DIR
 from .surface_pack import write_all_surface_briefing_sheets
 
@@ -34,7 +35,9 @@ def write_briefing_sheet_exports(format_: str = "both") -> dict[str, Any]:
 
     REPORT_ROOT.mkdir(parents=True, exist_ok=True)
     _cleanup_legacy_briefing_outputs()
-    briefing_result = write_all_surface_briefing_sheets(runs=latest_runs(500))
+    briefing_result = write_all_surface_briefing_sheets(
+        runs=latest_scenario_run_pairs([scenario["id"] for scenario in get_scenarios()])
+    )
     output_dir = REPORT_ROOT / EXPORT_DIR_NAME
     _reset_output_dir(output_dir)
     script_path = REPO_ROOT / "scripts" / "export-briefing-sheets.mjs"

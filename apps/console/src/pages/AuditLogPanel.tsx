@@ -1,32 +1,52 @@
+import { useEffect, useState } from 'react';
 import { Col, Flex, Row, Typography } from 'antd';
 import { ApprovalReviewQueue } from '../components/audit/ApprovalReviewQueue';
+import { AlertsPanel } from './AlertsPanel';
 import { AuditFilterBar } from '../components/audit/AuditFilterBar';
 import { AuditLogDetail } from '../components/audit/AuditLogDetail';
 import { AuditLogList } from '../components/audit/AuditLogList';
 import { AuditSummaryCards } from '../components/audit/AuditSummaryCards';
 import { useAuditLogViewModel } from '../components/audit/useAuditLogViewModel';
-import { PanelCard, UiButton } from '../components/ui';
-import type { AuditLog } from '../types';
+import { PanelCard, UiButton, UiTabs } from '../components/ui';
+import { auditDeepLinkEvent, getAuditIdFromHash } from '../components/audit/auditDeepLink';
+import type { AlertItem, AuditLog } from '../types';
 
-export function AuditLogPanel({ logs, refresh }: { logs: AuditLog[]; refresh: () => void | Promise<void> }) {
+export function AuditLogPanel({
+  logs,
+  alerts = [],
+  refresh,
+  refreshAlerts
+}: {
+  logs: AuditLog[];
+  alerts?: AlertItem[];
+  refresh: () => void | Promise<void>;
+  refreshAlerts?: () => void | Promise<void>;
+}) {
   const view = useAuditLogViewModel({ logs, refresh });
-
-  return (
+  const [activeTab, setActiveTab] = useState(() => (getAuditIdFromHash() ? 'audit' : 'review'));
+  useEffect(() => {
+    const openAuditTab = () => {
+      if (getAuditIdFromHash()) setActiveTab('audit');
+    };
+    window.addEventListener('hashchange', openAuditTab);
+    window.addEventListener(auditDeepLinkEvent, openAuditTab);
+    return () => {
+      window.removeEventListener('hashchange', openAuditTab);
+      window.removeEventListener(auditDeepLinkEvent, openAuditTab);
+    };
+  }, []);
+  const operationalPendingCount = view.latestReviews.filter(
+    (review) => review.status === '待复核' && review.scope === 'operational'
+  ).length;
+  const reviewWorkspace = (
     <div className="zh-page-stack">
-      <PanelCard variant="borderless">
-        <Flex justify="space-between" align="center">
-          <Typography.Title level={3} className="zh-title-flush">
-            工具调用、代码执行、文件访问审计
-          </Typography.Title>
-          <UiButton onClick={refresh}>刷新审计</UiButton>
-        </Flex>
-      </PanelCard>
-
       <AuditSummaryCards
         total={logs.length}
         controlledCount={view.controlledCount}
         highRiskCount={view.highRiskCount}
         executedCount={view.executedCount}
+        receiptCount={view.receiptCount}
+        unconfirmedCount={view.unconfirmedCount}
       />
 
       <ApprovalReviewQueue
@@ -40,47 +60,80 @@ export function AuditLogPanel({ logs, refresh }: { logs: AuditLog[]; refresh: ()
         onDecision={view.handleApprovalDecision}
         onCopy={view.copyApprovalEvidence}
       />
+    </div>
+  );
+  const auditWorkspace = (
+    <PanelCard variant="borderless">
+      {view.activeAuditLinkId ? (
+        <div className="zh-audit-locator">
+          <Typography.Text type="secondary">正在定位</Typography.Text>
+          <Typography.Text code>{view.activeAuditLinkId}</Typography.Text>
+        </div>
+      ) : null}
 
+      <AuditFilterBar
+        query={view.query}
+        decisionFilter={view.decisionFilter}
+        riskFilter={view.riskFilter}
+        riskScoreFilter={view.riskScoreFilter}
+        toolFilter={view.toolFilter}
+        executionFilter={view.executionFilter}
+        tools={view.tools}
+        copiedFiltered={view.copiedFiltered}
+        onQueryChange={view.setQuery}
+        onDecisionFilterChange={view.setDecisionFilter}
+        onRiskFilterChange={view.setRiskFilter}
+        onRiskScoreFilterChange={view.setRiskScoreFilter}
+        onToolFilterChange={view.setToolFilter}
+        onExecutionFilterChange={view.setExecutionFilter}
+        onReset={view.resetAuditFilters}
+        onCopyFiltered={view.copyFilteredAuditEvidence}
+      />
+
+      <Row gutter={[24, 24]}>
+        <Col xs={24} md={10}>
+          <AuditLogList
+            logs={view.filteredLogs}
+            selectedLogId={view.selectedLogId}
+            onSelectLog={view.setSelectedLogId}
+          />
+        </Col>
+        <Col xs={24} md={14}>
+          <AuditLogDetail log={view.selectedLog} copied={view.copied} onCopy={view.copyEvidence} />
+        </Col>
+      </Row>
+    </PanelCard>
+  );
+
+  return (
+    <div className="zh-page-stack">
       <PanelCard variant="borderless">
-        {view.activeAuditLinkId ? (
-          <div className="zh-audit-locator">
-            <Typography.Text type="secondary">正在定位</Typography.Text>
-            <Typography.Text code>{view.activeAuditLinkId}</Typography.Text>
-          </div>
-        ) : null}
-
-        <AuditFilterBar
-          query={view.query}
-          decisionFilter={view.decisionFilter}
-          riskFilter={view.riskFilter}
-          riskScoreFilter={view.riskScoreFilter}
-          toolFilter={view.toolFilter}
-          executionFilter={view.executionFilter}
-          tools={view.tools}
-          copiedFiltered={view.copiedFiltered}
-          onQueryChange={view.setQuery}
-          onDecisionFilterChange={view.setDecisionFilter}
-          onRiskFilterChange={view.setRiskFilter}
-          onRiskScoreFilterChange={view.setRiskScoreFilter}
-          onToolFilterChange={view.setToolFilter}
-          onExecutionFilterChange={view.setExecutionFilter}
-          onReset={view.resetAuditFilters}
-          onCopyFiltered={view.copyFilteredAuditEvidence}
-        />
-
-        <Row gutter={[24, 24]}>
-          <Col xs={24} md={10}>
-            <AuditLogList
-              logs={view.filteredLogs}
-              selectedLogId={view.selectedLog?.id}
-              onSelectLog={view.setSelectedLogId}
-            />
-          </Col>
-          <Col xs={24} md={14}>
-            <AuditLogDetail log={view.selectedLog} copied={view.copied} onCopy={view.copyEvidence} />
-          </Col>
-        </Row>
+        <Flex justify="space-between" align="center">
+          <Typography.Title level={3} className="zh-title-flush">
+            安全事件、人工复核与执行审计
+          </Typography.Title>
+          <UiButton
+            onClick={async () => {
+              await Promise.all([refresh(), refreshAlerts?.()]);
+            }}
+          >
+            刷新事件
+          </UiButton>
+        </Flex>
       </PanelCard>
+      <UiTabs
+        activeKey={activeTab}
+        onChange={setActiveTab}
+        items={[
+          { key: 'review', label: `业务待办（${operationalPendingCount}）`, children: reviewWorkspace },
+          {
+            key: 'alerts',
+            label: `风险事件（${alerts.length}）`,
+            children: <AlertsPanel alerts={alerts} refresh={() => void refreshAlerts?.()} embedded />
+          },
+          { key: 'audit', label: `调用审计（${logs.length}）`, children: auditWorkspace }
+        ]}
+      />
     </div>
   );
 }

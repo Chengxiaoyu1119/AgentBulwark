@@ -61,6 +61,8 @@ export default function App() {
     guardEnabled,
     setGuardEnabled,
     report,
+    reportSource,
+    reportLoading,
     apiNotice,
     apiAvailable,
     setApiNotice,
@@ -71,7 +73,6 @@ export default function App() {
     activeScenario
   } = appData;
   const { handleRun, handleRunScenario, handleBatchCompare, handleAttackChain } = useAppActions({
-    page,
     setPage,
     scenarios,
     activeScenario,
@@ -87,8 +88,7 @@ export default function App() {
     setAttackChainCompareResult,
     setRunning,
     setApiNotice,
-    refresh,
-    loadReport
+    refresh
   });
 
   useEffect(() => {
@@ -185,6 +185,7 @@ export default function App() {
           compareResult={compareResult}
           batchResult={batchResult}
           refresh={refresh}
+          onOpenAgentChain={() => setPage('chain')}
         />
       )}
       {page === 'chain' && (
@@ -210,7 +211,9 @@ export default function App() {
           logs={
             auditLogs.length ? auditLogs : lastResult?.audit_logs?.length ? lastResult.audit_logs : overview.audit_logs
           }
+          alerts={lastResult?.alerts?.length ? lastResult.alerts : alerts.length ? alerts : overview.alerts}
           refresh={loadAuditLogs}
+          refreshAlerts={loadAlerts}
         />
       )}
       {page === 'policy' && <PolicyCenter policies={policies} setPolicies={setPolicies} />}
@@ -223,6 +226,8 @@ export default function App() {
       {page === 'report' && (
         <ReportPanel
           report={report}
+          reportSource={reportSource}
+          reportLoading={reportLoading}
           onRefreshReport={loadReport}
           onRefreshRuntime={refresh}
           onOpenScenario={(id) => {

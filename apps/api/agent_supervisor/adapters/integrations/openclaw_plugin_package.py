@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 import threading
 import zipfile
 from datetime import datetime, timezone
@@ -48,9 +49,9 @@ def build_openclaw_plugin_package_summary(
         "core_hooks": ["before_tool_call", "after_tool_call"],
         "decision_mapping": {
             "允许": "放行工具调用，继续执行。",
-            "拒绝": "返回 block 决策，阻断工具调用。",
+            "拒绝": "返回 block 决策，强制阻断工具调用，人工无法放行。",
             "询问": "返回 requireApproval 决策，等待人工确认，超时拒绝。",
-            "隔离": "返回高风险 requireApproval 决策，默认不自动执行，由操作员选择沙箱流程。",
+            "隔离": "返回 block 决策，强制阻断工具调用，人工无法放行。",
         },
         "install_commands": [
             "openclaw plugins install -l apps/api/sandbox/reports/agent-supervisor-openclaw-guard",
@@ -63,6 +64,8 @@ def build_openclaw_plugin_package_summary(
             "has_before_tool_call": "api.on" in runtime and '"before_tool_call"' in runtime,
             "has_after_tool_call": "api.on" in runtime and '"after_tool_call"' in runtime,
             "has_fail_closed": "failClosedDecision" in runtime and "timeoutBehavior" in runtime,
+            "has_api_token": "apiToken" in runtime and "Authorization" in runtime,
+            "risk_hint_default_off": 'emitRiskHint: { type: "boolean", default: false }' in runtime,
             "file_count": len(files),
         },
         "files": [
@@ -237,6 +240,8 @@ def validate_openclaw_plugin_package(
     static_passed = all(value is True for key, value in static_checks.items() if key != "file_count")
     files_passed = all(file_checks.values())
     node_passed = node_check["passed"] is True
+    contract_check = _run_plugin_contract_check(files=build_openclaw_plugin_package_files(supervisor_url))
+    contract_passed = contract_check["passed"] is True
     runtime_passed = _runtime_inspect_passed(runtime_check)
     remaining_gap = []
     if not runtime_passed:
@@ -245,6 +250,8 @@ def validate_openclaw_plugin_package(
         remaining_gap.append("插件包缺少必要文件。")
     if not node_passed:
         remaining_gap.append("插件运行入口 JavaScript 语法检查未通过或未执行。")
+    if not contract_passed:
+        remaining_gap.append("插件鉴权、盲测去标签和前置阻断契约端到端检查未通过。")
 
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -254,14 +261,20 @@ def validate_openclaw_plugin_package(
         "static_passed": static_passed,
         "files_passed": files_passed,
         "node_syntax_passed": node_passed,
+        "contract_e2e_passed": contract_passed,
         "runtime_inspect_passed": runtime_passed,
         "openclaw_cli_path": openclaw_cli or "",
         "overall_status": "runtime-validated"
-        if static_passed and files_passed and node_passed and runtime_passed
-        else "static-validated" if static_passed and files_passed and node_passed else "needs-fix",
+        if static_passed and files_passed and node_passed and contract_passed and runtime_passed
+        else "contract-e2e-validated"
+        if static_passed and files_passed and node_passed and contract_passed
+        else "static-validated"
+        if static_passed and files_passed and node_passed
+        else "needs-fix",
         "file_checks": file_checks,
         "static_checks": static_checks,
         "node_check": node_check,
+        "contract_e2e_check": contract_check,
         "openclaw_install_check": install_check,
         "openclaw_enable_check": enable_check,
         "openclaw_runtime_check": runtime_check,
@@ -309,6 +322,7 @@ def build_openclaw_plugin_validation_markdown(validation: dict[str, Any] | None 
         f"- 文件完整性：{'通过' if validation['files_passed'] else '未通过'}",
         f"- 静态 Hook 检查：{'通过' if validation['static_passed'] else '未通过'}",
         f"- JavaScript 语法检查：{'通过' if validation['node_syntax_passed'] else '未通过'}",
+        f"- 插件鉴权/盲测/阻断契约：{'通过' if validation.get('contract_e2e_passed') else '未通过'}",
         f"- OpenClaw runtime inspect：{'通过' if validation['runtime_inspect_passed'] else '未完成'}",
         "",
         "## 文件检查",
@@ -330,6 +344,7 @@ def build_openclaw_plugin_validation_markdown(validation: dict[str, Any] | None 
     for key, value in validation["static_checks"].items():
         lines.append(f"| `{key}` | `{value}` |")
     node_check = validation["node_check"]
+    contract_check = validation.get("contract_e2e_check") or {}
     openclaw_checks = [
         ("OpenClaw 安装插件", validation.get("openclaw_install_check")),
         ("OpenClaw 启用插件", validation.get("openclaw_enable_check")),
@@ -342,6 +357,8 @@ def build_openclaw_plugin_validation_markdown(validation: dict[str, Any] | None 
             "",
             f"- JS 语法命令：`{node_check['command']}`",
             f"- JS 语法结果：{'通过' if node_check['passed'] else '未通过'}",
+            f"- 契约端到端命令：`{contract_check.get('command', '-')}`",
+            f"- 契约端到端结果：{'通过' if contract_check.get('passed') else contract_check.get('stderr') or '未通过'}",
         "",
         ]
     )
@@ -373,6 +390,107 @@ def build_openclaw_plugin_validation_markdown(validation: dict[str, Any] | None 
     else:
         lines.append("- 无。")
     return "\n".join(lines)
+
+
+def _run_plugin_contract_check(*, files: dict[str, str]) -> dict[str, Any]:
+    harness = r'''
+import http from "node:http";
+import plugin from "./plugin.js";
+
+const hooks = {};
+plugin.register({
+  on(name, handler) {
+    hooks[name] = handler;
+  },
+});
+
+const received = [];
+const server = http.createServer(async (request, response) => {
+  let raw = "";
+  for await (const chunk of request) raw += chunk;
+  const body = JSON.parse(raw || "{}");
+  received.push({ authorization: request.headers.authorization || "", body });
+  const path = String(body?.tool_call?.arguments?.path || "");
+  const blocked = path.includes("confidential");
+  response.writeHead(200, { "Content-Type": "application/json" });
+  response.end(JSON.stringify({
+    decision: blocked ? "拒绝" : "允许",
+    policy_id: blocked ? "path-boundary" : "default-allow",
+    reason: blocked ? "sensitive path" : "allowed",
+  }));
+});
+
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const address = server.address();
+const pluginConfig = {
+  supervisorUrl: `http://127.0.0.1:${address.port}`,
+  apiToken: "contract-token",
+  emitRiskHint: false,
+};
+const blocked = await hooks.before_tool_call({
+  toolName: "file_read",
+  params: { path: "confidential/records.csv" },
+  context: { pluginConfig, sessionKey: "contract-attack" },
+});
+const allowed = await hooks.before_tool_call({
+  toolName: "file_read",
+  params: { path: "public/readme.md" },
+  context: { pluginConfig, sessionKey: "contract-benign" },
+});
+await hooks.after_tool_call({
+  toolName: "file_read",
+  params: { path: "public/readme.md" },
+  result: "ok",
+  context: { pluginConfig, sessionKey: "contract-benign" },
+});
+await new Promise((resolve) => server.close(resolve));
+
+const result = {
+  hooks_registered: Boolean(hooks.before_tool_call && hooks.after_tool_call),
+  authenticated: received.length === 3 && received.every((item) => item.authorization === "Bearer contract-token"),
+  risk_hint_absent: received.every((item) => !("risk_hint" in (item.body.tool_call || {}))),
+  attack_blocked: blocked?.block === true,
+  benign_allowed: allowed === undefined,
+  request_count: received.length,
+};
+result.passed = Object.entries(result).every(([key, value]) => key === "request_count" || value === true);
+console.log(JSON.stringify(result));
+'''.strip()
+    with tempfile.TemporaryDirectory(prefix="agent-supervisor-openclaw-contract-") as temp_dir:
+        root = Path(temp_dir)
+        openclaw_root = root / "node_modules" / "openclaw"
+        sdk_root = openclaw_root / "plugin-sdk"
+        sdk_root.mkdir(parents=True, exist_ok=True)
+        (root / "package.json").write_text('{"type":"module"}', encoding="utf-8")
+        (openclaw_root / "package.json").write_text(
+            json.dumps(
+                {
+                    "name": "openclaw",
+                    "type": "module",
+                    "exports": {"./plugin-sdk/plugin-entry": "./plugin-sdk/plugin-entry.js"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (sdk_root / "plugin-entry.js").write_text("export function definePluginEntry(value) { return value; }", encoding="utf-8")
+        (root / "plugin.js").write_text(files["dist/index.js"], encoding="utf-8")
+        harness_path = root / "contract-test.mjs"
+        harness_path.write_text(harness, encoding="utf-8")
+        check = _run_command_check(
+            ["node", str(harness_path)],
+            command_label="node OpenClaw plugin contract-test.mjs",
+            missing_message="未检测到 Node.js，插件契约端到端检查未执行。",
+            timeout=30,
+        )
+    details: dict[str, Any] = {}
+    if check.get("passed"):
+        try:
+            details = json.loads(str(check.get("stdout", "")).strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError):
+            details = {"passed": False, "error": "契约检查没有返回有效 JSON。"}
+    check["details"] = details
+    check["passed"] = bool(check.get("passed") and details.get("passed"))
+    return check
 
 
 def _skipped_command_check(command_label: str, skipped_reason: str, *, available: bool = False) -> dict[str, Any]:

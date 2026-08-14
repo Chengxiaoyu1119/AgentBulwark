@@ -1,7 +1,6 @@
 import { Col, Flex, Row, Space, Typography } from 'antd';
 import { LabelTag, PanelCard, UiButton, UiInput, UiSelect, UiSwitch } from '../ui';
 import type { ModelRuntimeConfig, Overview } from '@/types';
-import { competitionCapabilityRows } from '@/utils';
 import { fallbackModelProviders, modelProfileMeta, normalizeProviderId } from './modelConfigHelpers';
 
 type SettingsBasicsTabProps = {
@@ -268,25 +267,6 @@ export function SettingsBasicsTab({
         )}
       </PanelCard>
 
-      <PanelCard title="成果能力对齐" type="inner">
-        <div className="zh-column-stack">
-          {competitionCapabilityRows.map((item, idx) => (
-            <div key={idx} className="zh-divided-list__item">
-              <div>
-                <Typography.Text strong>{item.requirement}</Typography.Text>
-              </div>
-              <div className="zh-mt-8">
-                <Space orientation="vertical" size={2} className="zh-full-width">
-                  <Typography.Text type="secondary">{item.implementation}</Typography.Text>
-                  <Typography.Text type="secondary" className="zh-code-sm">
-                    {item.evidence}
-                  </Typography.Text>
-                </Space>
-              </div>
-            </div>
-          ))}
-        </div>
-      </PanelCard>
     </Space>
   );
 }

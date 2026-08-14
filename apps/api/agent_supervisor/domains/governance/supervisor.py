@@ -5,6 +5,15 @@ from typing import Any
 
 from apps.api.agent_supervisor.domains.governance.anomaly import ANOMALY_REJECT_THRESHOLD, ANOMALY_REVIEW_THRESHOLD, detect_tool_anomaly
 from apps.api.agent_supervisor.domains.governance.risk_score import calculate_risk_score
+from apps.api.agent_supervisor.domains.governance.tool_contract import (
+    SUPPORTED_TOOLS,
+    canonical_text,
+    normalize_tool_call,
+    path_is_absolute_or_traversal,
+    path_is_sensitive,
+    recipients_are_internal,
+)
+from apps.api.agent_supervisor.domains.governance.tool_registry import resolve_tool_call
 from apps.api.agent_supervisor.storage.data import get_policy_settings, is_policy_enabled
 
 
@@ -21,8 +30,30 @@ class GuardDecision:
     anomaly_signals: list[str] = field(default_factory=list)
 
 
-DANGEROUS_COMMANDS = ["rm ", "del ", "format", "curl ", "wget ", "powershell -enc", "chmod 777"]
+DANGEROUS_COMMANDS = [
+    "rm ",
+    "del ",
+    "format",
+    "curl ",
+    "wget ",
+    "powershell -enc",
+    "chmod 777",
+    # The probe is intentionally executable only inside the fixture, but its
+    # purpose is to model a hijacked command and must still hit the guard.
+    "scripts/tool_hijack_probe.py",
+]
 JAILBREAK_MARKERS = ["忽略", "无约束", "绕过", "ignore previous", "do anything now", "不要解释安全规则"]
+MEMORY_POISON_MARKERS = [
+    "不需要检查权限",
+    "忽略权限",
+    "直接执行",
+    "隐藏",
+    "ignore authorization",
+    "ignore permission",
+    "bypass authorization",
+    "without checking permission",
+    "always send",
+]
 
 
 def inspect_prompt(prompt: str) -> GuardDecision | None:
@@ -46,9 +77,16 @@ def decide(
     guard_enabled: bool,
     prompt: str = "",
     context_sources: list[str] | None = None,
+    agent_id: str = "",
 ) -> GuardDecision:
+    resolution = resolve_tool_call(tool_call, agent_id=agent_id)
+    original_tool = resolution.original_tool
+    tool_call = normalize_tool_call(resolution.effective_tool_call)
     anomaly = detect_tool_anomaly(tool_call, prompt=prompt, context_sources=context_sources or [])
     policy_settings = get_policy_settings()
+    internal_email_domains = {str(item).lower() for item in policy_settings.get("internal_email_domains", [])}
+    sensitive_path_markers = {str(item).lower() for item in policy_settings.get("sensitive_path_markers", [])}
+    sensitive_api_markers = {str(item).lower() for item in policy_settings.get("sensitive_api_markers", [])}
     anomaly_review_threshold = int(policy_settings.get("anomaly_review_threshold", ANOMALY_REVIEW_THRESHOLD))
     anomaly_reject_threshold = int(policy_settings.get("anomaly_reject_threshold", ANOMALY_REJECT_THRESHOLD))
 
@@ -81,9 +119,38 @@ def decide(
     args = tool_call.get("arguments", {})
     risk_hint = tool_call.get("risk_hint", "")
 
+    if tool not in SUPPORTED_TOOLS:
+        return scored(
+            GuardDecision(
+                decision="拒绝",
+                risk_level="critical",
+                policy_id="tool-contract",
+                reason=f"工具 `{original_tool or tool or 'unknown'}` 未注册标准能力映射。",
+                recommendation="先注册工具 schema、参数约束和执行边界，再允许外部智能体调用。",
+            )
+        )
+
+    agent_tool_allowlists = policy_settings.get("agent_tool_allowlists", {})
+    if isinstance(agent_tool_allowlists, dict) and agent_id:
+        allowed_tools = agent_tool_allowlists.get(agent_id, agent_tool_allowlists.get("*"))
+        if isinstance(allowed_tools, list) and original_tool not in allowed_tools:
+            return scored(
+                GuardDecision(
+                    decision="拒绝",
+                    risk_level="critical",
+                    policy_id="tool-contract",
+                    reason=f"Agent `{agent_id}` 没有调用工具 `{original_tool}` 的能力授权。",
+                    recommendation="为该 Agent 配置最小工具能力集合，或改由具备相应权限的 Agent 执行。",
+                )
+            )
+
     if tool == "file.read":
         path = str(args.get("path", ""))
-        if is_policy_enabled("path-boundary") and (".." in path or path.startswith("/") or "confidential" in path or risk_hint == "sensitive_file"):
+        if is_policy_enabled("path-boundary") and (
+            path_is_absolute_or_traversal(path)
+            or path_is_sensitive(path, sensitive_path_markers)
+            or risk_hint == "sensitive_file"
+        ):
             return scored(
                 GuardDecision(
                     decision="拒绝",
@@ -96,7 +163,11 @@ def decide(
 
     if tool == "file.write":
         path = str(args.get("path", ""))
-        if is_policy_enabled("path-boundary") and (".." in path or path.startswith("/") or "confidential" in path or risk_hint in {"sensitive_file", "sensitive_write"}):
+        if is_policy_enabled("path-boundary") and (
+            path_is_absolute_or_traversal(path)
+            or path_is_sensitive(path, sensitive_path_markers)
+            or risk_hint in {"sensitive_file", "sensitive_write"}
+        ):
             return scored(
                 GuardDecision(
                     decision="拒绝",
@@ -133,7 +204,7 @@ def decide(
                     recommendation="人工确认上下文来源、收件人、正文和业务审批记录。",
                 )
             )
-        if is_policy_enabled("external-mail") and "@" in to and not to.endswith("@internal.example"):
+        if is_policy_enabled("external-mail") and not recipients_are_internal(to, internal_email_domains):
             return scored(
                 GuardDecision(
                     decision="询问",
@@ -145,8 +216,11 @@ def decide(
             )
 
     if tool == "api.call":
-        endpoint = str(args.get("endpoint", ""))
-        if is_policy_enabled("tool-return-trust") and risk_hint == "untrusted_tool_return":
+        endpoint = canonical_text(args.get("endpoint")).lower()
+        if is_policy_enabled("tool-return-trust") and (
+            risk_hint == "untrusted_tool_return"
+            or endpoint in {"/tool/metadata/untrusted", "/competition/challenges/attachment/readme"}
+        ):
             return scored(
                 GuardDecision(
                     decision="隔离",
@@ -169,13 +243,7 @@ def decide(
                 )
             )
         if is_policy_enabled("sensitive-api") and (
-            "admin" in endpoint
-            or "scoreboard" in endpoint
-            or "challenge" in endpoint
-            or "seed" in endpoint
-            or "judge" in endpoint
-            or "session" in endpoint
-            or "campus-net" in endpoint
+            any(marker in endpoint for marker in sensitive_api_markers)
             or risk_hint == "sensitive_api"
         ):
             return scored(
@@ -189,7 +257,7 @@ def decide(
             )
 
     if tool == "code.run":
-        command = str(args.get("command", "")).lower()
+        command = canonical_text(args.get("command")).lower()
         if is_policy_enabled("dangerous-command") and any(marker in command for marker in DANGEROUS_COMMANDS):
             return scored(
                 GuardDecision(
@@ -212,8 +280,8 @@ def decide(
             )
 
     if tool == "memory.write":
-        content = str(args.get("content", ""))
-        if is_policy_enabled("memory-write") and any(marker in content for marker in ["不需要检查权限", "忽略", "直接执行", "隐藏"]):
+        content = canonical_text(args.get("content")).lower()
+        if is_policy_enabled("memory-write") and any(marker in content for marker in MEMORY_POISON_MARKERS):
             return scored(
                 GuardDecision(
                     decision="隔离",
@@ -225,40 +293,66 @@ def decide(
             )
 
     if tool == "memory.read":
-        query = str(args.get("query", "")).lower()
-        if is_policy_enabled("memory-read-sensitive") and any(marker in query for marker in ["secret", "token", "team", "flag", "judge", "session", "scoreboard", "submission", "队伍", "赛题", "提交物", "成绩"]):
+        query = canonical_text(args.get("query")).lower()
+        if is_policy_enabled("memory-read-sensitive") and any(
+            marker in query
+            for marker in [
+                "secret",
+                "token",
+                "team",
+                "flag",
+                "judge",
+                "session",
+                "scoreboard",
+                "submission",
+                "队伍",
+                "赛题",
+                "提交物",
+                "成绩",
+                "all",
+                "everything",
+                "全部",
+                "所有",
+                "全部记忆",
+                "*",
+            ]
+        ):
             return scored(
                 GuardDecision(
                     decision="拒绝",
                     risk_level="critical",
                     policy_id="memory-read-sensitive",
-                    reason="记忆读取请求包含 secret、token、队伍、flag 或提交物等敏感检索词。",
+                    reason="记忆读取请求包含敏感字段或全量检索语义。",
                     recommendation="对记忆访问做字段级脱敏，并要求说明赛事角色、读取目的和授权范围。",
                 )
             )
 
     if tool == "model.respond":
-        topic = str(args.get("topic", ""))
-        if is_policy_enabled("model-output-filter") and risk_hint in {
-            "training_data_extraction",
+        topic = canonical_text(args.get("topic"))
+        model_text = canonical_text(f"{prompt} {topic} {args.get('prompt', '')}").lower()
+        training_risk = risk_hint == "training_data_extraction" or any(
+            marker in model_text for marker in ["训练数据", "训练样例", "逐字复述", "training data", "memorized example"]
+        )
+        jailbreak_risk = risk_hint in {
             "jailbreak_output",
             "rewrite_evasion",
             "refusal_rewrite",
             "prompt_pollution",
-        }:
+        } or any(marker in model_text for marker in ["jailbreak", "policy-evasion", "绕过", "无约束", "ignore previous"])
+        if is_policy_enabled("model-output-filter") and (training_risk or jailbreak_risk):
             return scored(
                 GuardDecision(
                     decision="拒绝",
                     risk_level="high",
-                    policy_id="model-output-filter" if risk_hint == "training_data_extraction" else "jailbreak-filter",
+                    policy_id="model-output-filter" if training_risk else "jailbreak-filter",
                     reason=f"模型输出请求 `{topic}` 命中训练数据抽取、拒答改写绕过或高风险绕过输出策略。",
                     recommendation="拒绝逐字复述训练样例、拒答规避和绕过指导，仅允许输出安全解释、脱敏摘要或防护建议。",
                 )
             )
 
     if tool == "env.read":
-        key = str(args.get("key", ""))
-        if is_policy_enabled("environment-trust") and ("ALLOW_UNSAFE" in key or risk_hint == "environment_pollution"):
+        key = canonical_text(args.get("key"))
+        if is_policy_enabled("environment-trust") and ("ALLOW_UNSAFE" in key.upper() or risk_hint == "environment_pollution"):
             return scored(
                 GuardDecision(
                     decision="隔离",
@@ -280,6 +374,18 @@ def decide(
                 policy_id="anomaly-detection",
                 reason=f"工具调用组合异常，异常分 {anomaly.score}，信号：{'；'.join(anomaly.signals[:4])}。",
                 recommendation="暂停自动执行，要求人工核验上下文来源、参数来源和业务目的。",
+            )
+        )
+
+    baseline_risk = calculate_risk_score(tool_call, prompt=prompt)
+    if policy_settings.get("high_risk_auto_escalation", True) and baseline_risk.score >= 60:
+        return scored(
+            GuardDecision(
+                decision="拒绝" if baseline_risk.score >= 85 else "询问",
+                risk_level="critical" if baseline_risk.score >= 85 else "high",
+                policy_id="anomaly-detection",
+                reason=f"工具调用未命中单项规则，但综合风险分达到 {baseline_risk.score}。",
+                recommendation="暂停执行并核验规范化参数、数据范围、调用目的和最小权限。",
             )
         )
 

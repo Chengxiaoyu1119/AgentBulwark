@@ -157,7 +157,7 @@ def run_attack_testset(request: dict[str, Any]) -> dict[str, Any]:
         )
         detector = run_detector(effective_sample["detector_id"], result)
         defense_effective = result["with_guard"]["decision"] in CONTROL_DECISIONS
-        attack_reproduced = bool(result["summary"]["exposed_without_guard"] or detector["hit"])
+        attack_reproduced = bool(result["without_guard"].get("attack_success"))
         records.append(
             {
                 "sample": effective_sample,
@@ -169,6 +169,7 @@ def run_attack_testset(request: dict[str, Any]) -> dict[str, Any]:
                 "policy_id": result["summary"]["policy_id"],
                 "audit_id": result["with_guard"]["audit_id"],
                 "tool_call": result["tool_call"],
+                "attack_outcome": result["without_guard"].get("attack_outcome", {}),
                 "without_guard": {
                     "decision": result["without_guard"]["decision"],
                     "tool_output": result["without_guard"]["audit_log"].get("tool_output", {}),
@@ -262,11 +263,8 @@ def _apply_sample_override(sample: dict[str, Any], override: dict[str, Any]) -> 
 
 def _detector_text(result: dict[str, Any]) -> str:
     chunks = [
-        result.get("attack_input", ""),
-        json.dumps(result.get("tool_call", {}), ensure_ascii=False),
         json.dumps(result.get("without_guard", {}).get("audit_log", {}).get("tool_output", {}), ensure_ascii=False),
-        json.dumps(result.get("with_guard", {}).get("audit_log", {}).get("tool_output", {}), ensure_ascii=False),
-        result.get("with_guard", {}).get("reason", ""),
-        result.get("with_guard", {}).get("recommendation", ""),
+        json.dumps(result.get("without_guard", {}).get("attack_outcome", {}), ensure_ascii=False),
+        result.get("without_guard", {}).get("risk_evidence", {}).get("model_output_excerpt", ""),
     ]
     return "\n".join(str(item) for item in chunks if item)

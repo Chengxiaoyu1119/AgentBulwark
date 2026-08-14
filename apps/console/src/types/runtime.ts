@@ -35,6 +35,10 @@ export interface AuditLog {
   step: number;
   tool: string;
   arguments: Record<string, unknown>;
+  standard_capability?: string;
+  standard_arguments?: Record<string, unknown>;
+  tool_mapping?: Record<string, unknown> | null;
+  execution_receipt_expected?: boolean;
   decision: GuardDecision;
   risk_level: RiskLevel;
   policy_id: string;
@@ -46,13 +50,47 @@ export interface AuditLog {
   anomaly_signals?: string[];
   previous_hash?: string;
   audit_hash?: string;
+  tool_call_hash?: string;
+  execution_status?: 'completed' | 'failed' | 'not_executed' | 'awaiting_receipt' | 'server_sandbox_completed' | 'not_applicable' | string;
+  execution_target?: 'real' | 'sandbox' | 'none' | 'unknown' | string;
+  execution_receipt?: ExecutionReceipt | null;
   tool_output: {
     executed: boolean;
     sandboxed: boolean;
     simulated?: boolean;
+    execution_target?: string;
+    executor?: string;
+    container_image?: string;
+    exit_code?: number | null;
+    timed_out?: boolean;
     output: string;
   };
   timestamp: string;
+}
+
+export interface ExecutionReceipt {
+  receipt_id: string;
+  audit_id: string;
+  run_id: string;
+  agent_id: string;
+  tool_call_hash: string;
+  status: 'completed' | 'failed' | 'not_executed' | string;
+  execution_target: 'real' | 'sandbox' | 'none' | string;
+  result_hash?: string;
+  duration_ms?: number;
+  error?: string;
+  decision?: GuardDecision | string;
+  policy_id?: string;
+  audit_hash?: string;
+  request_hash?: string;
+  receipt_hash?: string;
+  receipt_signature?: string;
+  receipt_signature_key_id?: string;
+  agent_followed_decision?: boolean;
+  execution_confirmed?: boolean;
+  control_verified?: boolean;
+  created_at?: string;
+  event_id?: number;
 }
 
 export interface AuditHashVerification {

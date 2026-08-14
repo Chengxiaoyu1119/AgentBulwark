@@ -7,19 +7,19 @@ import { useAlertsViewModel } from '../components/alerts/useAlertsViewModel';
 import { PanelCard, UiButton } from '../components/ui';
 import type { AlertItem } from '../types';
 
-export function AlertsPanel({ alerts, refresh }: { alerts: AlertItem[]; refresh: () => void }) {
+export function AlertsPanel({ alerts, refresh, embedded = false }: { alerts: AlertItem[]; refresh: () => void; embedded?: boolean }) {
   const view = useAlertsViewModel({ alerts });
 
   return (
     <div className="zh-page-stack">
-      <PanelCard variant="borderless">
+      {!embedded ? <PanelCard variant="borderless">
         <Flex justify="space-between" align="center">
           <Typography.Title level={3} className="zh-title-flush">
             实时告警与阻断记录
           </Typography.Title>
           <UiButton onClick={refresh}>刷新告警</UiButton>
         </Flex>
-      </PanelCard>
+      </PanelCard> : null}
 
       <AlertSummaryCards
         total={alerts.length}

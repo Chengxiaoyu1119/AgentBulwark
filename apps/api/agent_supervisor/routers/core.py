@@ -3,7 +3,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from apps.api.agent_supervisor.adapters.models.model_runtime_config import get_model_runtime_config, update_model_runtime_config
-from apps.api.agent_supervisor.auth import current_security_role, require_api_token, require_role
+from apps.api.agent_supervisor.auth import (
+    current_agent_identity,
+    current_security_role,
+    require_api_token,
+    require_role,
+    restrict_executor_scope,
+)
+from apps.api.agent_supervisor.domains.governance.tool_contract import SUPPORTED_TOOLS
 from apps.api.agent_supervisor.domains.runtime.memory_governance import (
     memory_governance_snapshot,
     rollback_latest_memory,
@@ -20,12 +27,27 @@ from apps.api.agent_supervisor.storage.data import (
     update_policy,
     update_policy_settings,
 )
-from apps.api.agent_supervisor.storage.database import latest_audit_logs, latest_runs, list_policy_versions, runtime_metrics_snapshot
+from apps.api.agent_supervisor.storage.database import (
+    latest_audit_logs,
+    latest_runs,
+    latest_scenario_run_pairs,
+    list_policy_versions,
+    runtime_metrics_snapshot,
+)
 
 from ..adapters.models.model_adapter import provider_status
-from ..services.package_service import build_competition_package
+from ..services.package_service import load_competition_package_snapshot, write_competition_package_snapshot
 
-router = APIRouter(dependencies=[Depends(require_api_token)])
+router = APIRouter(dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)])
+
+
+def _competition_package_runs() -> list[dict[str, Any]]:
+    """Use the same fixed scenario evidence set as /api/report.
+
+    Runtime telemetry is intentionally excluded from the competition package so
+    the snapshot digest has one stable meaning across report and delivery APIs.
+    """
+    return latest_scenario_run_pairs([scenario["id"] for scenario in get_scenarios()])
 
 
 @router.get("/api/health")
@@ -34,12 +56,17 @@ def health() -> dict:
 
 
 @router.get("/api/auth/context")
-def auth_context(role: str = Depends(current_security_role)) -> dict:
+def auth_context(
+    role: str = Depends(current_security_role),
+    agent_id: str | None = Depends(current_agent_identity),
+) -> dict:
     return {
         "role": role,
+        "agent_id": agent_id,
         "permissions": {
             "can_edit_policy": role == "admin",
             "can_review_approval": role in {"admin", "analyst"},
+            "can_execute_runtime": role in {"admin", "executor"},
             "can_view": role in {"admin", "analyst", "observer"},
         },
     }
@@ -49,7 +76,7 @@ def auth_context(role: str = Depends(current_security_role)) -> dict:
 def overview() -> dict:
     runs = latest_runs(12)
     alerts = [alert for run in runs for alert in run.get("alerts", [])][:8]
-    audit_logs = [log for run in runs for log in run.get("audit_logs", [])][:12]
+    audit_logs = latest_audit_logs(12)
     total = len(runs)
     controlled_actions = sum(
         1
@@ -115,6 +142,22 @@ def policy_config() -> dict:
         "policies": get_policies(),
         "settings": get_policy_settings(),
         "versions": list_policy_versions(limit=20),
+    }
+
+
+@router.get("/api/tool_registry")
+def tool_registry() -> dict:
+    settings = get_policy_settings()
+    return {
+        "supported_capabilities": sorted(SUPPORTED_TOOLS),
+        "agent_tool_mappings": settings.get("agent_tool_mappings", {}),
+        "agent_tool_allowlists": settings.get("agent_tool_allowlists", {}),
+        "mapping_contract": {
+            "original_tool": "外部 Agent 的真实工具名称，例如 browser.open 或 database.query",
+            "capability": "file.read、api.call、code.run 等标准能力之一",
+            "argument_mapping": "原始参数名到标准参数名的映射，例如 url -> endpoint",
+            "required_arguments": "服务端校验的必填原始参数",
+        },
     }
 
 
@@ -235,5 +278,12 @@ def alerts(limit: int = Query(100, ge=1, le=500)) -> list[dict]:
 
 @router.get("/api/deliverables")
 def deliverables() -> dict:
-    return build_competition_package(latest_runs(50))
+    runs = _competition_package_runs()
+    return load_competition_package_snapshot(runs) or write_competition_package_snapshot(runs)
+
+
+@router.post("/api/deliverables/refresh")
+def refresh_deliverables(role: str = Depends(current_security_role)) -> dict:
+    require_role("analyst", role)
+    return write_competition_package_snapshot(_competition_package_runs())
 

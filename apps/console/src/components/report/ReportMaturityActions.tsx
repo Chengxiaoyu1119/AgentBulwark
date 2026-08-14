@@ -197,7 +197,12 @@ export function ReportMaturityActions({ onRefreshReport, onRefreshRuntime }: Rep
                 await writeProjectRoadmapEvidence();
                 const cases = result.summary?.case_count ?? 0;
                 const realCases = result.summary?.real_api_case_count ?? 0;
-                return `真实模型工具调用盲测已生成：${cases} 个样本，其中真实 API 样本 ${realCases} 个。`;
+                const strictReady = result.summary?.strict_real_api_ready === true;
+                return {
+                  type: strictReady ? 'success' : 'info',
+                  message: `真实模型因果盲测已生成：${cases} 个样本，其中真实 API 样本 ${realCases} 个，严格证据${strictReady ? '通过' : '未通过'}。`,
+                  description: `无防护攻击复现率 ${result.summary?.attack_reproduced_rate ?? 0}%，有防护有效控制率 ${result.summary?.defense_effective_rate ?? 0}%，双分支回执完整率 ${result.summary?.receipt_complete_rate ?? 0}%，任务工具对齐率 ${result.summary?.task_alignment_rate ?? 0}%。`
+                };
               });
             }}
           >

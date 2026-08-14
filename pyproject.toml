@@ -39,6 +39,7 @@ disallow_untyped_defs = false
 branch = true
 include = [
   "apps/api/agent_supervisor/auth.py",
+  "apps/api/agent_supervisor/domains/runtime/agent_credentials.py",
   "apps/api/agent_supervisor/domains/governance/anomaly.py",
   "apps/api/agent_supervisor/domains/governance/risk_score.py",
   "apps/api/agent_supervisor/domains/governance/supervisor.py",

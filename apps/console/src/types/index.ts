@@ -9,4 +9,6 @@ export * from './redteam';
 export * from './capability';
 export * from './penetration';
 export * from './integration';
+export * from './competition';
+export * from './customAttack';
 export * from './overview';

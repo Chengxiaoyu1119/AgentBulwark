@@ -1,26 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { Col, Descriptions, Divider, Row, Space, Typography } from 'antd';
-import { fetchAttackLabModules, fetchTargetLabState, resetTargetLabState, runAttackLabModule } from '../../api';
-import type { AttackLabModule, AttackLabRunResult, TargetLabState } from '../../types';
+import { fetchAttackLabModules, runAttackLabModule } from '../../api';
+import type { AttackLabModule, AttackLabRunResult } from '../../types';
 import { DecisionPill, LabelTag, MetricCard, PanelCard, UiAlert, UiButton, UiInput, UiSelect, UiSwitch } from '../ui';
 import { DEFAULT_ATTACK_LAB_MODULES } from './attackFunctionModules';
+import { AttackComparisonHero } from './AttackComparisonHero';
 import { AttackEvidenceTimeline } from './AttackEvidenceTimeline';
 import { AttackModuleOptionsPanel } from './AttackModuleOptionsPanel';
+import { AuditDeepLinkButton } from '../audit/AuditDeepLinkButton';
 import { defaultAttackModuleOptions, type AttackModuleOptions } from './attackModuleOptions';
-import { TargetLabStatePanel } from './TargetLabStatePanel';
-import { TargetLabDeltaPanel } from './TargetLabDeltaPanel';
 import { attackFunctionIcons, fallbackAttackFunctionIcon } from './attackFunctionIcons';
 import { attackFunctionFlowSteps } from './labRuntimeFlowPresets';
 import { LabModulePicker } from './LabModulePicker';
 import { LabRuntimeFlow } from './LabRuntimeFlow';
 import { ResultRunButton, RunResultEmptyState } from './RunResultActions';
+import { CustomAttackWorkspace } from './CustomAttackWorkspace';
 
 type AttackFunctionLabProps = {
   refresh?: () => Promise<unknown>;
+  onOpenAgentChain?: () => void;
 };
 
-export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
+export function AttackFunctionLab({ refresh, onOpenAgentChain }: AttackFunctionLabProps) {
   const [modules, setModules] = useState<AttackLabModule[]>(DEFAULT_ATTACK_LAB_MODULES);
   const [selectedSurface, setSelectedSurface] = useState(DEFAULT_ATTACK_LAB_MODULES[0].surface_id);
   const [attackInput, setAttackInput] = useState(DEFAULT_ATTACK_LAB_MODULES[0].default_input);
@@ -28,19 +30,18 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
     defaultAttackModuleOptions(DEFAULT_ATTACK_LAB_MODULES[0].surface_id)
   );
   const [executeInSandbox, setExecuteInSandbox] = useState(true);
-  const [plannerMode, setPlannerMode] = useState<'fixed' | 'model'>('model');
+  const [plannerMode, setPlannerMode] = useState<'fixed' | 'model'>('fixed');
   const [running, setRunning] = useState(false);
   const [notice, setNotice] = useState('');
   const [result, setResult] = useState<AttackLabRunResult | null>(null);
-  const [targetLab, setTargetLab] = useState<TargetLabState | null>(null);
-  const [targetLabBeforeRun, setTargetLabBeforeRun] = useState<TargetLabState | null>(null);
+  const comparisonRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let mounted = true;
     fetchAttackLabModules()
       .then((response) => {
         if (!mounted) return;
-        setModules(response.modules);
+        if (response.modules.length) setModules(response.modules);
         const first = response.modules[0];
         if (first) {
           setSelectedSurface(first.surface_id);
@@ -54,12 +55,6 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
     return () => {
       mounted = false;
     };
-  }, []);
-
-  useEffect(() => {
-    fetchTargetLabState()
-      .then(setTargetLab)
-      .catch(() => undefined);
   }, []);
 
   const activeModule = useMemo(
@@ -85,8 +80,6 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
     setRunning(true);
     setNotice('');
     try {
-      const beforeRun = await fetchTargetLabState().catch(() => targetLab);
-      setTargetLabBeforeRun(beforeRun);
       const nextResult = await runAttackLabModule({
         surface_id: activeModule.surface_id,
         attack_input: attackInput,
@@ -96,21 +89,12 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
         options: moduleOptions
       });
       setResult(nextResult);
-      setTargetLab(nextResult.target_lab);
       await refresh?.();
+      window.requestAnimationFrame(() => comparisonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     } catch (error) {
       setNotice(`攻击实验运行失败：${error instanceof Error ? error.message : '未知错误'}`);
     } finally {
       setRunning(false);
-    }
-  }
-
-  async function resetTargetLab() {
-    setNotice('');
-    try {
-      setTargetLab(await resetTargetLabState());
-    } catch (error) {
-      setNotice(`环境状态重置失败：${error instanceof Error ? error.message : '未知错误'}`);
     }
   }
 
@@ -121,6 +105,21 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
   return (
     <div className="zh-attack-lab">
       {notice && <UiAlert type="warning" showIcon title={notice} className="zh-mb-24" />}
+      <CustomAttackWorkspace refresh={refresh} onOpenAgentChain={onOpenAgentChain} onNotice={setNotice} />
+      {result ? (
+        <div ref={comparisonRef} className="zh-comparison-anchor">
+          <AttackComparisonHero result={result} />
+        </div>
+      ) : null}
+      <div className="zh-custom-attack-regression-heading">
+        <div>
+          <Typography.Title level={4}>预置回归样本</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            以下 7 类固定场景用于版本回归和稳定复现；上方自定义入口才是用户直接提交 Payload、工具与命令的主功能。
+          </Typography.Paragraph>
+        </div>
+        <LabelTag color="default">辅助验证</LabelTag>
+      </div>
       <Row gutter={[20, 20]} align="stretch">
         <Col xs={24} xl={7}>
           <LabModulePicker
@@ -139,8 +138,8 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
 
         <Col xs={24} xl={9}>
           <PanelCard
-            title={`${activeModule.name}实验`}
-            subtitle={`${activeModule.target} · ${activeModule.risk_hint}`}
+            title={`${activeModule.name}攻防验证`}
+            subtitle={`${activeModule.target} · ${activeModule.tool}`}
             className="zh-attack-lab__input-panel"
           >
             <Space orientation="vertical" size={16} className="zh-full-width">
@@ -150,8 +149,8 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
                   value={plannerMode}
                   onChange={(value) => setPlannerMode(value)}
                   options={[
-                    { label: '真实模型规划（后端配置模型）', value: 'model' },
-                    { label: '离线规则规划（无模型时复核）', value: 'fixed' }
+                    { label: '固定规划（稳定复现攻防因果）', value: 'fixed' },
+                    { label: '真实模型规划（验证模型自主调用）', value: 'model' }
                   ]}
                 />
               </div>
@@ -159,7 +158,7 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
                 <UiAlert
                   type="info"
                   showIcon
-                  message="运行时会优先调用后端已配置的大模型生成工具调用；接口不可用时才启用本地安全评测模型兜底。"
+                  message="运行时优先调用后端配置的大模型生成工具调用；结果会明确标记模型来源，固定规划结果不作为真实模型证据。真实模型请求最长等待 180 秒，运行期间不要重复点击。"
                 />
               )}
               <LabRuntimeFlow compact steps={attackFunctionFlowSteps(plannerMode, executeInSandbox)} />
@@ -182,15 +181,15 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
               </PanelCard>
               <div className="zh-attack-lab__switch-row">
                 <div>
-                  <Typography.Text strong>沙箱执行</Typography.Text>
+                  <Typography.Text strong>受控业务环境执行</Typography.Text>
                   <Typography.Paragraph type="secondary" className="zh-attack-lab__hint">
-                    只执行项目内置模拟业务工具，邮件、文件、API、命令和记忆都限制在本地隔离环境。
+                    两组运行使用独立环境副本，邮件、文件、API、命令和记忆变化会分别记录并生成状态Hash。
                   </Typography.Paragraph>
                 </div>
                 <UiSwitch checked={executeInSandbox} onChange={setExecuteInSandbox} />
               </div>
               <UiButton type="primary" icon={<Play size={16} />} loading={running} onClick={runModule}>
-                运行攻击实验
+                运行攻防验证
               </UiButton>
             </Space>
           </PanelCard>
@@ -198,8 +197,8 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
 
         <Col xs={24} xl={8}>
           <PanelCard
-            title="攻防结果"
-            subtitle={result ? result.summary.decision_change : '等待运行'}
+            title="本次运行结论"
+            subtitle={result ? `证据编号 ${result.comparison_id.slice(0, 8)}` : '等待运行'}
             className="zh-full-height"
             extra={
               <ResultRunButton
@@ -216,15 +215,15 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
                 <Row gutter={[12, 12]} align="stretch">
                   <Col xs={12} sm={12}>
                     <MetricCard
-                      label="无防护暴露"
-                      value={result.summary.exposed_without_guard ? '是' : '否'}
+                      label="关闭防护"
+                      value={result.summary.exposed_without_guard ? '攻击成功' : '攻击未成功'}
                       tone={result.summary.exposed_without_guard ? 'red' : 'green'}
                     />
                   </Col>
                   <Col xs={12} sm={12}>
                     <MetricCard
-                      label="有防护控制"
-                      value={result.summary.controlled_with_guard ? '是' : '否'}
+                      label="启用防护"
+                      value={result.summary.controlled_with_guard ? '风险已控制' : '仍有风险'}
                       tone={result.summary.controlled_with_guard ? 'green' : 'red'}
                     />
                   </Col>
@@ -233,6 +232,12 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
                   <Descriptions.Item label="生成方式">{result.module.planner_mode}</Descriptions.Item>
                   <Descriptions.Item label="规划器">
                     {result.model_plan.provider} {result.model_plan.model}
+                  </Descriptions.Item>
+                  <Descriptions.Item label="模型证据">
+                    <LabelTag color={result.model_evidence?.valid ? 'success' : 'warning'}>
+                      {result.model_evidence?.status ??
+                        (result.module.planner_mode === 'model' ? '历史结果未记录' : 'fixed')}
+                    </LabelTag>
                   </Descriptions.Item>
                   <Descriptions.Item label="无防护决策">
                     <DecisionPill decision={result.without_guard.decision} />
@@ -243,8 +248,6 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
                   <Descriptions.Item label="命中策略">{result.summary.policy_id}</Descriptions.Item>
                   <Descriptions.Item label="风险分">{result.summary.risk_score}</Descriptions.Item>
                 </Descriptions>
-                <Divider className="zh-attack-lab__divider" />
-                <TargetLabDeltaPanel before={targetLabBeforeRun} after={result.target_lab} />
                 <Divider className="zh-attack-lab__divider" />
                 <div className="zh-attack-lab__explain-list">
                   {result.explanation.map((item) => (
@@ -258,9 +261,9 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
             ) : (
               <RunResultEmptyState
                 icon={<Play size={28} />}
-                title="等待运行攻击实验"
-                description="会调用后端攻击模块、本地沙箱工具和监督器，生成无防护/有防护两组真实审计结果。"
-                actionLabel="运行攻击实验"
+                title="等待运行攻防验证"
+                description="系统会复制同一个初始环境，分别执行关闭防护和启用防护两条链路，展示攻击副作用与阻断证据。"
+                actionLabel="运行攻防验证"
                 loading={running}
                 onAction={runModule}
               />
@@ -275,7 +278,11 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
             <AttackEvidenceTimeline result={result} />
           </Col>
           <Col xs={24} lg={10}>
-            <PanelCard title="监督证据" subtitle={result.with_guard.audit_id}>
+            <PanelCard
+              title="监督证据"
+              subtitle={result.with_guard.audit_id}
+              extra={<AuditDeepLinkButton auditId={result.with_guard.audit_id} size="small" />}
+            >
               <Descriptions column={1} size="small">
                 <Descriptions.Item label="处置方式">{result.summary.execution_mode}</Descriptions.Item>
                 <Descriptions.Item label="判定原因">{result.with_guard.reason}</Descriptions.Item>
@@ -286,8 +293,6 @@ export function AttackFunctionLab({ refresh }: AttackFunctionLabProps) {
           </Col>
         </Row>
       )}
-
-      <TargetLabStatePanel targetLab={targetLab} onReset={resetTargetLab} />
     </div>
   );
 }

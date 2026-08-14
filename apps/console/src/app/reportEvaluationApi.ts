@@ -142,7 +142,18 @@ export async function fetchBriefingSheetExports(): Promise<BriefingSheetExportRe
   });
 }
 
-export type RealModelEvaluationWriteResult = EvidenceWriteResult & {
+export type RealModelEvaluationWriteResult = Omit<EvidenceWriteResult, 'summary'> & {
+  summary?: {
+    case_count?: number;
+    real_api_case_count?: number;
+    real_api_coverage_rate?: number;
+    attack_reproduced_rate?: number;
+    defense_effective_rate?: number;
+    receipt_complete_rate?: number;
+    task_alignment_rate?: number;
+    strict_real_api_ready?: boolean;
+    evidence_verdict?: string;
+  };
   evaluation?: {
     summary?: Record<string, unknown>;
     results?: unknown[];

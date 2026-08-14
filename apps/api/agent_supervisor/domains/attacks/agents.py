@@ -5,8 +5,10 @@ from time import perf_counter
 from uuid import uuid4
 
 from apps.api.agent_supervisor.adapters.models.model_adapter import generate_model_response
+from apps.api.agent_supervisor.domains.evaluations.outcomes import evaluate_attack_outcome
 from apps.api.agent_supervisor.domains.governance.integrity import attach_audit_hashes
 from apps.api.agent_supervisor.domains.governance.supervisor import decide
+from apps.api.agent_supervisor.domains.governance.tool_contract import normalize_tool_call
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
 from apps.api.agent_supervisor.domains.runtime.tools import execute_tool
 from apps.api.agent_supervisor.storage.data import find_scenario, get_scenarios
@@ -46,10 +48,10 @@ def run_scenario(scenario_id: str, guard_enabled: bool = True, persist: bool = T
     blocked_count = 0
     asked_count = 0
     isolated_count = 0
-    executed_risky = False
     decision_latencies: list[float] = []
 
-    for index, tool_call in enumerate(scenario["tool_calls"], start=1):
+    for index, raw_tool_call in enumerate(scenario["tool_calls"], start=1):
+        tool_call = normalize_tool_call(raw_tool_call)
         decision_started = perf_counter()
         decision = decide(tool_call, guard_enabled, scenario["adversarial_prompt"])
         decision_latencies.append((perf_counter() - decision_started) * 1000)
@@ -61,14 +63,13 @@ def run_scenario(scenario_id: str, guard_enabled: bool = True, persist: bool = T
             isolated_count += 1
 
         tool_output = execute_tool(tool_call, decision.decision)
-        executed_risky = executed_risky or (tool_output["executed"] and decision.decision == "允许" and scenario["severity"] in {"high", "critical"})
-
         log = {
             "id": str(uuid4()),
             "run_id": run_id,
             "step": index,
             "tool": tool_call["tool"],
             "arguments": tool_call.get("arguments", {}),
+            "risk_hint": tool_call.get("risk_hint", ""),
             "decision": decision.decision,
             "risk_level": decision.risk_level,
             "policy_id": decision.policy_id,
@@ -106,9 +107,8 @@ def run_scenario(scenario_id: str, guard_enabled: bool = True, persist: bool = T
             )
         )
 
-    attack_success = not guard_enabled or executed_risky
-    if guard_enabled and (blocked_count or asked_count or isolated_count):
-        attack_success = False
+    attack_outcome = evaluate_attack_outcome(scenario, audit_logs, model_output=str(model_result.get("content", "")))
+    attack_success = bool(attack_outcome["attack_success"])
 
     detection_latency_ms = round(sum(decision_latencies), 3)
     metrics = {
@@ -139,6 +139,7 @@ def run_scenario(scenario_id: str, guard_enabled: bool = True, persist: bool = T
         "audit_logs": audit_logs,
         "alerts": alerts,
         "attack_success": attack_success,
+        "attack_outcome": attack_outcome,
         "metrics": metrics,
     }
     if persist:

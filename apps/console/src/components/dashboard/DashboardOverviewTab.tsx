@@ -2,20 +2,17 @@ import { Col, Divider, Flex, Row, Space, Statistic, Typography } from 'antd';
 import {
   Activity,
   ArrowRight,
-  FlaskConical,
-  GitBranch,
+  Bot,
+  CircleCheck,
+  CircleX,
   Play,
-  Settings2,
   ShieldCheck,
   TerminalSquare
 } from 'lucide-react';
 import { ActionRow, MetricCard as Metric, PanelCard, UiButton } from '../ui';
-import { SurfaceResearchMatrix } from '../surface/SurfaceResearchMatrix';
 import type { AlertItem, Overview, Scenario } from '@/types';
 import { DashboardAgentNode } from './DashboardAgentNode';
 import type { PageKey } from '@/app/navigation';
-import { DashboardCompetitionGuide } from './DashboardCompetitionGuide';
-import { DashboardFeatureMap } from './DashboardFeatureMap';
 
 type DashboardPipelineNode = {
   label: string;
@@ -24,6 +21,7 @@ type DashboardPipelineNode = {
 
 type DashboardOverviewTabProps = {
   overview: Overview;
+  apiAvailable: boolean | null;
   running: boolean;
   priorityScenario?: Scenario;
   maxRiskScore: number;
@@ -35,11 +33,11 @@ type DashboardOverviewTabProps = {
   pipelineNodes: DashboardPipelineNode[];
   onSelectScenario: (id: string) => void;
   onOpenPage: (page: PageKey) => void;
-  onBatchCompare: (ids: string[], label: string) => void;
 };
 
 export function DashboardOverviewTab({
   overview,
+  apiAvailable,
   running,
   priorityScenario,
   maxRiskScore,
@@ -50,12 +48,15 @@ export function DashboardOverviewTab({
   highRiskSurfaceCount,
   pipelineNodes,
   onSelectScenario,
-  onOpenPage,
-  onBatchCompare
+  onOpenPage
 }: DashboardOverviewTabProps) {
   const guardedControlRate = overview.summary.guarded_control_rate ?? overview.summary.block_rate;
   const guardedRunCount = overview.summary.guarded_run_count ?? overview.summary.recent_run_count;
   const auditControlRate = overview.summary.block_rate;
+  const pendingReceiptCount = overview.audit_logs.filter(
+    (log) => log.execution_receipt_expected && !log.execution_receipt
+  ).length;
+  const configuredModelCount = overview.models.filter((model) => model.configured).length;
 
   return (
     <div className="zh-page-stack zh-mt-8">
@@ -64,36 +65,25 @@ export function DashboardOverviewTab({
           <PanelCard variant="borderless" bodyPadding={32}>
             <Flex justify="space-between" align="center" wrap="wrap" gap={24}>
               <div className="zh-dashboard-hero-copy">
-                <Typography.Text type="secondary">大模型应用安全监督原型</Typography.Text>
+                <Typography.Text type="secondary">AI Agent 运行时安全网关</Typography.Text>
                 <Typography.Title level={1} className="zh-title-compact">
-                  智能体工具调用实时审计与阻断台
+                  看见每次工具调用，在产生副作用前做出控制
                 </Typography.Title>
                 <Typography.Paragraph type="secondary" className="zh-text-lead">
-                  以红队攻击样本驱动监督策略，对邮件、文件、API、代码执行和外部 Agent
-                  事件进行风险评分、策略判定、沙箱执行和告警留痕。
+                  把工具调用送入执行前闸门，返回允许、拒绝、审批或隔离决策；执行后再用回执确认动作是否真正发生。
                 </Typography.Paragraph>
                 <ActionRow>
                   <UiButton
                     type="primary"
                     size="large"
                     icon={<Play size={16} />}
-                    onClick={() =>
-                      onBatchCompare(
-                        overview.scenarios.map((scenario) => scenario.id),
-                        '全部攻击脚本'
-                      )
-                    }
-                    disabled={running || !overview.scenarios.length}
+                    onClick={() => onOpenPage('lab')}
+                    disabled={running}
                   >
-                    {running ? '验证中...' : '一键验证全部脚本'}
+                    {running ? '验证中...' : '运行防护前后对照'}
                   </UiButton>
-                  <UiButton
-                    size="large"
-                    icon={<TerminalSquare size={16} />}
-                    onClick={() => priorityScenario && onSelectScenario(priorityScenario.id)}
-                    disabled={!priorityScenario}
-                  >
-                    打开高风险脚本
+                  <UiButton size="large" icon={<TerminalSquare size={16} />} onClick={() => onOpenPage('audit')}>
+                    处理事件与复核
                   </UiButton>
                 </ActionRow>
               </div>
@@ -104,7 +94,7 @@ export function DashboardOverviewTab({
                     {maxRiskScore}
                   </Typography.Title>
                   <Typography.Text type="secondary" className="zh-text-meta">
-                    {latestAlert ? latestAlert.title : '等待攻击验证'}
+                    {latestAlert ? latestAlert.title : '当前没有高风险事件'}
                   </Typography.Text>
                 </PanelCard>
                 <PanelCard
@@ -143,36 +133,18 @@ export function DashboardOverviewTab({
         </Row>
       </PanelCard>
 
-      <DashboardCompetitionGuide
-        overview={overview}
-        completeSurfaceCount={completeSurfaceCount}
-        onOpenPage={onOpenPage}
-      />
-
-      <DashboardFeatureMap
-        overview={overview}
-        completeSurfaceCount={completeSurfaceCount}
-        totalSamples={totalSamples}
-        totalScripts={totalScripts}
-        onOpenPage={onOpenPage}
-      />
-
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={6}>
-          <Metric
-            label="攻击面完善度"
-            value={`${completeSurfaceCount}/${overview.summary.surface_count}`}
-            tone="cyan"
-          />
+          <Metric label="服务状态" value={apiAvailable ? '在线' : apiAvailable === false ? '离线' : '检查中'} tone={apiAvailable ? 'green' : 'red'} />
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Metric label="攻击脚本" value={`${overview.summary.scenario_count}`} tone="amber" />
+          <Metric label="待处理事件" value={`${overview.alerts.length}`} tone={overview.alerts.length ? 'red' : 'green'} />
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Metric label="样本/可运行脚本" value={`${totalSamples}/${totalScripts}`} tone="green" />
+          <Metric label="待确认回执" value={`${pendingReceiptCount}`} tone={pendingReceiptCount ? 'amber' : 'green'} />
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Metric label="高风险面" value={`${highRiskSurfaceCount}`} tone="red" />
+          <Metric label="真实模型连接" value={`${configuredModelCount}/${overview.models.length}`} tone={configuredModelCount ? 'cyan' : 'amber'} />
         </Col>
       </Row>
 
@@ -181,53 +153,48 @@ export function DashboardOverviewTab({
           <PanelCard
             title={
               <Space>
-                <GitBranch size={18} color="var(--ant-color-primary)" />
-                <Typography.Text strong>多 Agent 红队链路架构</Typography.Text>
+                <ShieldCheck size={18} color="var(--ant-color-primary)" />
+                <Typography.Text strong>一次调用如何被控制</Typography.Text>
               </Space>
             }
             variant="borderless"
             className="zh-full-height"
             extra={
               <UiButton type="link" onClick={() => onSelectScenario(priorityScenario?.id ?? '')}>
-                查看脚本详情
+                运行对照
               </UiButton>
             }
           >
             <div className="zh-soft-block">
               <Typography.Text type="secondary" className="zh-text-meta zh-mb-12 zh-text-block">
-                红队攻击方 (Red Team Agents)
+                业务 Agent 发起工具调用
               </Typography.Text>
               <div className="zh-dashboard-agent-flow">
-                <DashboardAgentNode icon={<GitBranch size={20} />} title="规划 Agent" desc="分解攻击脚本" />
+                <DashboardAgentNode icon={<Bot size={20} />} title="业务 Agent" desc="生成工具调用" />
                 <ArrowRight size={16} color="var(--ant-color-text-tertiary)" />
-                <DashboardAgentNode icon={<FlaskConical size={20} />} title="样本生成" desc="构造对抗样本" />
+                <DashboardAgentNode icon={<ShieldCheck size={20} />} title="智安哨" desc="执行前判定" active />
                 <ArrowRight size={16} color="var(--ant-color-text-tertiary)" />
-                <DashboardAgentNode
-                  icon={<TerminalSquare size={20} />}
-                  title="执行 Agent"
-                  desc="投递与漏洞利用"
-                  active
-                />
+                <DashboardAgentNode icon={<TerminalSquare size={20} />} title="执行路由" desc="真实、暂停或隔离" />
               </div>
               <Divider dashed className="zh-attack-divider" titlePlacement="left" plain>
                 <Typography.Text type="danger" className="zh-text-meta">
-                  攻击边界 (Attack Surface)
+                  强制执行边界
                 </Typography.Text>
               </Divider>
               <Typography.Text type="secondary" className="zh-text-meta zh-mb-12 zh-text-block">
-                蓝队防御方 (Blue Team Environment)
+                决策之后必须有执行结果回执
               </Typography.Text>
               <div className="zh-dashboard-pipeline-row">
-                <DashboardAgentNode icon={<Settings2 size={20} />} title="目标智能体" desc="受害应用/模型" />
+                <DashboardAgentNode icon={<CircleCheck size={20} />} title="允许" desc="最小权限执行" />
                 <ArrowRight size={16} color="var(--ant-color-text-tertiary)" />
                 <DashboardAgentNode
-                  icon={<ShieldCheck size={20} />}
-                  title="行为监督器"
-                  desc="实时旁路拦截"
+                  icon={<CircleX size={20} />}
+                  title="拒绝 / 审批 / 隔离"
+                  desc="阻断副作用或暂停复核"
                   activeTone="success"
                 />
                 <ArrowRight size={16} color="var(--ant-color-text-tertiary)" />
-                <DashboardAgentNode icon={<Activity size={20} />} title="沙箱与工具" desc="安全隔离执行" />
+                <DashboardAgentNode icon={<Activity size={20} />} title="执行回执" desc="核验真实结果" />
               </div>
             </div>
           </PanelCard>
@@ -236,9 +203,9 @@ export function DashboardOverviewTab({
           <PanelCard
             title={
               <Space orientation="vertical" size={0}>
-                <Typography.Text strong>主运行攻击脚本</Typography.Text>
+                <Typography.Text strong>最近需要关注的事件</Typography.Text>
                 <Typography.Text type="secondary" className="zh-text-meta">
-                  {overview.scenarios.length} 个可运行
+                  {overview.alerts.length} 条风险事件
                 </Typography.Text>
               </Space>
             }
@@ -247,19 +214,19 @@ export function DashboardOverviewTab({
             bodyPadding={0}
           >
             <div className="zh-column-stack">
-              {overview.scenarios.slice(0, 5).map((scenario) => (
+              {overview.alerts.slice(0, 5).map((alert) => (
                 <div
-                  key={scenario.id}
-                  onClick={() => onSelectScenario(scenario.id)}
+                  key={alert.id}
+                  onClick={() => onOpenPage('audit')}
                   className="zh-dashboard-scenario-item"
                 >
                   <div>
                     <div>
-                      <Typography.Text strong>{scenario.title}</Typography.Text>
+                      <Typography.Text strong>{alert.title}</Typography.Text>
                     </div>
                     <div className="zh-mt-4">
                       <Typography.Text type="secondary" className="zh-text-meta">
-                        {scenario.id} · {scenario.target}
+                        {alert.decision} · 风险分 {alert.risk_score ?? '-'} · {alert.policy_id ?? '未标注策略'}
                       </Typography.Text>
                     </div>
                   </div>
@@ -268,14 +235,31 @@ export function DashboardOverviewTab({
                   </div>
                 </div>
               ))}
+              {!overview.alerts.length ? (
+                <div className="zh-p-24 zh-text-center">
+                  <Typography.Text type="secondary">当前没有待关注事件。</Typography.Text>
+                </div>
+              ) : null}
             </div>
           </PanelCard>
         </Col>
       </Row>
 
-      <div>
-        <SurfaceResearchMatrix surfaces={overview.attack_surfaces} profiles={overview.student_competition_attack_map} />
-      </div>
+      <PanelCard variant="borderless" bodyPadding={20}>
+        <Flex justify="space-between" align="center" wrap="wrap" gap={16}>
+          <div>
+            <Typography.Text strong>验证与配置</Typography.Text>
+            <Typography.Text type="secondary" className="zh-meta-block">
+              {completeSurfaceCount}/{overview.summary.surface_count} 类风险面 · {totalSamples} 个样本 · {totalScripts} 个脚本 · {highRiskSurfaceCount} 类高风险面
+            </Typography.Text>
+          </div>
+          <ActionRow>
+            <UiButton onClick={() => onOpenPage('scenarios')}>查看场景</UiButton>
+            <UiButton onClick={() => onOpenPage('policy')}>配置策略</UiButton>
+            <UiButton onClick={() => onOpenPage('settings')}>接入 Agent</UiButton>
+          </ActionRow>
+        </Flex>
+      </PanelCard>
     </div>
   );
 }

@@ -4,8 +4,12 @@ import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from apps.api.agent_supervisor.adapters.integrations.external_agent_demo import run_minimal_external_agent_demo
+from apps.api.agent_supervisor.adapters.integrations.external_agent_demo import (
+    run_managed_external_agent_demo,
+    run_minimal_external_agent_demo,
+)
 from apps.api.agent_supervisor.adapters.integrations.openclaw_plugin_package import (
     write_openclaw_plugin_package,
     write_openclaw_plugin_validation_report,
@@ -27,6 +31,7 @@ from apps.api.agent_supervisor.domains.evaluations.benign_workflows import (
     write_benign_workflow_report,
 )
 from apps.api.agent_supervisor.domains.evaluations.calibration import write_anomaly_calibration_report
+from apps.api.agent_supervisor.domains.evaluations.competition_benchmark import write_competition_benchmark_report
 from apps.api.agent_supervisor.domains.evaluations.datasets import build_attack_case_dataset, build_attack_case_markdown
 from apps.api.agent_supervisor.domains.evaluations.demo_drill import (
     build_judge_demo_drill_markdown,
@@ -39,6 +44,8 @@ from apps.api.agent_supervisor.domains.evaluations.evidence import (
     build_surface_conclusions,
     build_surface_conclusions_markdown,
 )
+from apps.api.agent_supervisor.domains.evaluations.http_e2e_benchmark import write_http_e2e_benchmark_report
+from apps.api.agent_supervisor.domains.evaluations.reproducibility_check import write_reproducibility_report
 from apps.api.agent_supervisor.domains.governance.approvals import (
     build_approval_review_markdown,
     list_approval_reviews,
@@ -60,7 +67,11 @@ from apps.api.agent_supervisor.domains.runtime.events import evaluate_agent_even
 from apps.api.agent_supervisor.domains.runtime.runtime_evaluation import write_real_model_evaluation_report
 from apps.api.agent_supervisor.domains.runtime.tools import init_sandbox
 from apps.api.agent_supervisor.storage.data import get_scenarios
-from apps.api.agent_supervisor.storage.database import init_db, latest_runs
+from apps.api.agent_supervisor.storage.database import init_db, latest_runs, latest_scenario_run_pairs
+
+
+def _competition_evidence_runs() -> list[dict[str, Any]]:
+    return latest_scenario_run_pairs([scenario["id"] for scenario in get_scenarios()])
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -164,7 +175,7 @@ def cmd_assess(args: argparse.Namespace) -> None:
     if args.run_compare:
         for scenario in get_scenarios():
             compare_scenario(scenario["id"])
-    data = build_attack_effectiveness(latest_runs(500))
+    data = build_attack_effectiveness(_competition_evidence_runs())
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     if args.format == "md":
@@ -213,7 +224,7 @@ def cmd_attack_chains(args: argparse.Namespace) -> None:
 
 
 def cmd_requirements(args: argparse.Namespace) -> None:
-    data = build_attack_effectiveness(latest_runs(500))["requirement_alignment"]
+    data = build_attack_effectiveness(_competition_evidence_runs())["requirement_alignment"]
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     if args.format == "md":
@@ -273,6 +284,7 @@ def cmd_demo_external(args: argparse.Namespace) -> None:
             event,
             guard_enabled=args.guard == "on",
             execute_in_sandbox=args.execute_in_sandbox,
+            review_scope="experiment",
         )
         for event in events
     ]
@@ -299,9 +311,14 @@ def cmd_demo_external(args: argparse.Namespace) -> None:
 
 
 def cmd_external_agent_demo(args: argparse.Namespace) -> None:
-    result = run_minimal_external_agent_demo(
-        supervisor_url=args.supervisor_url,
-        output_root=args.output,
+    result = (
+        run_managed_external_agent_demo(output_root=args.output)
+        if args.managed_server
+        else run_minimal_external_agent_demo(
+            supervisor_url=args.supervisor_url,
+            output_root=args.output,
+            api_token=args.api_token,
+        )
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -312,27 +329,27 @@ def cmd_policy_ablation(args: argparse.Namespace) -> None:
 
 
 def cmd_surface_pack(args: argparse.Namespace) -> None:
-    result = write_surface_evidence_pack(surface_id=args.surface, output_root=args.output, runs=latest_runs(500))
+    result = write_surface_evidence_pack(surface_id=args.surface, output_root=args.output, runs=_competition_evidence_runs())
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def cmd_surface_packs(args: argparse.Namespace) -> None:
-    result = write_all_surface_evidence_packs(output_root=args.output, runs=latest_runs(500))
+    result = write_all_surface_evidence_packs(output_root=args.output, runs=_competition_evidence_runs())
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def cmd_surface_brief(args: argparse.Namespace) -> None:
-    result = write_surface_briefing_sheet(surface_id=args.surface, output_root=args.output, runs=latest_runs(500))
+    result = write_surface_briefing_sheet(surface_id=args.surface, output_root=args.output, runs=_competition_evidence_runs())
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def cmd_surface_briefs(args: argparse.Namespace) -> None:
-    result = write_all_surface_briefing_sheets(output_root=args.output, runs=latest_runs(500))
+    result = write_all_surface_briefing_sheets(output_root=args.output, runs=_competition_evidence_runs())
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 def cmd_roadmap(args: argparse.Namespace) -> None:
-    result = write_project_roadmap(output_root=args.output, runs=latest_runs(500))
+    result = write_project_roadmap(output_root=args.output, runs=_competition_evidence_runs())
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
@@ -345,6 +362,34 @@ def cmd_real_model_eval(args: argparse.Namespace) -> None:
     result = write_real_model_evaluation_report(
         output_root=args.output,
         force_real=not args.local_only,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_competition_benchmark(args: argparse.Namespace) -> None:
+    result = write_competition_benchmark_report(
+        output_root=args.output,
+        performance_repeats=args.repeats,
+        concurrency=args.concurrency,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_repro_check(args: argparse.Namespace) -> None:
+    result = write_reproducibility_report(
+        output_root=args.output,
+        trials=args.trials,
+        operator=args.operator,
+        operator_role=args.operator_role,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+def cmd_http_e2e_benchmark(args: argparse.Namespace) -> None:
+    result = write_http_e2e_benchmark_report(
+        output_root=args.output,
+        call_count=args.calls,
+        concurrency=args.concurrency,
     )
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
@@ -365,11 +410,11 @@ def cmd_openclaw_plugin_validate(args: argparse.Namespace) -> None:
 
 def cmd_readiness(args: argparse.Namespace) -> None:
     if args.write:
-        result = write_competition_readiness_report(output_root=args.output)
+        result = write_competition_readiness_report(output_root=args.output, runs=_competition_evidence_runs())
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
-    data = build_competition_readiness(latest_runs(500))
+    data = build_competition_readiness(_competition_evidence_runs())
     output = Path(args.output)
     if not output.suffix:
         output.mkdir(parents=True, exist_ok=True)
@@ -388,7 +433,7 @@ def cmd_approvals(args: argparse.Namespace) -> None:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
-    data = list_approval_reviews(status=args.status, limit=args.limit)
+    data = list_approval_reviews(status=args.status, limit=args.limit, scope=args.scope)
     output = Path(args.output)
     if output.suffix:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -582,7 +627,9 @@ def build_parser() -> argparse.ArgumentParser:
     demo_external.set_defaults(func=cmd_demo_external)
 
     external_agent_demo = sub.add_parser("external-agent-demo", help="运行最小外部 Agent 真实工具调度接入演示")
-    external_agent_demo.add_argument("--supervisor-url", default="http://127.0.0.1:8012/api/integrations/openclaw/events")
+    external_agent_demo.add_argument("--supervisor-url", default="http://127.0.0.1:8012/api/runtime/evaluate")
+    external_agent_demo.add_argument("--api-token", default="", help="监督接口 Bearer Token；本地免鉴权演示可留空")
+    external_agent_demo.add_argument("--managed-server", action="store_true", help="自动启动隔离的Token/HMAC服务并在完成后关闭")
     external_agent_demo.add_argument("--output", default="apps/api/sandbox/reports")
     external_agent_demo.set_defaults(func=cmd_external_agent_demo)
 
@@ -622,6 +669,25 @@ def build_parser() -> argparse.ArgumentParser:
     real_model_eval.add_argument("--local-only", action="store_true", help="只运行本地模拟规划器，不调用已配置的真实模型")
     real_model_eval.set_defaults(func=cmd_real_model_eval)
 
+    competition_benchmark = sub.add_parser("competition-benchmark", help="运行200条冻结集、四组基线与性能评测")
+    competition_benchmark.add_argument("--output", default="apps/api/sandbox/reports")
+    competition_benchmark.add_argument("--repeats", type=int, default=10, help="性能评测重复轮数，默认10")
+    competition_benchmark.add_argument("--concurrency", type=int, default=20, help="并发工作线程，默认20")
+    competition_benchmark.set_defaults(func=cmd_competition_benchmark)
+
+    repro_check = sub.add_parser("repro-check", help="重复运行冻结评测与通用Agent链路，生成独立复现一致性报告")
+    repro_check.add_argument("--output", default="apps/api/sandbox/reports")
+    repro_check.add_argument("--trials", type=int, default=3, help="重复运行轮数，默认3")
+    repro_check.add_argument("--operator", default="未填写", help="复现者姓名或标识")
+    repro_check.add_argument("--operator-role", default="未填写", help="复现者身份，例如作者、同学或指导教师")
+    repro_check.set_defaults(func=cmd_repro_check)
+
+    http_e2e_benchmark = sub.add_parser("http-e2e-benchmark", help="运行 HTTP、Token、SQLite 与审计完整链路性能评测")
+    http_e2e_benchmark.add_argument("--output", default="apps/api/sandbox/reports")
+    http_e2e_benchmark.add_argument("--calls", type=int, default=200, help="请求数量，默认200")
+    http_e2e_benchmark.add_argument("--concurrency", type=int, default=20, help="并发工作线程，默认20")
+    http_e2e_benchmark.set_defaults(func=cmd_http_e2e_benchmark)
+
     openclaw_plugin = sub.add_parser("openclaw-plugin", help="生成可安装到 OpenClaw 的源码级 native plugin 包")
     openclaw_plugin.add_argument("--output", default="apps/api/sandbox/reports")
     openclaw_plugin.add_argument("--supervisor-url", default="http://127.0.0.1:8012/api/integrations/openclaw/events")
@@ -643,6 +709,7 @@ def build_parser() -> argparse.ArgumentParser:
     approvals.add_argument("--output", default="apps/api/sandbox/reports")
     approvals.add_argument("--format", choices=["json", "md"], default="json")
     approvals.add_argument("--status", default="全部", help="全部、待复核、已批准或已驳回")
+    approvals.add_argument("--scope", default="全部", help="全部、operational、experiment 或 demo")
     approvals.add_argument("--limit", type=int, default=100)
     approvals.add_argument("--write", action="store_true", help="同时生成 JSON 和 Markdown 报告")
     approvals.set_defaults(func=cmd_approvals)

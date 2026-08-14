@@ -12,6 +12,7 @@ const ALLOWED_PATH_MARKERS = [
   '/v1/chat/completions',
   '/api/chat',
   '/api/agent/run',
+  '/api/runtime/evaluate',
   '/api/supervisor/evaluate',
   '/api/integrations/openclaw/events',
   '/api/attack_lab/run'

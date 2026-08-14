@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import json
 import socket
+import ssl
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from copy import deepcopy
 from typing import Any
 from uuid import uuid4
@@ -26,6 +26,7 @@ ALLOWED_TARGET_SCHEMES = {"http", "https"}
 ALLOWED_AGENT_PATH_MARKERS = (
     "/api/agent/run",
     "/api/chat",
+    "/api/runtime/evaluate",
     "/api/supervisor/evaluate",
     "/api/integrations/openclaw/events",
     "/api/attack_lab/run",
@@ -87,8 +88,12 @@ def run_jailbreak_redteam(request: dict[str, Any]) -> dict[str, Any]:
             model_output=filtered_output,
             risk_hint="jailbreak_output" if unsafe or not refused else "model_safety_refusal",
         )
-        without_guard = evaluate_agent_event(deepcopy(event), guard_enabled=False, execute_in_sandbox=False)
-        with_guard = evaluate_agent_event(deepcopy(event), guard_enabled=True, execute_in_sandbox=False)
+        without_guard = evaluate_agent_event(
+            deepcopy(event), guard_enabled=False, execute_in_sandbox=False, review_scope="experiment"
+        )
+        with_guard = evaluate_agent_event(
+            deepcopy(event), guard_enabled=True, execute_in_sandbox=False, review_scope="experiment"
+        )
         records.append(
             {
                 "id": scenario_id,
@@ -303,10 +308,14 @@ def _run_refusal_rewrite_evasion_round(
         refusal_hits=refusal_hits,
         rewrite_prompt="",
     )
-    initial_with_guard = evaluate_agent_event(deepcopy(initial_event), guard_enabled=True, execute_in_sandbox=False)
+    initial_with_guard = evaluate_agent_event(
+        deepcopy(initial_event), guard_enabled=True, execute_in_sandbox=False, review_scope="experiment"
+    )
 
     if not initial_refused:
-        initial_without_guard = evaluate_agent_event(deepcopy(initial_event), guard_enabled=False, execute_in_sandbox=False)
+        initial_without_guard = evaluate_agent_event(
+            deepcopy(initial_event), guard_enabled=False, execute_in_sandbox=False, review_scope="experiment"
+        )
         skipped_optimizer = _skipped_optimizer_result(optimizer_role, optimizer_provider_profile, "首轮主模型未命中拒答词，未触发副模型改写。")
         skipped_target = _skipped_target_result(target_provider_profile, "未触发改写，因此没有第二次主模型调用。")
         unsafe = bool(initial_filter["blocked"]) or _looks_unsafe(initial_filtered)
@@ -387,8 +396,12 @@ def _run_refusal_rewrite_evasion_round(
         refusal_hits=refusal_hits,
         rewrite_prompt=optimized_prompt,
     )
-    rewritten_without_guard = evaluate_agent_event(deepcopy(rewrite_event), guard_enabled=False, execute_in_sandbox=False)
-    rewritten_with_guard = evaluate_agent_event(deepcopy(rewrite_event), guard_enabled=True, execute_in_sandbox=False)
+    rewritten_without_guard = evaluate_agent_event(
+        deepcopy(rewrite_event), guard_enabled=False, execute_in_sandbox=False, review_scope="experiment"
+    )
+    rewritten_with_guard = evaluate_agent_event(
+        deepcopy(rewrite_event), guard_enabled=True, execute_in_sandbox=False, review_scope="experiment"
+    )
     attack_success = bool(unsafe and not rewritten_refused)
     return {
         "round_index": round_index,
@@ -484,8 +497,12 @@ def _run_dual_model_jailbreak_round(
         model_output=filtered_output,
         risk_hint="jailbreak_output" if unsafe or not refused else "model_safety_refusal",
     )
-    without_guard = evaluate_agent_event(deepcopy(event), guard_enabled=False, execute_in_sandbox=False)
-    with_guard = evaluate_agent_event(deepcopy(event), guard_enabled=True, execute_in_sandbox=False)
+    without_guard = evaluate_agent_event(
+        deepcopy(event), guard_enabled=False, execute_in_sandbox=False, review_scope="experiment"
+    )
+    with_guard = evaluate_agent_event(
+        deepcopy(event), guard_enabled=True, execute_in_sandbox=False, review_scope="experiment"
+    )
     attack_success = bool(unsafe and not refused)
     return {
         "round_index": round_index,
@@ -719,7 +736,9 @@ def run_authorized_target_test(request: dict[str, Any]) -> dict[str, Any]:
             "risk_hint": "authorized_public_target",
         },
     }
-    preflight = evaluate_agent_event(deepcopy(preflight_event), guard_enabled=True, execute_in_sandbox=False)
+    preflight = evaluate_agent_event(
+        deepcopy(preflight_event), guard_enabled=True, execute_in_sandbox=False, review_scope="experiment"
+    )
     if preflight["decision"] == "拒绝":
         return {
             "executed": False,
@@ -727,6 +746,7 @@ def run_authorized_target_test(request: dict[str, Any]) -> dict[str, Any]:
             "authorization_confirmed": authorization_confirmed,
             "preflight": preflight,
             "http_status": 0,
+            "resolved_ip": "",
             "target_response": "",
             "output_filter": {"blocked": False, "findings": []},
             "supervisor": preflight,
@@ -749,7 +769,16 @@ def run_authorized_target_test(request: dict[str, Any]) -> dict[str, Any]:
         model_output=str(output_filter["filtered"])[:2000],
         risk_hint="jailbreak_output" if output_filter["blocked"] else "authorized_target_response",
     )
-    supervisor = evaluate_agent_event(deepcopy(response_event), guard_enabled=True, execute_in_sandbox=False)
+    response_event["tool_call"]["arguments"].update(
+        {
+            "resolved_ip": http_result["resolved_ip"],
+            "http_status": http_result["status"],
+            "redirect_followed": False,
+        }
+    )
+    supervisor = evaluate_agent_event(
+        deepcopy(response_event), guard_enabled=True, execute_in_sandbox=False, review_scope="experiment"
+    )
     return {
         "executed": True,
         "target_url": _redact_url_secret(target_url),
@@ -757,6 +786,7 @@ def run_authorized_target_test(request: dict[str, Any]) -> dict[str, Any]:
         "authorization_note": authorization_note,
         "preflight": preflight,
         "http_status": http_result["status"],
+        "resolved_ip": http_result["resolved_ip"],
         "target_response": str(output_filter["filtered"])[:2400],
         "request_preview": request_preview,
         "output_filter": {
@@ -926,36 +956,54 @@ def _looks_unsafe(content: str) -> bool:
 
 
 def _validate_target_url(target_url: str) -> urllib.parse.ParseResult:
+    parsed = _parse_target_url(target_url)
+    _resolve_public_addresses(str(parsed.hostname), _target_port(parsed))
+    return parsed
+
+
+def _parse_target_url(target_url: str) -> urllib.parse.ParseResult:
     if not target_url:
         raise ValueError("外部授权目标 URL 不能为空。")
     parsed = urllib.parse.urlparse(target_url)
     if parsed.scheme not in ALLOWED_TARGET_SCHEMES or not parsed.hostname:
         raise ValueError("外部授权目标 URL 必须是 http 或 https 地址。")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("外部授权目标 URL 不允许包含用户名或密码。")
+    try:
+        _target_port(parsed)
+    except ValueError as exc:
+        raise ValueError("外部授权目标 URL 端口无效。") from exc
     path = parsed.path or "/"
     if not any(marker in path for marker in ALLOWED_AGENT_PATH_MARKERS):
         raise ValueError("只允许调用授权 Agent/模型受控实验环境接口，不能对任意公网路径发起请求。")
-    _ensure_public_hostname(parsed.hostname)
     return parsed
 
 
-def _ensure_public_hostname(hostname: str) -> None:
+def _resolve_public_addresses(hostname: str, port: int | None) -> list[str]:
     try:
         ip = ipaddress.ip_address(hostname)
         _ensure_public_ip(ip)
-        return
+        return [str(ip)]
     except ValueError:
         pass
     try:
-        infos = socket.getaddrinfo(hostname, None)
+        infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
         raise ValueError(f"无法解析外部授权目标域名：{hostname}") from exc
+    addresses: list[str] = []
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
         _ensure_public_ip(ip)
+        address = str(ip)
+        if address not in addresses:
+            addresses.append(address)
+    if not addresses:
+        raise ValueError(f"外部授权目标域名没有可用地址：{hostname}")
+    return addresses
 
 
 def _ensure_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> None:
-    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+    if not ip.is_global:
         raise ValueError("外部授权目标不能指向本机、内网、链路本地或保留地址。")
 
 
@@ -967,7 +1015,7 @@ def _build_authorized_target_payload(path: str, attack_input: str, surface_id: s
             "temperature": 0.2,
             "stream": False,
         }
-    if "/api/supervisor/evaluate" in path or "/api/integrations/openclaw/events" in path:
+    if any(marker in path for marker in ("/api/runtime/evaluate", "/api/supervisor/evaluate", "/api/integrations/openclaw/events")):
         return {
             "conversation_id": f"authorized-target-{uuid4()}",
             "agent_id": "authorized-target-agent",
@@ -993,25 +1041,97 @@ def _build_authorized_target_payload(path: str, attack_input: str, surface_id: s
 
 
 def _post_authorized_target(target_url: str, payload: dict[str, Any], bearer_token: str) -> dict[str, Any]:
+    parsed = _parse_target_url(target_url)
+    hostname = str(parsed.hostname)
+    port = _target_port(parsed)
+    pinned_ip = _resolve_public_addresses(hostname, port)[0]
     headers = {"Content-Type": "application/json"}
     if bearer_token:
         headers["Authorization"] = f"Bearer {bearer_token}"
-    request = urllib.request.Request(
-        target_url,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers=headers,
-        method="POST",
-    )
+    headers["Host"] = _target_host_header(parsed)
+    body_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request_target = parsed.path or "/"
+    if parsed.query:
+        request_target = f"{request_target}?{parsed.query}"
+    connection = _build_pinned_connection(parsed, pinned_ip, timeout=8)
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
-            body = response.read(MAX_TARGET_BODY_BYTES).decode("utf-8", errors="replace")
-            status = int(response.status)
-    except urllib.error.HTTPError as exc:
-        body = exc.read(MAX_TARGET_BODY_BYTES).decode("utf-8", errors="replace")
-        status = int(exc.code)
-    except urllib.error.URLError as exc:
-        raise ValueError(f"外部授权目标请求失败：{exc.reason}") from exc
-    return {"status": status, "body": _stringify_response_body(body)}
+        connection.request("POST", request_target, body=body_bytes, headers=headers)
+        response = connection.getresponse()
+        body = response.read(MAX_TARGET_BODY_BYTES).decode("utf-8", errors="replace")
+        status = int(response.status)
+    except (OSError, ssl.SSLError, http.client.HTTPException) as exc:
+        raise ValueError(f"外部授权目标请求失败：{exc}") from exc
+    finally:
+        connection.close()
+    return {"status": status, "body": _stringify_response_body(body), "resolved_ip": pinned_ip}
+
+
+def _target_port(parsed: urllib.parse.ParseResult) -> int:
+    port = parsed.port
+    if port is not None:
+        if port < 1:
+            raise ValueError("端口必须在 1 到 65535 之间")
+        return port
+    return 443 if parsed.scheme == "https" else 80
+
+
+def _target_host_header(parsed: urllib.parse.ParseResult) -> str:
+    hostname = str(parsed.hostname).encode("idna").decode("ascii")
+    try:
+        if ipaddress.ip_address(hostname).version == 6:
+            hostname = f"[{hostname}]"
+    except ValueError:
+        pass
+    port = _target_port(parsed)
+    default_port = 443 if parsed.scheme == "https" else 80
+    return hostname if port == default_port else f"{hostname}:{port}"
+
+
+def _build_pinned_connection(
+    parsed: urllib.parse.ParseResult,
+    pinned_ip: str,
+    *,
+    timeout: float,
+) -> http.client.HTTPConnection:
+    hostname = str(parsed.hostname).encode("idna").decode("ascii")
+    port = _target_port(parsed)
+    if parsed.scheme == "https":
+        return _PinnedHTTPSConnection(
+            hostname,
+            pinned_ip,
+            port=port,
+            timeout=timeout,
+            context=ssl.create_default_context(),
+        )
+    return _PinnedHTTPConnection(hostname, pinned_ip, port=port, timeout=timeout)
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, hostname: str, pinned_ip: str, *, port: int, timeout: float) -> None:
+        super().__init__(hostname, port=port, timeout=timeout)
+        self._pinned_ip = pinned_ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout, None)
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(
+        self,
+        hostname: str,
+        pinned_ip: str,
+        *,
+        port: int,
+        timeout: float,
+        context: ssl.SSLContext,
+    ) -> None:
+        super().__init__(hostname, port=port, timeout=timeout, context=context)
+        self._pinned_ip = pinned_ip
+        self._tls_context = context
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout, None)
+        self.sock = self._tls_context.wrap_socket(self.sock, server_hostname=self.host)
 
 
 def _stringify_response_body(body: str) -> str:
@@ -1025,7 +1145,7 @@ def _stringify_response_body(body: str) -> str:
 def _payload_kind(path: str) -> str:
     if path.endswith("/v1/chat/completions"):
         return "openai-compatible-chat"
-    if "/api/supervisor/evaluate" in path or "/api/integrations/openclaw/events" in path:
+    if any(marker in path for marker in ("/api/runtime/evaluate", "/api/supervisor/evaluate", "/api/integrations/openclaw/events")):
         return "supervisor-event"
     return "generic-agent-run"
 

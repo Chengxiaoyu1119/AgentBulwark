@@ -3,7 +3,9 @@ id: reports
 title: 证据与报告
 ---
 
-# 证据与报告
+# 按需证据与报告
+
+综合报告不是运行时防护的主流程。平台在工具调用到达执行器前完成判定、阻断、审批、回执和审计；本页产物只在复核、答辩或提交时按需生成。
 
 报告由运行记录、策略命中、审计日志和评测结果生成。它们用于回答三个问题：
 
@@ -39,7 +41,7 @@ npm run cli -- readiness --write --output apps/api/sandbox/reports
 
 | 接口 | 返回内容 |
 | --- | --- |
-| `GET /api/report` | 控制台综合报告数据 |
+| `GET /api/report` | 按需生成控制台证据数据（可能包含固定评测，运行耗时较长） |
 | `GET /api/attack_surfaces/evidence_packs` | 攻击面证据包索引 |
 | `GET /api/evaluations/attack_effectiveness` | 攻防有效性评测 |
 | `GET /api/evaluations/benign` | 正常业务误报评测 |

@@ -45,7 +45,7 @@ http://127.0.0.1:8012/api/health
 
 ## OpenClaw 是强依赖吗
 
-不是。项目提供 OpenClaw 兼容事件入口和插件包生成能力，但通用 `/api/supervisor/evaluate` 接口也可以接入其他 Agent 框架。
+不是。项目提供 OpenClaw 兼容事件入口和插件包生成能力，但通用 `/api/runtime/evaluate` 接口也可以接入其他 Agent 框架。
 
 ## 报告数据为什么会变化
 

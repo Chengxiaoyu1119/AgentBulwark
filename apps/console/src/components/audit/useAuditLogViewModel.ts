@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { decideApprovalReview, fetchApprovalReviews } from '@/api';
 import type { ApprovalReview, ApprovalReviewList, AuditLog } from '@/types';
-import { riskLabel, writeClipboardText } from '@/utils';
+import { writeClipboardText } from '@/utils';
 import { compareApprovalReviews } from './approvalReviewSorting';
 import { auditDeepLinkEvent, getAuditIdFromHash } from './auditDeepLink';
+import {
+  buildApprovalEvidenceText,
+  buildAuditEvidenceText,
+  buildFilteredAuditEvidenceText
+} from './auditEvidenceText';
 
 type ApprovalAction = 'approve' | 'reject';
 
@@ -54,7 +59,10 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
     return logs
       .filter((log) => {
         const text =
-          `${log.id} ${log.audit_hash ?? ''} ${log.previous_hash ?? ''} ${log.tool} ${log.decision} ${log.risk_level} ${log.policy_id} ${log.reason} ${log.recommendation} ${(log.risk_factors ?? []).join(' ')} ${log.risk_score ?? ''}`.toLowerCase();
+          `${log.id} ${log.audit_hash ?? ''} ${log.previous_hash ?? ''} ${log.tool_call_hash ?? ''} ${log.tool} ${log.standard_capability ?? ''} ${log.decision} ${log.risk_level} ${log.policy_id} ${log.reason} ${log.recommendation} ${log.execution_status ?? ''} ${log.execution_target ?? ''} ${(log.risk_factors ?? []).join(' ')} ${log.risk_score ?? ''}`.toLowerCase();
+
+        const receiptStatus = log.execution_status ?? 'awaiting_receipt';
+        const receiptConfirmed = Boolean(log.execution_receipt);
 
         return (
           (!keyword || text.includes(keyword)) &&
@@ -63,7 +71,17 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
           (riskScoreFilter === '全部' || (log.risk_score ?? 0) >= (minRiskScore ?? 0)) &&
           (toolFilter === '全部' || log.tool === toolFilter) &&
           (executionFilter === '全部' ||
-            (executionFilter === '已执行' ? log.tool_output.executed : !log.tool_output.executed))
+            (executionFilter === '已执行'
+              ? log.tool_output.executed
+              : executionFilter === '未执行'
+                ? !log.tool_output.executed
+                : executionFilter === '回执已确认'
+                  ? receiptConfirmed
+                  : executionFilter === '等待回执'
+                    ? !receiptConfirmed
+                    : executionFilter === '执行失败'
+                      ? receiptStatus === 'failed'
+                      : true))
         );
       })
       .sort((a, b) => {
@@ -77,9 +95,11 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
   const controlledCount = logs.filter((log) => ['拒绝', '询问', '隔离'].includes(log.decision)).length;
   const highRiskCount = logs.filter((log) => ['high', 'critical'].includes(log.risk_level)).length;
   const executedCount = logs.filter((log) => log.tool_output.executed).length;
+  const receiptCount = logs.filter((log) => Boolean(log.execution_receipt)).length;
+  const unconfirmedCount = logs.filter((log) => log.execution_receipt_expected && !log.execution_receipt).length;
 
   const latestReviews = useMemo(
-    () => [...approvalQueue.reviews].sort(compareApprovalReviews).slice(0, 5),
+    () => [...approvalQueue.reviews].sort(compareApprovalReviews),
     [approvalQueue.reviews]
   );
 
@@ -96,7 +116,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
   }, []);
 
   const handleApprovalDecision = useCallback(
-    async (review: ApprovalReview, action: ApprovalAction) => {
+    async (review: ApprovalReview, action: ApprovalAction, executeInSandbox = false) => {
       setApprovalBusyId(review.id);
       setApprovalError('');
       try {
@@ -104,9 +124,11 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
           review.id,
           action,
           action === 'approve'
-            ? '复核批准：确认可由上游业务系统按最小权限重新发起。'
+            ? executeInSandbox
+              ? '实验复核：仅在隔离环境重放，不恢复真实外部执行。'
+              : '生产复核：确认可由原始 Agent 按最小权限恢复一次。'
             : '复核驳回：外部收件人或敏感数据范围未满足授权条件。',
-          action === 'approve'
+          action === 'approve' && executeInSandbox
         );
         await loadApprovalReviews();
         await refresh();
@@ -120,23 +142,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
   );
 
   const copyApprovalEvidence = useCallback(async (review: ApprovalReview) => {
-    const text = [
-      `复核单：${review.id}`,
-      `状态：${review.status}`,
-      `最终结论：${review.final_decision}`,
-      `工具：${review.tool}`,
-      `策略：${review.policy_id}`,
-      `风险：${riskLabel[review.risk_level]} / ${review.risk_score ?? '-'}分`,
-      `异常分：${review.anomaly_score ?? '-'}`,
-      `原审计 hash：${review.audit_hash || '-'}`,
-      `复核 hash：${review.review_hash || '-'}`,
-      `操作人：${review.operator || '-'}`,
-      `备注：${review.comment || '-'}`,
-      `原因：${review.reason}`,
-      `建议：${review.recommendation}`,
-      `参数：${JSON.stringify(review.arguments, null, 2)}`
-    ].join('\n');
-    const ok = await writeClipboardText(text);
+    const ok = await writeClipboardText(buildApprovalEvidenceText(review));
     if (ok) {
       setCopiedApprovalId(review.id);
       window.setTimeout(() => setCopiedApprovalId(''), 1500);
@@ -169,24 +175,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
 
   const copyEvidence = useCallback(async () => {
     if (!selectedLog) return;
-
-    const text = [
-      `工具：${selectedLog.tool}`,
-      `决策：${selectedLog.decision}`,
-      `风险：${riskLabel[selectedLog.risk_level]}`,
-      `风险分：${selectedLog.risk_score ?? '-'}`,
-      `异常分：${selectedLog.anomaly_score ?? '-'}`,
-      `风险因子：${selectedLog.risk_factors?.join(' / ') || '-'}`,
-      `异常信号：${selectedLog.anomaly_signals?.join(' / ') || '-'}`,
-      `审计哈希：${selectedLog.audit_hash ?? '-'}`,
-      `上一条哈希：${selectedLog.previous_hash ?? '-'}`,
-      `策略：${selectedLog.policy_id}`,
-      `原因：${selectedLog.reason}`,
-      `建议：${selectedLog.recommendation}`,
-      `参数：${JSON.stringify(selectedLog.arguments, null, 2)}`,
-      `输出：${selectedLog.tool_output.output}`
-    ].join('\n');
-    const ok = await writeClipboardText(text);
+    const ok = await writeClipboardText(buildAuditEvidenceText(selectedLog));
     setCopied(ok);
     if (ok) {
       window.setTimeout(() => setCopied(false), 1500);
@@ -194,24 +183,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
   }, [selectedLog]);
 
   const copyFilteredAuditEvidence = useCallback(async () => {
-    const text = filteredLogs
-      .map((log, index) =>
-        [
-          `#${index + 1} ${log.tool}`,
-          `决策：${log.decision}`,
-          `风险：${riskLabel[log.risk_level]} / ${log.risk_score ?? '-'}分`,
-          `异常分：${log.anomaly_score ?? '-'}`,
-          `风险因子：${log.risk_factors?.join(' / ') || '-'}`,
-          `异常信号：${log.anomaly_signals?.join(' / ') || '-'}`,
-          `审计哈希：${log.audit_hash ?? '-'}`,
-          `策略：${log.policy_id}`,
-          `原因：${log.reason}`,
-          `建议：${log.recommendation}`,
-          `执行：${log.tool_output.executed ? '是' : '否'} / 沙箱：${log.tool_output.sandboxed ? '是' : '否'}`
-        ].join('\n')
-      )
-      .join('\n\n');
-    const ok = await writeClipboardText(text || '当前筛选条件下没有审计记录。');
+    const ok = await writeClipboardText(buildFilteredAuditEvidenceText(filteredLogs));
     setCopiedFiltered(ok);
     if (ok) {
       window.setTimeout(() => setCopiedFiltered(false), 1500);
@@ -228,7 +200,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
     return () => {
       cancelled = true;
     };
-  }, [loadApprovalReviews]);
+  }, [loadApprovalReviews, logs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -283,6 +255,8 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
     controlledCount,
     highRiskCount,
     executedCount,
+    receiptCount,
+    unconfirmedCount,
     latestReviews,
     loadApprovalReviews,
     handleApprovalDecision,

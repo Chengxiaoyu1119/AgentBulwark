@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from apps.api.agent_supervisor.auth import require_api_token
+from apps.api.agent_supervisor.auth import require_api_token, restrict_executor_scope
 from apps.api.agent_supervisor.domains.attacks.agents import batch_compare_scenarios, compare_scenario, run_scenario
 from apps.api.agent_supervisor.domains.attacks.attack_chains import (
     compare_attack_chain,
@@ -13,7 +13,7 @@ from apps.api.agent_supervisor.schemas.main_models import AttackChainRunRequest,
 from apps.api.agent_supervisor.storage.data import get_scenarios
 from apps.api.agent_supervisor.storage.database import load_run
 
-router = APIRouter(dependencies=[Depends(require_api_token)])
+router = APIRouter(dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)])
 
 @router.get("/api/scenarios")
 def scenarios() -> list[dict]:

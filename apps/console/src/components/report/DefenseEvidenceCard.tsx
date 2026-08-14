@@ -14,6 +14,7 @@ export function DefenseEvidenceCard({ item, onOpenScenario }: DefenseEvidenceCar
   const observed = item.observed_decisions[0];
   const withoutHash = item.without_guard?.audit_hashes?.[0] ?? '';
   const withHash = item.with_guard?.audit_hashes?.[0] ?? '';
+  const attackAssertions = item.without_guard?.attack_assertions ?? [];
 
   return (
     <PanelCard key={item.scenario_id} type="inner" bodyPadding={16}>
@@ -127,6 +128,23 @@ export function DefenseEvidenceCard({ item, onOpenScenario }: DefenseEvidenceCar
                 <Typography.Text type="secondary" className="zh-defense-evidence-step-text">
                   {decision.decision ?? '未记录'} / {decision.policy_id ?? '未记录'} · 风险 {decision.risk_score ?? '-'}{' '}
                   · 异常 {decision.anomaly_score ?? '-'}
+                </Typography.Text>
+              </div>
+            ))}
+          </Space>
+        </div>
+      )}
+      {attackAssertions.length > 0 && (
+        <div className="zh-defense-evidence-steps">
+          <Typography.Text strong className="zh-defense-evidence-step-title">
+            无防护副作用证据
+          </Typography.Text>
+          <Space orientation="vertical" className="zh-full-width">
+            {attackAssertions.map((assertion, index) => (
+              <div key={`${item.scenario_id}-effect-${index}`} className="zh-defense-evidence-step-row">
+                <LabelTag color={assertion.observed ? 'error' : 'default'}>{assertion.tool}</LabelTag>
+                <Typography.Text type="secondary" className="zh-defense-evidence-step-text">
+                  {assertion.reason} · {assertion.fixture_source || 'sandbox-runtime'}
                 </Typography.Text>
               </div>
             ))}

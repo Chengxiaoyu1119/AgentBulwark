@@ -3,6 +3,7 @@ import { DecisionPill, LabelTag, MetricCard as Metric, PanelCard, SectionTitle, 
 import type { ReportData } from '@/types';
 import { riskLabel } from '@/utils';
 import { ReportAttackEvidenceActions } from './ReportAttackEvidenceActions';
+import { AdversarialHoldoutPanel } from './AdversarialHoldoutPanel';
 import { ReportDefenseEvidenceBoard } from './ReportDefenseEvidenceBoard';
 
 type ReportAttackEvaluationTabProps = {
@@ -21,6 +22,7 @@ export function ReportAttackEvaluationTab({
   return (
     <Space orientation="vertical" size="large" className="zh-tab-stack">
       <ReportAttackEvidenceActions onRefreshReport={onRefreshReport} onRefreshRuntime={onRefreshRuntime} />
+      {report.adversarial_holdout && <AdversarialHoldoutPanel report={report.adversarial_holdout} />}
       {report.attack_effectiveness && (
         <PanelCard
           title={
@@ -62,7 +64,6 @@ export function ReportAttackEvaluationTab({
             </Col>
           </Row>
           <ReportDefenseEvidenceBoard cases={report.attack_effectiveness.cases} onOpenScenario={onOpenScenario} />
-
           <UiTable
             dataSource={report.attack_effectiveness.cases}
             rowKey="scenario_id"

@@ -2,8 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import log2
-from pathlib import PurePath
 from typing import Any
+
+from apps.api.agent_supervisor.domains.governance.tool_contract import (
+    SUPPORTED_TOOLS,
+    canonical_text,
+    mail_recipient_addresses,
+    normalize_tool_call,
+    path_is_absolute_or_traversal,
+    path_is_sensitive,
+    recipients_are_internal,
+)
 
 
 @dataclass
@@ -15,17 +24,7 @@ class AnomalyResult:
 ANOMALY_REVIEW_THRESHOLD = 55
 ANOMALY_REJECT_THRESHOLD = 90
 HIGH_IMPACT_TOOLS = {"code.run", "file.write", "mail.send", "api.call", "memory.write"}
-KNOWN_TOOLS = {
-    "file.read",
-    "file.write",
-    "mail.send",
-    "api.call",
-    "code.run",
-    "memory.write",
-    "memory.read",
-    "env.read",
-    "model.respond",
-}
+KNOWN_TOOLS = SUPPORTED_TOOLS
 UNTRUSTED_CONTEXT_MARKERS = ["网页", "公告", "工具返回", "外部", "摘要", "metadata", "retrieved", "browser", "赛题附件", "训练平台"]
 SENSITIVE_MARKERS = [
     "secret",
@@ -59,6 +58,7 @@ def detect_tool_anomaly(
     prompt: str = "",
     context_sources: list[str] | None = None,
 ) -> AnomalyResult:
+    tool_call = normalize_tool_call(tool_call)
     tool = str(tool_call.get("tool", ""))
     args = tool_call.get("arguments", {})
     if not isinstance(args, dict):
@@ -68,7 +68,7 @@ def detect_tool_anomaly(
     score = 0
 
     if tool not in KNOWN_TOOLS:
-        score += 30
+        score += 60
         signals.append("未知工具类型")
 
     if tool in HIGH_IMPACT_TOOLS:
@@ -115,25 +115,24 @@ def _argument_score(tool: str, args: dict[str, Any], signals: list[str]) -> int:
 
     if tool in {"file.read", "file.write"}:
         path = str(args.get("path", ""))
-        path_text = path.lower()
-        if _looks_absolute(path) or ".." in PurePath(path).parts:
+        if path_is_absolute_or_traversal(path):
             score += 35
             signals.append("文件路径疑似越界")
-        if any(marker in path_text for marker in ["confidential", "secret", "token"]):
+        if path_is_sensitive(path):
             score += 28
             signals.append("文件路径指向敏感位置")
 
     if tool == "mail.send":
         to = str(args.get("to", "")).lower()
-        if "@" in to and not to.endswith("@internal.example"):
+        if not mail_recipient_addresses(to) or not recipients_are_internal(to):
             score += 25
-            signals.append("邮件收件人为外部地址")
+            signals.append("邮件收件人缺失、无效或包含外部地址")
         if len(str(args.get("body", ""))) > 1000:
             score += 12
             signals.append("邮件正文较长，需确认是否包含批量数据")
 
     if tool == "api.call":
-        endpoint = str(args.get("endpoint", "")).lower()
+        endpoint = canonical_text(args.get("endpoint")).lower()
         if any(marker in endpoint for marker in ["export", "all", "bulk"]):
             score += 24
             signals.append("API 调用疑似批量导出")
@@ -142,7 +141,7 @@ def _argument_score(tool: str, args: dict[str, Any], signals: list[str]) -> int:
             signals.append("API 调用指向高敏比赛或管理域")
 
     if tool == "code.run":
-        command = str(args.get("command", "")).lower()
+        command = canonical_text(args.get("command")).lower()
         if command and not command.startswith(("python --version", "python -v", "python scripts/")):
             score += 30
             signals.append("代码执行命令不在低风险白名单形态")
@@ -151,8 +150,20 @@ def _argument_score(tool: str, args: dict[str, Any], signals: list[str]) -> int:
             signals.append("代码执行命令包含系统或网络动作")
 
     if tool == "memory.write":
-        content = str(args.get("content", ""))
-        if any(marker in content for marker in ["以后", "隐藏", "直接执行", "不需要检查"]):
+        content = canonical_text(args.get("content")).lower()
+        if any(
+            marker in content
+            for marker in [
+                "以后",
+                "隐藏",
+                "直接执行",
+                "不需要检查",
+                "ignore authorization",
+                "ignore permission",
+                "bypass authorization",
+                "always send",
+            ]
+        ):
             score += 30
             signals.append("长期记忆写入包含未来行为控制语义")
 
@@ -179,11 +190,6 @@ def _entropy(text: str) -> float:
     counts = {char: text.count(char) for char in set(text)}
     length = len(text)
     return -sum((count / length) * log2(count / length) for count in counts.values())
-
-
-def _looks_absolute(path: str) -> bool:
-    return path.startswith(("/", "\\")) or (len(path) > 2 and path[1:3] == ":\\")
-
 
 def _dedupe(items: list[str]) -> list[str]:
     seen: set[str] = set()

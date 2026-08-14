@@ -51,6 +51,11 @@ def _openclaw_plugin_manifest(supervisor_url: str) -> str:
                         "default": supervisor_url,
                         "description": "智安哨 OpenClaw 兼容监督接口。",
                     },
+                    "apiToken": {
+                        "type": "string",
+                        "default": "",
+                        "description": "智安哨 API Token；也可使用 AGENT_SUPERVISOR_API_TOKEN 环境变量。",
+                    },
                     "timeoutMs": {
                         "type": "integer",
                         "default": 5000,
@@ -65,6 +70,11 @@ def _openclaw_plugin_manifest(supervisor_url: str) -> str:
                     "inspectToolResults": {
                         "type": "boolean",
                         "default": True,
+                    },
+                    "emitRiskHint": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "是否发送插件推断的风险提示；盲测和正式部署默认关闭，避免自标注。",
                     },
                 },
             },
@@ -94,9 +104,11 @@ export default definePluginEntry({{
     additionalProperties: false,
     properties: {{
       supervisorUrl: {{ type: "string", default: DEFAULT_SUPERVISOR_URL }},
+      apiToken: {{ type: "string", default: "" }},
       timeoutMs: {{ type: "integer", default: DEFAULT_TIMEOUT_MS, minimum: 1000, maximum: 60000 }},
       failClosedDecision: {{ type: "string", enum: ["询问", "拒绝"], default: "询问" }},
-      inspectToolResults: {{ type: "boolean", default: true }}
+      inspectToolResults: {{ type: "boolean", default: true }},
+      emitRiskHint: {{ type: "boolean", default: false }}
     }}
   }},
   register(api) {{
@@ -132,16 +144,18 @@ function getConfig(event) {{
         process.env.AGENT_SUPERVISOR_URL ??
         DEFAULT_SUPERVISOR_URL,
     ),
+    apiToken: String(pluginConfig.apiToken ?? process.env.AGENT_SUPERVISOR_API_TOKEN ?? ""),
     timeoutMs: Number(pluginConfig.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     failClosedDecision: String(pluginConfig.failClosedDecision ?? "询问"),
     inspectToolResults: pluginConfig.inspectToolResults !== false,
+    emitRiskHint: pluginConfig.emitRiskHint === true,
   }};
 }}
 
 async function evaluateToolCall(event, config, phase) {{
-  const payload = buildSupervisorPayload(event, phase);
+  const payload = buildSupervisorPayload(event, phase, config);
   try {{
-    return await postJson(config.supervisorUrl, payload, config.timeoutMs);
+    return await postJson(config.supervisorUrl, payload, config.timeoutMs, config.apiToken);
   }} catch (error) {{
     return {{
       decision: config.failClosedDecision === "拒绝" ? "拒绝" : "询问",
@@ -154,20 +168,20 @@ async function evaluateToolCall(event, config, phase) {{
 }}
 
 async function observeToolResult(event, config) {{
-  const payload = buildSupervisorPayload(event, "after_tool_call");
+  const payload = buildSupervisorPayload(event, "after_tool_call", config);
   payload.model_output = stringifyBounded(event?.result ?? event?.error ?? "", 2000);
   payload.tool_call.observed_result = {{
     ok: !event?.error,
     duration_ms: event?.durationMs ?? event?.duration_ms ?? null,
   }};
   try {{
-    await postJson(config.supervisorUrl, payload, Math.min(config.timeoutMs, 3000));
+    await postJson(config.supervisorUrl, payload, Math.min(config.timeoutMs, 3000), config.apiToken);
   }} catch {{
     // after_tool_call is observation-only. Do not change the OpenClaw run if audit export fails.
   }}
 }}
 
-function buildSupervisorPayload(event, phase) {{
+function buildSupervisorPayload(event, phase, config) {{
   const toolName = String(event?.toolName ?? event?.tool_name ?? event?.name ?? "unknown");
   const params = event?.params ?? event?.arguments ?? event?.input ?? {{}};
   const context = event?.context ?? {{}};
@@ -181,7 +195,7 @@ function buildSupervisorPayload(event, phase) {{
     tool_call: {{
       tool: normalizeTool(toolName),
       arguments: params && typeof params === "object" ? params : {{ value: params }},
-      risk_hint: inferRiskHint(toolName, params),
+      ...(config.emitRiskHint ? {{ risk_hint: inferRiskHint(toolName, params) }} : {{}}),
       openclaw_tool_name: toolName,
       openclaw_phase: phase,
       openclaw_run_id: context.runId ?? event?.runId ?? null,
@@ -198,18 +212,20 @@ function toOpenClawBeforeToolDecision(result, event, config) {{
     return undefined;
   }}
   const reason = formatReason(result);
-  if (decision === "拒绝") {{
+  // F1 强制阻断：拒绝和隔离都必须 100% 不执行，禁止人工审批放行
+  if (decision === "拒绝" || decision === "隔离") {{
     return {{
       block: true,
       blockReason: reason,
       metadata: buildDecisionMetadata(result),
     }};
   }}
+  // 询问：暂停工具调用，等待人工确认（人工可选择放行或拒绝）
   return {{
     requireApproval: {{
-      title: decision === "隔离" ? "隔离执行高风险工具" : "确认 OpenClaw 工具调用",
+      title: "确认 OpenClaw 工具调用",
       description: reason,
-      severity: decision === "隔离" ? "warning" : "info",
+      severity: "info",
       timeoutMs: 60_000,
       timeoutBehavior: "deny",
       metadata: buildDecisionMetadata(result),
@@ -238,13 +254,16 @@ function formatReason(result) {{
   return `${{policy}}${{score}}${{anomaly}}：${{reason}}${{recommendation}}`;
 }}
 
-async function postJson(url, payload, timeoutMs) {{
+async function postJson(url, payload, timeoutMs, apiToken) {{
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {{
     const response = await fetch(url, {{
       method: "POST",
-      headers: {{ "Content-Type": "application/json" }},
+      headers: {{
+        "Content-Type": "application/json",
+        ...(apiToken ? {{ Authorization: `Bearer ${{apiToken}}` }} : {{}}),
+      }},
       body: JSON.stringify(payload),
       signal: controller.signal,
     }});
@@ -330,7 +349,8 @@ $env:AGENT_SUPERVISOR_URL="http://127.0.0.1:8012/api/integrations/openclaw/event
 ## 安全默认值
 
 - 智安哨不可用时 fail-closed，默认进入人工确认。
-- `拒绝` 映射为 OpenClaw block。
-- `询问` 和 `隔离` 映射为 OpenClaw requireApproval，超时拒绝。
+- `拒绝` 和 `隔离` 强制映射为 OpenClaw block，工具调用 100% 不执行，人工无法放行。
+- `询问` 映射为 OpenClaw requireApproval，暂停等待人工确认，超时自动拒绝。
+- `允许` 放行工具调用。
 - `after_tool_call` 只做审计观察，不改变 OpenClaw 运行结果。
 """.strip()

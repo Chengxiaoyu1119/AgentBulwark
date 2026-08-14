@@ -90,7 +90,7 @@ export function AuditFilterBar({
           value={executionFilter}
           onChange={onExecutionFilterChange}
           className="zh-filter-control--sm"
-          options={['全部', '已执行', '未执行'].map((value) => ({
+          options={['全部', '已执行', '未执行', '回执已确认', '等待回执', '执行失败'].map((value) => ({
             label: value === '全部' ? '全部执行状态' : value,
             value
           }))}

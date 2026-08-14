@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Flex, Typography } from 'antd';
-import { Copy } from 'lucide-react';
-import { PanelCard, UiButton, UiTabs } from '../components/ui';
+import { Copy, RefreshCw } from 'lucide-react';
+import { LabelTag, PanelCard, UiButton, UiTabs } from '../components/ui';
 import {
   ReportAttackEvaluationTab,
   ReportDeliveryTab,
@@ -14,12 +14,16 @@ import { writeClipboardText } from '../utils';
 
 export function ReportPanel({
   report,
+  reportSource,
+  reportLoading = false,
   onOpenScenario,
   onOpenPage,
   onRefreshReport,
   onRefreshRuntime
 }: {
   report: ReportData | null;
+  reportSource?: 'backend' | 'fallback' | null;
+  reportLoading?: boolean;
   onOpenScenario: (id: string) => void;
   onOpenPage?: (page: PageKey) => void;
   onRefreshReport?: () => Promise<void> | void;
@@ -27,9 +31,10 @@ export function ReportPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const [copiedFile, setCopiedFile] = useState('');
-  const markdown = report?.markdown ?? '正在加载报告...';
+  const markdown = report?.markdown ?? '尚未生成证据，请点击“生成证据”后读取。';
   const competitionPackage = report?.competition_package;
   const packageFiles = competitionPackage?.files ?? [];
+  const reportActionLabel = report ? '刷新证据' : '生成证据';
 
   async function copyReport() {
     const ok = await writeClipboardText(markdown);
@@ -65,22 +70,49 @@ export function ReportPanel({
         <Flex justify="space-between" align="center" className="zh-report-hero-row">
           <div className="zh-flex-min zh-report-hero-copy">
             <Typography.Title level={3} className="zh-title-flush">
-              研究材料中心
+              证据导出（按需）
             </Typography.Title>
             <Typography.Text type="secondary" className="zh-text-body zh-text-block zh-mt-4">
-              面向大模型及智能体应用安全，汇总攻击场景、对抗样本、智能体脚本、监督策略、审计告警和交付材料。
+              运行时防护不依赖此页；只有在需要复核、答辩或提交材料时，才生成并导出固定证据。
             </Typography.Text>
           </div>
-          <UiButton className="zh-report-copy-button" icon={<Copy size={16} />} onClick={copyReport}>
-            {copied ? '已复制' : '复制 Markdown'}
-          </UiButton>
+          <Flex gap={8} wrap="wrap">
+            <UiButton
+              loading={reportLoading}
+              disabled={reportLoading || !onRefreshReport}
+              icon={<RefreshCw size={16} />}
+              onClick={() => void onRefreshReport?.()}
+            >
+              {reportActionLabel}
+            </UiButton>
+            <UiButton
+              className="zh-report-copy-button"
+              disabled={!report}
+              icon={<Copy size={16} />}
+              onClick={copyReport}
+            >
+              {copied ? '已复制' : '复制 Markdown'}
+            </UiButton>
+          </Flex>
         </Flex>
+        <LabelTag
+          variant="filled"
+          color={reportSource === 'backend' ? 'success' : reportSource === 'fallback' ? 'warning' : 'default'}
+        >
+          {reportSource === 'backend'
+            ? '真实后端数据'
+            : reportSource === 'fallback'
+              ? '内置模拟数据'
+              : reportLoading
+                ? '正在生成证据'
+                : '尚未生成证据'}
+        </LabelTag>
       </PanelCard>
 
       {report ? (
         <UiTabs
           className="zh-report-tabs"
-          defaultActiveKey="1"
+          defaultActiveKey="4"
           size="large"
           items={[
             {
@@ -130,7 +162,9 @@ export function ReportPanel({
         />
       ) : (
         <PanelCard variant="borderless" className="zh-centered-panel">
-          <Typography.Text type="secondary">正在加载报告...</Typography.Text>
+          <Typography.Text type="secondary">
+            {reportLoading ? '正在生成证据...' : '尚未生成证据，点击“生成证据”后读取。'}
+          </Typography.Text>
         </PanelCard>
       )}
     </div>

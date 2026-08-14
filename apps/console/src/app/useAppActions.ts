@@ -13,7 +13,6 @@ import type {
 import type { PageKey } from './navigation';
 
 type UseAppActionsOptions = {
-  page: PageKey;
   setPage: (page: PageKey) => void;
   scenarios: Scenario[];
   activeScenario: Scenario | undefined;
@@ -30,11 +29,9 @@ type UseAppActionsOptions = {
   setRunning: Dispatch<SetStateAction<boolean>>;
   setApiNotice: Dispatch<SetStateAction<string>>;
   refresh: () => Promise<unknown>;
-  loadReport: () => Promise<void>;
 };
 
 export function useAppActions({
-  page,
   setPage,
   scenarios,
   activeScenario,
@@ -50,8 +47,7 @@ export function useAppActions({
   setAttackChainCompareResult,
   setRunning,
   setApiNotice,
-  refresh,
-  loadReport
+  refresh
 }: UseAppActionsOptions) {
   const handleRunScenario = useCallback(
     async (scenarioId: string, compare = false) => {
@@ -126,9 +122,6 @@ export function useAppActions({
           `批量对比完成：${label} ${result.summary.total} 个脚本，无防护暴露 ${result.summary.exposed_without_guard} 个，有防护控制 ${result.summary.controlled_with_guard} 个。`
         );
         await refresh();
-        if (page === 'report') {
-          await loadReport();
-        }
         setPage('lab');
       } catch (error) {
         setApiNotice(`批量运行失败：${error instanceof Error ? error.message : '未知错误'}`);
@@ -137,8 +130,6 @@ export function useAppActions({
       }
     },
     [
-      loadReport,
-      page,
       refresh,
       scenarios,
       setApiNotice,

@@ -24,6 +24,9 @@ const commandNames = new Set([
   'roadmap',
   'anomaly-calibration',
   'real-model-eval',
+  'competition-benchmark',
+  'repro-check',
+  'http-e2e-benchmark',
   'openclaw-plugin',
   'openclaw-plugin-validate',
   'readiness',
@@ -37,13 +40,15 @@ const booleanFlags = new Map([
   ['npm_config_compare', '--compare'],
   ['npm_config_run_compare', '--run-compare'],
   ['npm_config_execute_in_sandbox', '--execute-in-sandbox'],
-  ['npm_config_inspect_runtime', '--inspect-runtime']
+  ['npm_config_inspect_runtime', '--inspect-runtime'],
+  ['npm_config_managed_server', '--managed-server']
 ]);
 
 const valueFlags = new Map([
   ['npm_config_output', '--output'],
   ['npm_config_format', '--format'],
   ['npm_config_status', '--status'],
+  ['npm_config_scope', '--scope'],
   ['npm_config_limit', '--limit'],
   ['npm_config_input', '--input'],
   ['npm_config_json', '--json'],
@@ -51,7 +56,14 @@ const valueFlags = new Map([
   ['npm_config_chain', '--chain'],
   ['npm_config_surface', '--surface'],
   ['npm_config_supervisor_url', '--supervisor-url'],
-  ['npm_config_max_false_alarm_rate', '--max-false-alarm-rate']
+  ['npm_config_api_token', '--api-token'],
+  ['npm_config_max_false_alarm_rate', '--max-false-alarm-rate'],
+  ['npm_config_repeats', '--repeats'],
+  ['npm_config_concurrency', '--concurrency'],
+  ['npm_config_calls', '--calls'],
+  ['npm_config_trials', '--trials'],
+  ['npm_config_operator', '--operator'],
+  ['npm_config_operator_role', '--operator-role']
 ]);
 
 function envEnabled(name) {
@@ -114,7 +126,7 @@ if (process.env.AGENT_SUPERVISOR_CLI_DEBUG === '1') {
   );
   console.error(JSON.stringify({ rawArgs: process.argv.slice(2), recoveredArgs: args, npmConfig }, null, 2));
 }
-const result = spawnSync('python', ['-X', 'utf8', '-m', 'apps.api.agent_supervisor.cli', ...args], {
+const result = spawnSync('python', ['-X', 'utf8', '-m', 'apps.api.agent_supervisor.commands.cli', ...args], {
   stdio: 'inherit',
   shell: process.platform === 'win32'
 });

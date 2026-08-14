@@ -11,18 +11,19 @@ from apps.api.agent_supervisor.domains.reports.surface_pack import (
     write_all_surface_briefing_sheets,
     write_all_surface_evidence_packs,
 )
-from apps.api.agent_supervisor.storage.database import latest_runs
+from apps.api.agent_supervisor.storage.data import get_scenarios
+from apps.api.agent_supervisor.storage.database import latest_scenario_run_pairs
 
 
 def run_gap_rerun() -> dict[str, Any]:
-    before_runs = latest_runs(500)
+    before_runs = _competition_evidence_runs()
     before_effectiveness = build_attack_effectiveness(before_runs)
     before_index = build_surface_evidence_index(before_runs)
     scenario_ids = _scenario_ids_needing_rerun(before_effectiveness)
 
     run_result = batch_compare_scenarios(scenario_ids) if scenario_ids else _empty_run_result()
 
-    after_runs = latest_runs(500)
+    after_runs = _competition_evidence_runs()
     after_effectiveness = build_attack_effectiveness(after_runs)
     surface_pack_result = write_all_surface_evidence_packs(runs=after_runs)
     briefing_result = write_all_surface_briefing_sheets(runs=after_runs)
@@ -84,3 +85,7 @@ def _empty_run_result() -> dict[str, Any]:
             "isolated_count": 0,
         },
     }
+
+
+def _competition_evidence_runs() -> list[dict[str, Any]]:
+    return latest_scenario_run_pairs([scenario["id"] for scenario in get_scenarios()])
