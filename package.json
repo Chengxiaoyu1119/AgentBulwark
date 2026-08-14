@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "npm run console:dev",
-    "install:all": "npm --prefix apps/console ci && npm --prefix apps/www ci && npm --prefix apps/docs ci && python -m pip install -r apps/api/requirements-dev.txt",
-    "build": "npm run console:build && npm run www:build && npm run docs:build",
+    "install:all": "npm --prefix apps/console ci && python -m pip install -r apps/api/requirements-dev.txt",
+    "build": "npm run console:build",
     "console:dev": "npm --prefix apps/console run dev",
     "console:build": "npm --prefix apps/console run build",
     "console:preview": "npm --prefix apps/console run preview",
@@ -29,19 +29,10 @@
     "api:check": "python -X utf8 -m compileall apps/api/agent_supervisor",
     "api:test": "python -X utf8 -m unittest discover -s apps/api/tests -p \"test_*.py\"",
     "api:coverage": "coverage run -m unittest discover -s apps/api/tests -p \"test_*.py\" && coverage report --fail-under=85",
-    "www:dev": "npm --prefix apps/www run dev",
-    "www:build": "npm --prefix apps/www run build",
-    "www:preview": "npm --prefix apps/www run preview",
-    "docs:dev": "npm --prefix apps/docs run start",
-    "docs:build": "npm --prefix apps/docs run build",
-    "docs:serve": "npm --prefix apps/docs run serve",
     "audit:security": "node scripts/dependency-security-audit.mjs",
     "audit:raw:console": "npm audit --prefix apps/console --audit-level=low --registry=https://registry.npmjs.org",
-    "audit:raw:www": "npm audit --prefix apps/www --audit-level=low --registry=https://registry.npmjs.org",
-    "audit:raw:docs": "npm audit --prefix apps/docs --audit-level=low --registry=https://registry.npmjs.org",
     "self:review": "node scripts/project-self-review.mjs --output apps/api/sandbox/reports",
-    "verify": "npm run console:lint:strict && npm run ui:audit && npm run www:ui:audit && npm run console:test && npm run api:lint && npm run api:typecheck && npm run api:check && npm run api:architecture && npm run api:test && npm run build",
-    "www:ui:audit": "npm --prefix apps/www run ui:audit",
+    "verify": "npm run console:lint:strict && npm run ui:audit && npm run console:test && npm run api:lint && npm run api:typecheck && npm run api:check && npm run api:architecture && npm run api:test && npm run build",
     "api:architecture": "node scripts/backend-governance-check.mjs"
   }
 }
