@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from copy import deepcopy
 from typing import Any, cast
 
@@ -46,9 +47,30 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
 }
 
 
+_json_cache: dict[str, tuple[float, Any]] = {}
+_enabled_cache: dict[str, tuple[float, bool]] = {}
+ENABLED_CACHE_TTL_SECONDS = 1.0
+
+
+def _load_json_cached(path: Any, cache_key: str) -> Any:
+    """带 mtime 失效的 JSON 读取缓存；缓存键含路径，支持测试中替换路径。
+
+    decide() 热路径的高频查询由 is_policy_enabled 的 TTL 结果缓存兜住，
+    本层每次做 stat 比对以保证文件变更即时生效。
+    """
+    cache_id = f"{path}|{cache_key}"
+    mtime = path.stat().st_mtime
+    cached = _json_cache.get(cache_id)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    _json_cache[cache_id] = (mtime, data)
+    return data
+
+
 def _load_json(filename: str) -> Any:
-    with open(CONFIG_DIR / filename, encoding="utf-8") as f:
-        return json.load(f)
+    return _load_json_cached(CONFIG_DIR / filename, filename)
 
 
 def _load_json_list(filename: str) -> list[dict[str, Any]]:
@@ -65,9 +87,17 @@ def _load_json_dict(filename: str) -> dict[str, Any]:
     return cast(dict[str, Any], data)
 
 
+_overrides_cache: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
+
+
 def _load_policy_overrides() -> dict[str, dict[str, Any]]:
     if not POLICY_OVERRIDES_PATH.exists():
         return {}
+    cache_id = str(POLICY_OVERRIDES_PATH)
+    mtime = POLICY_OVERRIDES_PATH.stat().st_mtime
+    cached = _overrides_cache.get(cache_id)
+    if cached is not None and cached[0] == mtime:
+        return cached[1]
     try:
         raw = json.loads(POLICY_OVERRIDES_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
@@ -84,7 +114,13 @@ def _load_policy_overrides() -> dict[str, dict[str, Any]]:
             if "enabled" in clean:
                 clean["enabled"] = bool(clean["enabled"])
             overrides[policy_id] = clean
+    _overrides_cache[cache_id] = (mtime, overrides)
     return overrides
+
+
+def _invalidate_overrides_cache() -> None:
+    _overrides_cache.clear()
+    _enabled_cache.clear()
 
 
 def _save_policy_overrides(overrides: dict[str, dict[str, Any]]) -> None:
@@ -92,11 +128,20 @@ def _save_policy_overrides(overrides: dict[str, dict[str, Any]]) -> None:
     tmp_path = POLICY_OVERRIDES_PATH.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp_path.replace(POLICY_OVERRIDES_PATH)
+    _invalidate_overrides_cache()
+
+
+_settings_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _load_policy_settings() -> dict[str, Any]:
     if not POLICY_SETTINGS_PATH.exists():
         return dict(DEFAULT_POLICY_SETTINGS)
+    cache_id = str(POLICY_SETTINGS_PATH)
+    mtime = POLICY_SETTINGS_PATH.stat().st_mtime
+    cached = _settings_cache.get(cache_id)
+    if cached is not None and cached[0] == mtime:
+        return dict(cached[1])
     try:
         raw = json.loads(POLICY_SETTINGS_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
@@ -104,8 +149,12 @@ def _load_policy_settings() -> dict[str, Any]:
     if not isinstance(raw, dict):
         return dict(DEFAULT_POLICY_SETTINGS)
     settings = _normalize_policy_settings({**DEFAULT_POLICY_SETTINGS, **raw})
+    _settings_cache[cache_id] = (mtime, settings)
+    return dict(settings)
 
-    return settings
+
+def _invalidate_settings_cache() -> None:
+    _settings_cache.clear()
 
 
 def _normalize_policy_settings(settings: dict[str, Any]) -> dict[str, Any]:
@@ -203,6 +252,7 @@ def _save_policy_settings(settings: dict[str, Any]) -> None:
     tmp_path = POLICY_SETTINGS_PATH.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp_path.replace(POLICY_SETTINGS_PATH)
+    _invalidate_settings_cache()
 
 
 def _clamp_int(value: Any, min_value: int, max_value: int) -> int:
@@ -288,11 +338,23 @@ def update_policy(
 
 
 def is_policy_enabled(policy_id: str) -> bool:
+    """decide() 热路径高频调用：策略开关按 TTL 结果缓存，每秒至多一次真实加载。"""
+    now = time.monotonic()
+    cache_key = f"{POLICY_OVERRIDES_PATH}|{CONFIG_DIR / 'policies.json'}|{policy_id}"
+    cached = _enabled_cache.get(cache_key)
+    if cached is not None and (now - cached[0]) < ENABLED_CACHE_TTL_SECONDS:
+        return cached[1]
     policies = _load_json_list("policies.json")
     overrides = _load_policy_overrides()
+    snapshot_at = now
     for policy in policies:
-        if policy["id"] == policy_id:
-            return bool(overrides.get(policy_id, {}).get("enabled", policy["enabled"]))
+        enabled = bool(overrides.get(str(policy["id"]), {}).get("enabled", policy["enabled"]))
+        _enabled_cache[f"{POLICY_OVERRIDES_PATH}|{CONFIG_DIR / 'policies.json'}|{policy['id']}"] = (
+            snapshot_at,
+            enabled,
+        )
+        if str(policy["id"]) == policy_id:
+            return enabled
     return False
 
 
