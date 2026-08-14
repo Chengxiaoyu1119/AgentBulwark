@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from apps.api.agent_supervisor.domains.runtime.app_lifespan import app_lifespan
 
 from .paths import REPO_ROOT
-from .routers import core, evaluations, integrations, proxy, scenarios
+from .routers import core, evaluations, integrations, mcp, proxy, scenarios
 
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
@@ -96,6 +96,7 @@ app.include_router(scenarios.router)
 app.include_router(evaluations.router)
 app.include_router(integrations.router)
 app.include_router(proxy.router)
+app.include_router(mcp.router)
 
 def _console_dist_dir() -> Path:
     bundled_root = Path(getattr(sys, "_MEIPASS", ""))

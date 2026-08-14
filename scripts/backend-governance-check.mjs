@@ -5,7 +5,7 @@ const root = process.cwd();
 const apiRoot = path.join(root, 'apps', 'api', 'agent_supervisor');
 
 const ignoredDirectories = new Set(['__pycache__']);
-const allowedDirectories = new Set(['adapters', 'commands', 'config', 'domains', 'routers', 'schemas', 'services', 'storage']);
+const allowedDirectories = new Set(['adapters', 'commands', 'config', 'domains', 'mcp_gateway', 'routers', 'schemas', 'services', 'storage']);
 const coreRootPythonFiles = new Set(['__init__.py', 'auth.py', 'main.py', 'paths.py']);
 const movedModules = {
   ablation: 'domains/evaluations/ablation.py',
@@ -147,7 +147,7 @@ const rootPythonSummary = rootEntries
 const oversizedRootFiles = rootPythonSummary.filter((item) => item.kind === 'core' && item.lines > 120);
 
 const packageInitMissing = [];
-for (const dir of ['adapters', 'adapters/integrations', 'adapters/models', 'adapters/proxy', 'commands', 'domains', 'domains/attacks', 'domains/evaluations', 'domains/governance', 'domains/reports', 'domains/runtime', 'schemas', 'storage']) {
+for (const dir of ['adapters', 'adapters/integrations', 'adapters/models', 'adapters/proxy', 'commands', 'domains', 'domains/attacks', 'domains/evaluations', 'domains/governance', 'domains/reports', 'domains/runtime', 'mcp_gateway', 'schemas', 'storage']) {
   const initPath = path.join(apiRoot, dir, '__init__.py');
   if (!fs.existsSync(initPath)) packageInitMissing.push(`apps/api/agent_supervisor/${dir}/__init__.py`);
 }

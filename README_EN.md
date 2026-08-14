@@ -87,11 +87,13 @@ flowchart LR
 | Mode | Enforcement | Description |
 |---|---|---|
 | OpenClaw plugin | **Enforced** | Plugin returns `block:true` in the `before_tool_call` hook; the tool call is never executed |
-| MCP Gateway (planned) | **Enforced** | Agent connects to the Gateway, which proxies real MCP servers; every tool call must pass the supervisor |
+| MCP Gateway | **Enforced** | Agent connects to the Gateway (`POST /api/mcp`), which proxies the real MCP server (stdio); every `tools/call` must pass the supervisor — deny/quarantine/ask requests are never forwarded upstream |
 | Generic HTTP | **Advisory** | The supervisor returns a decision and audit ID; compliance is up to the caller |
 
 > [!IMPORTANT]
 > The generic HTTP API (`POST /api/runtime/evaluate`) is **advisory**: ZhiAn Sentinel does not execute tools on your behalf and cannot force blocking over the caller. Use the OpenClaw plugin or MCP Gateway when hard enforcement is required.
+>
+> Enable the MCP Gateway via environment variables: point `MCP_GATEWAY_UPSTREAM_COMMAND` at the upstream MCP server launch command (e.g. `npx -y @modelcontextprotocol/server-filesystem /sandbox`). Custom MCP tool names must be mapped to standard capabilities in the `agent_tool_mappings` policy settings, otherwise the tool-contract policy rejects them.
 
 Minimal event example:
 
@@ -246,7 +248,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide.
 
 ## Roadmap
 
-- [ ] MCP Gateway: enforced supervision at the Model Context Protocol proxy layer
+- [x] MCP Gateway: enforced supervision at the Model Context Protocol proxy layer (stdio upstream + Streamable HTTP subset entry)
+- [ ] MCP Gateway: SSE streaming and multi-upstream routing
 - [ ] Semantic jailbreak detection: fine-tuned Chinese BERT model
 - [ ] OWASP Agentic Top 10 coverage to 90%+
 - [ ] More real-world agent framework adapters
