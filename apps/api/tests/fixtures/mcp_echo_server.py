@@ -25,6 +25,37 @@ ECHO_TOOL = {
     "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}},
 }
 
+EXTRA_TOOL = {
+    # env.read 同为标准能力；用于多上游路由测试（仅在 MCP_ECHO_EXTRA_TOOL=1 时暴露）
+    "name": "env.read",
+    "description": "第二个测试工具，用于验证工具目录路由。",
+    "inputSchema": {"type": "object", "properties": {"key": {"type": "string"}}},
+}
+
+
+def _flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() == "1"
+
+
+def _send(payload: dict) -> None:
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def _read_request() -> dict:
+    """阻塞读取下一行 JSON-RPC（用于等待网关对 server 请求的应答）。"""
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(message, dict):
+            return message
+    return {}
+
 
 def _trace(event: dict) -> None:
     target = os.environ.get("MCP_ECHO_TRACE", "").strip()
@@ -48,11 +79,20 @@ def _handle(request: dict) -> dict[str, Any]:
             "serverInfo": {"name": "echo-fixture", "version": "1.0.0"},
         }
     elif method == "tools/list":
-        result = {"tools": [ECHO_TOOL]}
+        tools = [ECHO_TOOL]
+        if _flag("MCP_ECHO_EXTRA_TOOL"):
+            tools.append(EXTRA_TOOL)
+        result = {"tools": tools}
     elif method == "tools/call":
+        if _flag("MCP_ECHO_SERVER_REQUEST"):
+            # 先发一条 server→client 请求，等待网关自动应答后再继续
+            _send({"jsonrpc": "2.0", "id": "srv-req-1", "method": "sampling/createMessage", "params": {}})
+            _read_request()
         _trace({"method": method, "params": params})
         text = json.dumps(params.get("arguments") or {}, ensure_ascii=False)
         result = {"content": [{"type": "text", "text": text}], "isError": False}
+        if _flag("MCP_ECHO_NOTIFY_ON_CALL"):
+            _send({"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
     elif method == "ping":
         result = {}
     else:
@@ -75,8 +115,7 @@ def main() -> None:
             continue
         if not isinstance(message, dict) or "method" not in message:
             continue  # 通知与未知消息：静默忽略
-        sys.stdout.write(json.dumps(_handle(message), ensure_ascii=False) + "\n")
-        sys.stdout.flush()
+        _send(_handle(message))
 
 
 if __name__ == "__main__":

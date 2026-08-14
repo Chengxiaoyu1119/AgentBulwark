@@ -23,9 +23,19 @@ def mcp_gateway_info() -> dict[str, Any]:
         "enabled": gateway is not None,
         "server_name": gateway_server_name(),
         "guard_enabled": gateway_guard_enabled() if gateway is not None else False,
+        "routes": gateway.route_names() if gateway is not None else [],
         "transport": "streamable-http-subset",
         "enforcement": "enforced",
     }
+
+
+@router.get("/api/mcp/notifications")
+def mcp_gateway_notifications() -> dict[str, Any]:
+    """读取并清空各上游缓冲的上行通知（SSE 之前的轮询替代）。"""
+    gateway = get_gateway()
+    if gateway is None:
+        raise HTTPException(status_code=503, detail="MCP Gateway 未启用：请配置 MCP_GATEWAY_UPSTREAM_COMMAND。")
+    return {"notifications": gateway.notifications()}
 
 
 @router.post("/api/mcp")

@@ -100,6 +100,10 @@ flowchart LR
 > 通用 HTTP 接入（`POST /api/runtime/evaluate`）属于**建议式 API**：智安哨不替代接入方执行工具，也不强制阻断。需要强制阻断时，请使用 OpenClaw 插件或 MCP Gateway。
 >
 > MCP Gateway 通过环境变量启用：`MCP_GATEWAY_UPSTREAM_COMMAND` 指向上游 MCP Server 启动命令（如 `npx -y @modelcontextprotocol/server-filesystem /sandbox`）。自定义 MCP 工具名需在策略设置的 `agent_tool_mappings` 中映射到标准能力，否则会被 tool-contract 策略拒绝。
+>
+> 多上游路由：`MCP_GATEWAY_ROUTES_JSON='[{"name":"fs","command":"npx -y @modelcontextprotocol/server-filesystem","cwd":"/data"}]'` 声明命名路由；网关按各上游 tools/list 目录路由 `tools/call`，`tools/list` 聚合所有路由并标注来源，同名工具归属 default 路由。
+>
+> 审计留痕：监督开启时每次 `tools/call`（放行与阻断）都会写入统一审计链（`source_app=mcp-gateway`，含决策、策略命中、上游结果脱敏快照），可在「事件与复核」与 `GET /api/audit_logs` 查询；上游通知可通过 `GET /api/mcp/notifications` 轮询。
 
 ```mermaid
 flowchart TD
@@ -253,7 +257,7 @@ CLI 用于批量回归、评测和证据导出，不参与运行时判定。
 | 执行回执 | `POST /api/runtime/executions/{audit_id}/complete` | 回传执行结果并绑定审计 Hash |
 | 通用 Agent 接入包 | `GET /api/integrations/agents/bundle` | HTTP、OpenAI Agents、LangChain、LangGraph 接入示例 |
 | OpenClaw | `GET /api/integrations/openclaw/bundle` | 获取 OpenClaw 接入包 |
-| MCP Gateway | `POST /api/mcp` · `GET /api/mcp/info` | MCP 代理入口（强制式监督）与网关状态 |
+| MCP Gateway | `POST /api/mcp` · `GET /api/mcp/info` · `GET /api/mcp/notifications` | MCP 代理入口（强制式监督）、网关状态与上游通知轮询 |
 
 ## 安全边界
 
@@ -307,7 +311,8 @@ agent-security-supervisor/
 ## 路线图
 
 - [x] MCP Gateway：Model Context Protocol 代理层强制监督（stdio 上游 + Streamable HTTP 子集入口）
-- [ ] MCP Gateway：SSE 流式传输与多上游路由
+- [x] MCP Gateway：多上游路由、审计落库、上游通知轮询
+- [ ] MCP Gateway：完整 SSE 流式传输与上游主动请求支持
 - [ ] 语义级越狱检测：中文 BERT 模型微调
 - [ ] OWASP Agentic Top 10 覆盖度提升至 90%+
 - [ ] 更多真实 Agent 框架适配器

@@ -11,6 +11,32 @@ from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecisio
 BLOCKED_DECISIONS = {"拒绝", "隔离", "询问"}
 
 
+def evaluate_tools_call(
+    params: dict[str, Any],
+    *,
+    prompt: str = "",
+    agent_id: str = "mcp-gateway",
+) -> GuardDecision:
+    """评估 tools/call 参数，始终返回完整决策（供拦截与审计共用）。
+
+    缺少工具名时返回合成的拒绝决策——网关不允许匿名工具调用。
+    """
+    tool_name = str(params.get("name") or "")
+    if not tool_name:
+        return GuardDecision(
+            decision="拒绝",
+            risk_level="high",
+            policy_id="mcp-gateway-contract",
+            reason="tools/call 缺少工具名称参数 name。",
+            recommendation="按 MCP 规范传入非空 name 后重试。",
+        )
+    arguments = params.get("arguments")
+    if not isinstance(arguments, dict):
+        arguments = {"_raw_arguments": arguments}
+    tool_call = {"tool": tool_name, "arguments": arguments}
+    return decide(tool_call, guard_enabled=True, prompt=prompt, agent_id=agent_id)
+
+
 def inspect_tools_call(
     params: dict[str, Any],
     *,
@@ -18,14 +44,7 @@ def inspect_tools_call(
     agent_id: str = "mcp-gateway",
 ) -> GuardDecision | None:
     """评估 tools/call 参数；返回 None 表示放行，否则返回阻断决策。"""
-    tool_name = str(params.get("name") or "")
-    if not tool_name:
-        return None
-    arguments = params.get("arguments")
-    if not isinstance(arguments, dict):
-        arguments = {"_raw_arguments": arguments}
-    tool_call = {"tool": tool_name, "arguments": arguments}
-    decision = decide(tool_call, guard_enabled=True, prompt=prompt, agent_id=agent_id)
+    decision = evaluate_tools_call(params, prompt=prompt, agent_id=agent_id)
     if decision.decision in BLOCKED_DECISIONS:
         return decision
     return None

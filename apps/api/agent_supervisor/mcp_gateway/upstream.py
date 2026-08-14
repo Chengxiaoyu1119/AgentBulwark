@@ -11,7 +11,10 @@ import os
 import queue
 import subprocess
 import threading
+from collections import deque
 from typing import Any
+
+NOTIFICATION_BUFFER_SIZE = 200
 
 
 class StdioUpstreamError(RuntimeError):
@@ -38,6 +41,7 @@ class StdioMcpUpstream:
         self._proc: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
         self._inbox: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._notifications: deque[dict[str, Any]] = deque(maxlen=NOTIFICATION_BUFFER_SIZE)
         self._reader: threading.Thread | None = None
         self._next_id = 0
 
@@ -97,9 +101,40 @@ class StdioMcpUpstream:
                 message = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(message, dict):
-                self._inbox.put(message)
+            if not isinstance(message, dict):
+                continue
+            if "method" in message and "id" not in message:
+                # 上行通知（如 notifications/tools/list_changed）进入缓冲区
+                self._notifications.append(message)
+                continue
+            if "method" in message and "id" in message:
+                # 上游主动请求（server→client）：v1 不支持，立即回错误避免上游挂起
+                self._reply_server_request(message)
+                continue
+            self._inbox.put(message)
         self._inbox.put({"__upstream_closed__": True})
+
+    def _reply_server_request(self, message: dict[str, Any]) -> None:
+        try:
+            with self._lock:
+                self._write_line(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": message.get("id"),
+                        "error": {
+                            "code": -32601,
+                            "message": "ZhiAn Sentinel MCP Gateway 不支持上游主动请求。",
+                        },
+                    }
+                )
+        except (StdioUpstreamError, OSError):
+            pass  # 进程已退出时无需应答
+
+    def notifications(self) -> list[dict[str, Any]]:
+        """读取并清空已缓冲的上行通知。"""
+        drained = list(self._notifications)
+        self._notifications.clear()
+        return drained
 
     def _write_line(self, payload: dict[str, Any]) -> None:
         proc = self._proc
@@ -123,7 +158,7 @@ class StdioMcpUpstream:
                 raise StdioUpstreamError("上游 MCP Server 已退出。")
             if message.get("id") == request_id and ("result" in message or "error" in message):
                 return message
-            # 服务端通知或无关消息：丢弃（v1 不处理上游主动请求）。
+            # 其余无关消息（如未知 id 的迟到响应）丢弃。
 
     # -- 对外接口 -----------------------------------------------------------
 
@@ -135,7 +170,11 @@ class StdioMcpUpstream:
         client_id: Any = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        """发送请求并返回响应；响应 id 还原为调用方的 client_id。"""
+        """发送请求并返回响应；响应 id 还原为调用方的 client_id。
+
+        注意：等待响应在锁外进行，避免 reader 线程需要拿锁应答上游
+        主动请求时与主线程互等（死锁）。
+        """
         with self._lock:
             self._ensure_started()
             request_id = self._allocate_id()
@@ -143,7 +182,7 @@ class StdioMcpUpstream:
             if params is not None:
                 payload["params"] = params
             self._write_line(payload)
-            response = self._wait_response(request_id, timeout or self._timeout)
+        response = self._wait_response(request_id, timeout or self._timeout)
         if client_id is not None:
             response["id"] = client_id
         return response

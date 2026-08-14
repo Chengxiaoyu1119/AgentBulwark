@@ -94,6 +94,10 @@ flowchart LR
 > The generic HTTP API (`POST /api/runtime/evaluate`) is **advisory**: ZhiAn Sentinel does not execute tools on your behalf and cannot force blocking over the caller. Use the OpenClaw plugin or MCP Gateway when hard enforcement is required.
 >
 > Enable the MCP Gateway via environment variables: point `MCP_GATEWAY_UPSTREAM_COMMAND` at the upstream MCP server launch command (e.g. `npx -y @modelcontextprotocol/server-filesystem /sandbox`). Custom MCP tool names must be mapped to standard capabilities in the `agent_tool_mappings` policy settings, otherwise the tool-contract policy rejects them.
+>
+> Multi-upstream routing: declare named routes via `MCP_GATEWAY_ROUTES_JSON='[{"name":"fs","command":"npx -y @modelcontextprotocol/server-filesystem","cwd":"/data"}]'`. The gateway routes `tools/call` by each upstream's tools/list catalog; `tools/list` aggregates all routes with source labels, and duplicate tool names belong to the default route.
+>
+> Audit trail: with supervision on, every `tools/call` (allowed or blocked) is written to the unified audit chain (`source_app=mcp-gateway`, including the decision, policy hit, and a redacted snapshot of the upstream result), queryable via the Events & Review page and `GET /api/audit_logs`; upstream notifications can be polled via `GET /api/mcp/notifications`.
 
 Minimal event example:
 
@@ -249,7 +253,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide.
 ## Roadmap
 
 - [x] MCP Gateway: enforced supervision at the Model Context Protocol proxy layer (stdio upstream + Streamable HTTP subset entry)
-- [ ] MCP Gateway: SSE streaming and multi-upstream routing
+- [x] MCP Gateway: multi-upstream routing, audit persistence, upstream notification polling
+- [ ] MCP Gateway: full SSE streaming and upstream-initiated request support
 - [ ] Semantic jailbreak detection: fine-tuned Chinese BERT model
 - [ ] OWASP Agentic Top 10 coverage to 90%+
 - [ ] More real-world agent framework adapters
