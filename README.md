@@ -104,6 +104,8 @@ flowchart LR
 > 多上游路由：`MCP_GATEWAY_ROUTES_JSON='[{"name":"fs","command":"npx -y @modelcontextprotocol/server-filesystem","cwd":"/data"}]'` 声明命名路由；网关按各上游 tools/list 目录路由 `tools/call`，`tools/list` 聚合所有路由并标注来源，同名工具归属 default 路由。
 >
 > 审计留痕：监督开启时每次 `tools/call`（放行与阻断）都会写入统一审计链（`source_app=mcp-gateway`，含决策、策略命中、上游结果脱敏快照），可在「事件与复核」与 `GET /api/audit_logs` 查询；上游通知可通过 `GET /api/mcp/notifications` 轮询。
+>
+> 双通道越狱检测：规则通道（`jailbreak-filter` 等策略，<5ms）先行短路明确风险；规则放行且输入非空时，由语义通道（`jailbreak-semantic` 策略）调用本地 ONNX BERT 模型做越狱意图兜底判定（<50ms）。模型文件位于 `training/model/`（`jailbreak_bert.onnx` + `tokenizer.json`），未安装 `onnxruntime`/`tokenizers` 或模型缺失时语义通道自动降级、行为与纯规则一致；可用 `SEMANTIC_DETECT_ENABLED=0` 强制关闭。模型微调见 `training/finetune_bert.py`（Colab 执行），数据集构建见 `scripts/generate_bert_variants.py`，双通道延迟基准见 `scripts/bench_dual_channel.py`。
 
 ```mermaid
 flowchart TD
@@ -158,6 +160,7 @@ flowchart TD
 | `memory-write` | 记忆写入隔离 | 开启 | 隔离污染型记忆 |
 | `memory-read-sensitive` | 敏感记忆读取拦截 | 开启 | 拒绝敏感检索 |
 | `jailbreak-filter` | 越狱提示过滤 | 开启 | 拒绝越狱提示 |
+| `jailbreak-semantic` | 语义越狱检测 | 开启 | 规则未拦截时由 BERT 语义模型兜底判定（模型缺失自动降级） |
 | `model-output-filter` | 模型输出过滤 | 开启 | 拒绝高风险输出 |
 | `bulk-action-review` | 批量动作复核 | 开启 | 询问批量导出或批量外发 |
 | `tool-return-trust` | 工具返回低信任隔离 | 开启 | 隔离不可信工具返回 |
@@ -312,8 +315,9 @@ agent-security-supervisor/
 
 - [x] MCP Gateway：Model Context Protocol 代理层强制监督（stdio 上游 + Streamable HTTP 子集入口）
 - [x] MCP Gateway：多上游路由、审计落库、上游通知轮询
+- [x] 双通道越狱检测：规则通道先行（<5ms），BERT 语义通道兜底（<50ms，模型缺失自动降级）
 - [ ] MCP Gateway：完整 SSE 流式传输与上游主动请求支持
-- [ ] 语义级越狱检测：中文 BERT 模型微调
+- [ ] 语义级越狱检测：bert-base-chinese 微调与 ONNX 模型发布（`training/finetune_bert.py`，Colab 执行）
 - [ ] OWASP Agentic Top 10 覆盖度提升至 90%+
 - [ ] 更多真实 Agent 框架适配器
 - [ ] 字段级数据脱敏与细粒度访问控制

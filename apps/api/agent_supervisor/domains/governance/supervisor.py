@@ -13,6 +13,12 @@ from apps.api.agent_supervisor.domains.governance.tool_contract import (
     path_is_sensitive,
     recipients_are_internal,
 )
+from apps.api.agent_supervisor.domains.governance.semantic_detector import (
+    REJECT_THRESHOLD,
+    REVIEW_THRESHOLD,
+    SemanticResult,
+    get_semantic_detector,
+)
 from apps.api.agent_supervisor.domains.governance.tool_registry import resolve_tool_call
 from apps.api.agent_supervisor.storage.data import get_policy_settings, is_policy_enabled
 
@@ -28,6 +34,9 @@ class GuardDecision:
     risk_factors: list[str] = field(default_factory=list)
     anomaly_score: int = 0
     anomaly_signals: list[str] = field(default_factory=list)
+    model_confidence: float | None = None
+    model_latency_ms: float | None = None
+    model_version: str = ""
 
 
 DANGEROUS_COMMANDS = [
@@ -70,6 +79,15 @@ def inspect_prompt(prompt: str) -> GuardDecision | None:
             recommendation="保持系统指令优先级，并将用户输入隔离为不可信内容。",
         )
     return None
+
+
+def _semantic_channel(prompt: str) -> SemanticResult | None:
+    """语义检测通道：策略关闭或输入为空时直接跳过，模型不可用时自动降级。"""
+    if not is_policy_enabled("jailbreak-semantic"):
+        return None
+    if not prompt or not prompt.strip():
+        return None
+    return get_semantic_detector().detect(prompt)
 
 
 def decide(
@@ -365,6 +383,35 @@ def decide(
 
     if prompt_decision:
         return scored(prompt_decision)
+
+    semantic = _semantic_channel(prompt)
+    if semantic is not None and semantic.available:
+        if semantic.probability >= REJECT_THRESHOLD:
+            return scored(
+                GuardDecision(
+                    decision="拒绝",
+                    risk_level="high",
+                    policy_id="jailbreak-semantic",
+                    reason=f"语义模型判定输入存在越狱意图（置信度 {semantic.probability:.2f}）。",
+                    recommendation="保持系统指令优先级，将用户输入隔离为不可信内容并留存证据。",
+                    model_confidence=semantic.probability,
+                    model_latency_ms=semantic.latency_ms,
+                    model_version=semantic.model_version,
+                )
+            )
+        if semantic.probability >= REVIEW_THRESHOLD:
+            return scored(
+                GuardDecision(
+                    decision="询问",
+                    risk_level="medium",
+                    policy_id="jailbreak-semantic",
+                    reason=f"语义模型提示可疑越狱意图（置信度 {semantic.probability:.2f}），需人工确认。",
+                    recommendation="人工复核输入意图后再决定是否放行。",
+                    model_confidence=semantic.probability,
+                    model_latency_ms=semantic.latency_ms,
+                    model_version=semantic.model_version,
+                )
+            )
 
     if is_policy_enabled("anomaly-detection") and anomaly.score >= anomaly_review_threshold:
         return scored(

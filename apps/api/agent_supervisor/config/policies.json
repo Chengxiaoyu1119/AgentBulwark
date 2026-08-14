@@ -56,6 +56,13 @@
     "description": "识别忽略系统规则、扮演无限制模型等越狱提示。"
   },
   {
+    "id": "jailbreak-semantic",
+    "name": "语义越狱检测",
+    "decision": "拒绝",
+    "enabled": true,
+    "description": "规则通道未拦截时，由 BERT 语义模型对输入做越狱意图兜底判定（<50ms，模型缺失自动降级）。"
+  },
+  {
     "id": "model-output-filter",
     "name": "模型输出过滤",
     "decision": "拒绝",
