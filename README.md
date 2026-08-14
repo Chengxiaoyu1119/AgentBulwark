@@ -106,6 +106,8 @@ flowchart LR
 > 审计留痕：监督开启时每次 `tools/call`（放行与阻断）都会写入统一审计链（`source_app=mcp-gateway`，含决策、策略命中、上游结果脱敏快照），可在「事件与复核」与 `GET /api/audit_logs` 查询；上游通知可通过 `GET /api/mcp/notifications` 轮询。
 >
 > 双通道越狱检测：规则通道（`jailbreak-filter` 等策略，<5ms）先行短路明确风险；规则放行且输入非空时，由语义通道（`jailbreak-semantic` 策略）调用本地 ONNX BERT 模型做越狱意图兜底判定（<50ms）。模型文件位于 `training/model/`（`jailbreak_bert.onnx` + `tokenizer.json`），未安装 `onnxruntime`/`tokenizers` 或模型缺失时语义通道自动降级、行为与纯规则一致；可用 `SEMANTIC_DETECT_ENABLED=0` 强制关闭。模型微调见 `training/finetune_bert.py`（Colab 执行），数据集构建见 `scripts/generate_bert_variants.py`，双通道延迟基准见 `scripts/bench_dual_channel.py`。
+>
+> 工具描述投毒扫描（OWASP A04）：`tools/list` 聚合时对每个工具的 name + description 做扫描，识别指令覆盖（如"忽略之前所有指令"）、外传通道（发送到 URL/邮箱）、凭据文件读取（`~/.ssh`、`.env` 等）三类隔离级投毒特征与强制调用引导等警告级特征，结论以 `zhiAnSentinel.skillScan` 标注在工具清单中；对隔离级工具的 `tools/call` 会被网关直接阻断（策略 `tool-description-scan`）并写入审计链。
 
 ```mermaid
 flowchart TD
@@ -163,6 +165,7 @@ flowchart TD
 | `jailbreak-semantic` | 语义越狱检测 | 开启 | 规则未拦截时由 BERT 语义模型兜底判定（模型缺失自动降级） |
 | `model-output-filter` | 模型输出过滤 | 开启 | 拒绝高风险输出 |
 | `bulk-action-review` | 批量动作复核 | 开启 | 询问批量导出或批量外发 |
+| `tool-description-scan` | 工具描述投毒扫描 | 开启 | 隔离 description 含可疑指令的工具（OWASP A04） |
 | `tool-return-trust` | 工具返回低信任隔离 | 开启 | 隔离不可信工具返回 |
 | `environment-trust` | 环境信息低信任隔离 | 开启 | 隔离被污染环境信号 |
 | `anomaly-detection` | 轻量异常检测 | 开启 | 按异常分询问或拒绝 |

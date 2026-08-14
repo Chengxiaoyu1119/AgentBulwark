@@ -13,6 +13,11 @@ from __future__ import annotations
 import threading
 from typing import Any
 
+from apps.api.agent_supervisor.domains.governance.skill_scanner import (
+    VERDICT_QUARANTINE,
+    scan_tool_definition,
+    skill_scan_enabled,
+)
 from apps.api.agent_supervisor.mcp_gateway.upstream import StdioMcpUpstream, StdioUpstreamError
 
 DEFAULT_ROUTE = "default"
@@ -27,6 +32,8 @@ class UpstreamRouter:
         self._upstreams = dict(upstreams)
         self._lock = threading.Lock()
         self._catalog: dict[str, str] = {}
+        self._skill_verdicts: dict[str, dict[str, Any]] = {}
+        self._catalog_loaded = False
 
     @property
     def default(self) -> StdioMcpUpstream:
@@ -51,8 +58,9 @@ class UpstreamRouter:
         return items
 
     def refresh_catalog(self) -> dict[str, str]:
-        """查询所有上游 tools/list，重建 工具名 → 路由名 目录。"""
+        """查询所有上游 tools/list，重建 工具名 → 路由名 目录，并同步 Skill 扫描结论。"""
         catalog: dict[str, str] = {}
+        verdicts: dict[str, dict[str, Any]] = {}
         for route, upstream in self._ordered_upstreams():
             try:
                 # request 内部会 _ensure_started：未启动的路由首次列目录时启动
@@ -62,14 +70,42 @@ class UpstreamRouter:
             tools = (response.get("result") or {}).get("tools") or []
             for tool in tools:
                 if isinstance(tool, dict) and tool.get("name"):
-                    catalog.setdefault(str(tool["name"]), route)
+                    name = str(tool["name"])
+                    if name in catalog:
+                        continue
+                    catalog[name] = route
+                    if skill_scan_enabled():
+                        scan = scan_tool_definition(tool)
+                        verdicts[name] = {"verdict": scan.verdict, "signals": scan.signals}
         with self._lock:
             self._catalog = catalog
+            self._skill_verdicts = verdicts
+            self._catalog_loaded = True
         return dict(catalog)
 
     def catalog(self) -> dict[str, str]:
         with self._lock:
             return dict(self._catalog)
+
+    def ensure_catalog(self) -> dict[str, str]:
+        """目录尚未加载时刷新一次（含 Skill 扫描结论）；已加载直接返回缓存。
+
+        tools/call 可能先于 tools/list 到达（Agent 缓存工具目录的场景），
+        需要保证隔离级工具在调用时也有扫描结论兜底。
+        """
+        with self._lock:
+            if self._catalog_loaded:
+                return dict(self._catalog)
+        return self.refresh_catalog()
+
+    def skill_verdict(self, tool_name: str) -> dict[str, Any] | None:
+        """返回最近一次目录刷新缓存的 Skill 扫描结论；未扫描过返回 None。"""
+        with self._lock:
+            return self._skill_verdicts.get(tool_name)
+
+    def tool_is_quarantined(self, tool_name: str) -> bool:
+        verdict = self.skill_verdict(tool_name)
+        return bool(verdict and verdict.get("verdict") == VERDICT_QUARANTINE)
 
     # -- 路由 ---------------------------------------------------------------
 
@@ -100,7 +136,11 @@ class UpstreamRouter:
                 if name in seen:
                     continue
                 seen.add(name)
-                tools.append({**tool, "zhiAnRoute": route})
+                annotated = {**tool, "zhiAnRoute": route}
+                verdict = self.skill_verdict(name)
+                if verdict is not None:
+                    annotated["zhiAnSentinel"] = {"skillScan": verdict}
+                tools.append(annotated)
         return {"tools": tools, "conflicts": conflicts or None}
 
 

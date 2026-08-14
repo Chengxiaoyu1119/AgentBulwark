@@ -6,6 +6,9 @@ import threading
 from time import perf_counter
 from typing import Any
 
+from apps.api.agent_supervisor.domains.governance.skill_scanner import POLICY_ID as SKILL_SCAN_POLICY_ID
+from apps.api.agent_supervisor.domains.governance.skill_scanner import skill_scan_enabled
+from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision
 from apps.api.agent_supervisor.mcp_gateway.audit import record_gateway_tool_call
 from apps.api.agent_supervisor.mcp_gateway.interceptor import (
     BLOCKED_DECISIONS,
@@ -141,6 +144,37 @@ class McpGateway:
         route_name, upstream = self._router.route_for_tool(tool_name)
         decision = None
         detection_latency_ms = 0.0
+
+        # Skill 扫描（OWASP A04）：description 投毒达到隔离级的工具禁止调用。
+        # 先于常规策略评估，保证命中策略是 tool-description-scan 而非 tool-contract。
+        # tools/call 可能先于 tools/list 到达：ensure_catalog 保证扫描结论已就绪。
+        if self._guard_enabled and skill_scan_enabled():
+            self._router.ensure_catalog()
+        if self._guard_enabled and skill_scan_enabled() and self._router.tool_is_quarantined(tool_name):
+            verdict = self._router.skill_verdict(tool_name) or {}
+            signal_text = "、".join(verdict.get("signals") or [])
+            decision = GuardDecision(
+                decision="隔离",
+                risk_level="critical",
+                policy_id=SKILL_SCAN_POLICY_ID,
+                reason=f"工具 `{tool_name}` 的描述命中可疑指令：{signal_text}。",
+                recommendation="移除该工具或人工复核其 description 后再恢复调用。",
+                risk_score=92,
+            )
+            with self._stats_lock:
+                self._stats["blocked"] += 1
+            audit_ref = self._audit(
+                params=params,
+                decision=decision,
+                forwarded=False,
+                detection_latency_ms=0.0,
+                client_request_id=client_id,
+                upstream_route=route_name,
+            )
+            response = build_blocked_response(client_id, decision)
+            if audit_ref:
+                self._embed_audit_ref(response, audit_ref)
+            return response
 
         if self._guard_enabled:
             started = perf_counter()

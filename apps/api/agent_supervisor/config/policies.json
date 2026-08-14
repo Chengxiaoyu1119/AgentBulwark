@@ -77,6 +77,13 @@
     "description": "对批量导出、批量外发、未登记外部用途等动作要求人工复核。"
   },
   {
+    "id": "tool-description-scan",
+    "name": "工具描述投毒扫描",
+    "decision": "隔离",
+    "enabled": true,
+    "description": "扫描 MCP 工具 description 中的指令覆盖、外传通道、凭据读取等可疑指令（OWASP A04），隔离级工具禁止调用。"
+  },
+  {
     "id": "tool-return-trust",
     "name": "工具返回低信任隔离",
     "decision": "隔离",
