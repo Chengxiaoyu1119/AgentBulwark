@@ -1,0 +1,41 @@
+# 版本控制与本地工具
+.git
+.gitignore
+.vscode
+.trae
+.playwright-mcp
+
+# 归档与非运行时目录
+archive
+docs
+training
+scripts
+
+# 依赖与缓存（镜像内重新安装）
+node_modules
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.pyc
+
+# 本地运行产物（容器内按需生成）
+apps/api/runtime
+apps/api/sandbox/runtime
+apps/api/sandbox/reports
+apps/api/.coverage
+coverage.xml
+
+# 前端本地产物（镜像内多阶段重新构建）
+apps/console/dist
+apps/console/coverage
+
+# 密钥与本地环境配置（防止泄漏进镜像）
+.env
+.env.*
+**/.env
+
+# 文档
+*.md
+LICENSE

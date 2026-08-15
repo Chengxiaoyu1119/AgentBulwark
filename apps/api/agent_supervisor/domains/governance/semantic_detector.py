@@ -57,7 +57,6 @@ class SemanticDetector:
         if not self.enabled_by_config():
             return False
         try:
-            import json
 
             import onnxruntime as ort  # noqa: PLC0415
             from tokenizers import Tokenizer  # noqa: PLC0415
@@ -97,7 +96,6 @@ class SemanticDetector:
             if not self._try_load():
                 return SemanticResult(available=False, degraded_reason="model-unavailable")
             import time
-
             from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
             started = time.perf_counter()

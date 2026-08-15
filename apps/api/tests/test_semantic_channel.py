@@ -10,23 +10,17 @@
 
 from __future__ import annotations
 
-import sys
 import unittest
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from apps.api.agent_supervisor.domains.governance import supervisor
-from apps.api.agent_supervisor.domains.governance.semantic_detector import SemanticResult
-
+from apps.api.agent_supervisor.domains.governance.semantic_detector import SemanticDetector, SemanticResult
 
 BENIGN_PROMPT = "请读取 public/项目说明.md 并总结要点。"
 
 
-class _FakeDetector:
+class _FakeDetector(SemanticDetector):
     def __init__(self, probability: float) -> None:
+        super().__init__()
         self._probability = probability
 
     def detect(self, text: str) -> SemanticResult:
@@ -38,7 +32,7 @@ class _FakeDetector:
         )
 
 
-class _UnavailableDetector:
+class _UnavailableDetector(SemanticDetector):
     def detect(self, text: str) -> SemanticResult:
         return SemanticResult(available=False, degraded_reason="model-unavailable")
 

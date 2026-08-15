@@ -5,6 +5,12 @@ from typing import Any
 
 from apps.api.agent_supervisor.domains.governance.anomaly import ANOMALY_REJECT_THRESHOLD, ANOMALY_REVIEW_THRESHOLD, detect_tool_anomaly
 from apps.api.agent_supervisor.domains.governance.risk_score import calculate_risk_score
+from apps.api.agent_supervisor.domains.governance.semantic_detector import (
+    REJECT_THRESHOLD,
+    REVIEW_THRESHOLD,
+    SemanticResult,
+    get_semantic_detector,
+)
 from apps.api.agent_supervisor.domains.governance.tool_contract import (
     SUPPORTED_TOOLS,
     canonical_text,
@@ -12,12 +18,6 @@ from apps.api.agent_supervisor.domains.governance.tool_contract import (
     path_is_absolute_or_traversal,
     path_is_sensitive,
     recipients_are_internal,
-)
-from apps.api.agent_supervisor.domains.governance.semantic_detector import (
-    REJECT_THRESHOLD,
-    REVIEW_THRESHOLD,
-    SemanticResult,
-    get_semantic_detector,
 )
 from apps.api.agent_supervisor.domains.governance.tool_registry import resolve_tool_call
 from apps.api.agent_supervisor.storage.data import get_policy_settings, is_policy_enabled

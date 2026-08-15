@@ -1,0 +1,34 @@
+# 智安哨一键启动（Docker Compose）
+#
+# 使用方法：
+#   1. 在仓库根目录创建 .env 文件（不要提交到 Git），写入：
+#        AGENT_SUPERVISOR_AUDIT_HMAC_KEY=<任意随机字符串，用于审计链 HMAC 防篡改>
+#        AGENT_SUPERVISOR_API_TOKEN=<调用 /api 接口时使用的 Bearer Token>
+#   2. docker compose up -d --build
+#   3. 浏览器访问 http://127.0.0.1:8012
+#
+# 说明：容器以 0.0.0.0 监听（非回环地址），按服务端安全策略强制要求
+# API Token 鉴权与审计 HMAC 密钥，二者缺失时服务会拒绝启动（fail-closed）。
+
+services:
+  zhi-an-sentinel:
+    build: .
+    container_name: zhi-an-sentinel
+    ports:
+      - "8012:8012"
+    environment:
+      # `${VAR:?提示}` 语法：变量缺失时 compose 直接报错退出，防止裸奔启动
+      AGENT_SUPERVISOR_AUDIT_HMAC_KEY: ${AGENT_SUPERVISOR_AUDIT_HMAC_KEY:?请在 .env 中配置审计 HMAC 密钥}
+      AGENT_SUPERVISOR_API_TOKEN: ${AGENT_SUPERVISOR_API_TOKEN:?请在 .env 中配置 API Token}
+    volumes:
+      - zhi-an-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8012/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  zhi-an-data:
