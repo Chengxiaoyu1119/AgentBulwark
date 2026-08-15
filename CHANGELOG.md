@@ -4,6 +4,10 @@
 
 ## [Unreleased]
 
+（暂无）
+
+## [0.2.0] - 2026-08-15
+
 ### 新增
 
 - Docker 一键部署：`Dockerfile`（多阶段构建，单容器同时托管 API 与前端）、`docker-compose.yml`（数据卷持久化、健康检查、fail-closed 密钥强校验）、`.dockerignore`。
