@@ -43,7 +43,7 @@ Agent tool call -> Pre-execution supervision -> allow / deny / ask / quarantine
   <tr>
     <td align="center"><strong>7</strong><br />attack surfaces</td>
     <td align="center"><strong>22</strong><br />attack sample sets</td>
-    <td align="center"><strong>13</strong><br />defense policies</td>
+    <td align="center"><strong>15</strong><br />defense policies</td>
     <td align="center"><strong>4</strong><br />decisions</td>
     <td align="center"><strong>Agent</strong><br />generic access</td>
     <td align="center"><strong>Hash+HMAC</strong><br />audit chain</td>
@@ -73,7 +73,7 @@ flowchart LR
   External["Any external agent / AI tool"] --> Gateway["Generic tool event gateway"]
   Gateway --> Supervisor["Behavior supervisor"]
   API --> Supervisor
-  Supervisor --> Policies["13 defense policies"]
+  Supervisor --> Policies["15 defense policies"]
   Supervisor --> Anomaly["Lightweight anomaly detection"]
   Supervisor --> Sandbox["Local sandbox tool layer"]
   Sandbox --> Receipt["Tool execute / stop + execution receipt"]
@@ -98,6 +98,10 @@ flowchart LR
 > Multi-upstream routing: declare named routes via `MCP_GATEWAY_ROUTES_JSON='[{"name":"fs","command":"npx -y @modelcontextprotocol/server-filesystem","cwd":"/data"}]'`. The gateway routes `tools/call` by each upstream's tools/list catalog; `tools/list` aggregates all routes with source labels, and duplicate tool names belong to the default route.
 >
 > Audit trail: with supervision on, every `tools/call` (allowed or blocked) is written to the unified audit chain (`source_app=mcp-gateway`, including the decision, policy hit, and a redacted snapshot of the upstream result), queryable via the Events & Review page and `GET /api/audit_logs`; upstream notifications can be polled via `GET /api/mcp/notifications`.
+>
+> Dual-channel jailbreak detection: the rule channel (`jailbreak-filter` and related policies, <5ms) short-circuits explicit risks first; when the rules pass and the input is non-empty, the semantic channel (`jailbreak-semantic` policy) calls a local ONNX BERT model for intent-level fallback detection (<50ms). Model files live in `training/model/` (`jailbreak_bert.onnx` + `tokenizer.json`); when `onnxruntime`/`tokenizers` are not installed or the model is missing, the semantic channel degrades automatically and behavior is identical to rules-only. Set `SEMANTIC_DETECT_ENABLED=0` to force it off. See `training/finetune_bert.py` for fine-tuning, `scripts/generate_bert_variants.py` for dataset building, and `scripts/bench_dual_channel.py` for latency benchmarks.
+>
+> Tool description poisoning scan (OWASP A04): during `tools/list` aggregation, every tool's name + description is scanned for three quarantine-grade poisoning traits — instruction override (e.g. "ignore all previous instructions"), exfiltration channels (send-to URL/email), and credential file access (`~/.ssh`, `.env`, etc.) — plus warning-grade traits such as mandatory-invocation prompts. Results are attached to the tool list as `zhiAnSentinel.skillScan`; `tools/call` against a quarantined tool is blocked directly by the gateway (policy `tool-description-scan`) and written to the audit chain.
 
 Minimal event example:
 
@@ -126,6 +130,45 @@ Minimal event example:
 | Tool-call hijacking | critical | 17 | Hijacking execution chains via tool returns or params |
 | Memory poisoning | high | 9 | Writing malicious long-term memory |
 | Environment pollution | medium | 12 | Faking environment variables or runtime context |
+
+## Defense Policy Matrix
+
+| Policy ID | Name | Default | Primary action |
+|---|---|---|---|
+| `path-boundary` | File sandbox boundary | on | Deny out-of-boundary read/write |
+| `dangerous-command` | Dangerous command interception | on | Deny high-risk commands |
+| `code-sandbox` | Code execution sandbox | on | Quarantine code runs |
+| `external-mail` | Outbound mail review | on | Ask before external mail |
+| `sensitive-api` | Sensitive API audit | on | Deny unauthorized sensitive endpoints |
+| `memory-write` | Memory write quarantine | on | Quarantine poisoning-style writes |
+| `memory-read-sensitive` | Sensitive memory read blocking | on | Deny sensitive retrieval |
+| `jailbreak-filter` | Jailbreak prompt filtering | on | Deny jailbreak prompts |
+| `jailbreak-semantic` | Semantic jailbreak detection | on | BERT fallback verdict when rules pass (auto-degrades without model) |
+| `model-output-filter` | Model output filtering | on | Deny high-risk outputs |
+| `bulk-action-review` | Bulk action review | on | Ask before bulk export/send |
+| `tool-description-scan` | Tool description poisoning scan | on | Quarantine tools whose description contains suspicious instructions (OWASP A04) |
+| `tool-return-trust` | Low-trust tool return quarantine | on | Quarantine untrusted tool returns |
+| `environment-trust` | Low-trust environment signals | on | Quarantine polluted environment signals |
+| `anomaly-detection` | Lightweight anomaly detection | on | Ask or deny by anomaly score |
+
+## OWASP Agentic Top 10 Coverage
+
+Aligned with the [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) (published Dec 2025), annotated item by item:
+
+| ID | Risk | Coverage | ZhiAn Sentinel defense |
+|---|---|---|---|
+| ASI01 | Agent Goal Hijack | 🟡 Partial | Dual-channel jailbreak detection: rule channel (CN/EN keyword-augmented, 54.5% recall / zero FP / <5ms on the held-out set) + semantic channel (local BERT, auto-degrades without model) + `model-output-filter` output-layer fallback |
+| ASI02 | Tool Misuse & Exploitation | 🟢 Covered | Tool-contract allowlist, path boundary, dangerous command interception, sensitive APIs, bulk action review, external mail confirmation |
+| ASI03 | Identity & Privilege Abuse | 🟡 Partial | `agent_tool_allowlists` per-identity tool authorization, production tokens bound to `agent_id`, identity verification fields in the audit chain |
+| ASI04 | Agentic Supply Chain | 🟡 Partial | MCP tool description poisoning scan (`tool-description-scan`: instruction override / exfiltration channel / credential access; quarantined tools are blocked); SBOM and dependency signing on the roadmap |
+| ASI05 | Unexpected Code Execution | 🟢 Covered | Dangerous commands denied outright; other commands run in a disposable no-network, read-only, resource-limited sandbox container |
+| ASI06 | Memory & Context Poisoning | 🟢 Covered | Memory write quarantine, sensitive memory read blocking, low-trust environment isolation, untrusted tool return quarantine |
+| ASI07 | Insecure Inter-Agent Communication | 🟡 Partial | Cross-agent correlation chain detection (blocks "sensitive read → bulk export → send-out" stepwise exfiltration chains); transport encryption and message signing on the roadmap |
+| ASI08 | Cascading Failures | 🟡 Partial | Lightweight anomaly detection blocks suspicious call chains by score; cross-agent chain detection pauses execution before cascades occur |
+| ASI09 | Human-Agent Trust Exploitation | 🟡 Partial | Bulk/send actions trigger a human review loop; execution receipts verify caller compliance with decisions |
+| ASI10 | Rogue Agents | 🟡 Partial | Tool authorization allowlist + anomaly detection + cross-agent suspicious collaboration correlation |
+
+Coverage summary: fully covered 3/10 (ASI02/05/06), partially covered 7/10, **risk touch rate 100%**; the MCP Gateway and OpenClaw plugin provide protocol-level blocking enforcement for all policies.
 
 ## Quick Start
 
@@ -254,8 +297,9 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide.
 
 - [x] MCP Gateway: enforced supervision at the Model Context Protocol proxy layer (stdio upstream + Streamable HTTP subset entry)
 - [x] MCP Gateway: multi-upstream routing, audit persistence, upstream notification polling
+- [x] Dual-channel jailbreak detection: rule channel first (<5ms), BERT semantic channel fallback (<50ms, auto-degrades without model)
 - [ ] MCP Gateway: full SSE streaming and upstream-initiated request support
-- [ ] Semantic jailbreak detection: fine-tuned Chinese BERT model
+- [ ] Semantic jailbreak detection: fine-tuned Chinese BERT and ONNX model release (`training/finetune_bert.py`)
 - [ ] OWASP Agentic Top 10 coverage to 90%+
 - [ ] More real-world agent framework adapters
 - [ ] Field-level data redaction and fine-grained access control
