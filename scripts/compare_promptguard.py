@@ -1,7 +1,9 @@
-"""B-05 对比评测：我方规则通道 vs LlamaFirewall PromptGuard 2（B-01 中文留出集）。
+"""B-05 对比评测：智安哨三通道 vs LlamaFirewall PromptGuard 2（B-01 中文留出集）。
 
 评测对象：
 - 我方规则通道：governance.supervisor.inspect_prompt()（jailbreak-filter 策略）；
+- 我方语义通道：governance.semantic_detector（B-02 中文 BERT，模型缺失时自动跳过）；
+- 双通道组合：规则阻断 或 语义置信度≥0.5（与产品 decide() 的拦截语义一致：拒绝/询问均拦截）；
 - 对比基线：LlamaFirewall PromptGuard 2 86M（Meta，社区 ONNX INT8 镜像）。
 
 数据：training/dataset/test.jsonl（148 条，攻击 77 / 良性 71，正类=攻击）。
@@ -30,6 +32,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from apps.api.agent_supervisor.domains.governance.semantic_detector import (  # noqa: E402
+    MODEL_DIR as SEMANTIC_MODEL_DIR,
+    REJECT_THRESHOLD,
+    REVIEW_THRESHOLD,
+    get_semantic_detector,
+)
 from apps.api.agent_supervisor.domains.governance.supervisor import inspect_prompt  # noqa: E402
 
 MODEL_DIR = PROJECT_ROOT / "training" / "_compare" / "promptguard"
@@ -90,6 +98,27 @@ def run_rule_channel(rows: list[dict]) -> list[dict]:
         records.append(
             {
                 "predicted": 1 if blocked else 0,
+                "latency_ms": (time.perf_counter() - started) * 1000,
+            }
+        )
+    return records
+
+
+def run_semantic_channel(rows: list[dict]) -> list[dict] | None:
+    """语义通道（B-02）：模型缺失/不可用时返回 None（报告自动降级为双方案对比）。"""
+    if not (SEMANTIC_MODEL_DIR / "jailbreak_bert.onnx").exists():
+        print(f"[skip] 语义通道模型缺失（{SEMANTIC_MODEL_DIR}/jailbreak_bert.onnx），B-02 就绪后重跑本脚本")
+        return None
+    detector = get_semantic_detector()
+    records = []
+    for row in rows:
+        started = time.perf_counter()
+        result = detector.detect(row["text"])
+        records.append(
+            {
+                "predicted": 1 if result.probability >= REJECT_THRESHOLD else 0,
+                "probability": result.probability,
+                "available": result.available,
                 "latency_ms": (time.perf_counter() - started) * 1000,
             }
         )
@@ -157,13 +186,14 @@ def main() -> None:
     runner = PromptGuardRunner()
 
     rule_records = run_rule_channel(rows)
+    semantic_records = run_semantic_channel(rows)
     pg_records = run_promptguard(rows, runner)
 
     rule_metrics = metrics(rows, [r["predicted"] for r in rule_records])
     pg_argmax_metrics = metrics(rows, [r["predicted"] for r in pg_records])
     threshold, pg_best_metrics = best_f1_threshold(rows, [r["probability"] for r in pg_records])
 
-    summary = {
+    summary: dict = {
         "dataset": {"total": len(rows), "attack": sum(r["label"] for r in rows), "benign": len(rows) - sum(r["label"] for r in rows)},
         "rule_channel": {**rule_metrics, "avg_latency_ms": round(statistics.mean(r["latency_ms"] for r in rule_records), 3)},
         "promptguard_argmax": {**pg_argmax_metrics, "avg_latency_ms": round(statistics.mean(r["latency_ms"] for r in pg_records), 3)},
@@ -172,14 +202,40 @@ def main() -> None:
         "rule_recall_by_category": recall_by_category(rows, [r["predicted"] for r in rule_records]),
     }
 
+    if semantic_records is not None:
+        # 双通道组合：规则阻断 或 语义≥REVIEW_THRESHOLD（产品 decide() 语义：拒绝/询问均拦截）
+        dual_preds = [
+            1 if (rule["predicted"] == 1 or sem["probability"] >= REVIEW_THRESHOLD) else 0
+            for rule, sem in zip(rule_records, semantic_records)
+        ]
+        semantic_metrics = metrics(rows, [r["predicted"] for r in semantic_records])
+        semantic_available = sum(1 for r in semantic_records if r["available"])
+        summary["semantic_channel"] = {
+            **semantic_metrics,
+            "reject_threshold": REJECT_THRESHOLD,
+            "review_threshold": REVIEW_THRESHOLD,
+            "available_samples": semantic_available,
+            "model_version": get_semantic_detector().model_version,
+            "avg_latency_ms": round(statistics.mean(r["latency_ms"] for r in semantic_records), 3),
+        }
+        summary["dual_channel"] = metrics(rows, dual_preds)
+        summary["dual_recall_by_category"] = recall_by_category(rows, dual_preds)
+
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
     (RESULT_DIR / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     with (RESULT_DIR / "detail.jsonl").open("w", encoding="utf-8") as fh:
-        for row, rule, pg in zip(rows, rule_records, pg_records):
-            fh.write(json.dumps(
-                {**row, "rule_pred": rule["predicted"], "pg_pred": pg["predicted"], "pg_prob": round(pg["probability"], 4)},
-                ensure_ascii=False,
-            ) + "\n")
+        for idx, (row, rule, pg) in enumerate(zip(rows, rule_records, pg_records)):
+            record = {
+                **row,
+                "rule_pred": rule["predicted"],
+                "pg_pred": pg["predicted"],
+                "pg_prob": round(pg["probability"], 4),
+            }
+            if semantic_records is not None:
+                sem = semantic_records[idx]
+                record["sem_pred"] = sem["predicted"]
+                record["sem_prob"] = round(sem["probability"], 4)
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
