@@ -47,7 +47,7 @@ Agent 工具调用 -> 执行前监督 -> 允许 / 拒绝 / 询问 / 隔离
   <tr>
     <td align="center"><strong>7</strong><br />攻击面</td>
     <td align="center"><strong>22</strong><br />攻击样本集</td>
-    <td align="center"><strong>13</strong><br />防御策略</td>
+    <td align="center"><strong>15</strong><br />防御策略</td>
     <td align="center"><strong>4</strong><br />处置决策</td>
     <td align="center"><strong>Agent</strong><br />通用接入</td>
     <td align="center"><strong>Hash+HMAC</strong><br />审计链</td>
@@ -77,7 +77,7 @@ flowchart LR
   External["任意外部 Agent / AI 工具"] --> Gateway["通用工具事件入口"]
   Gateway --> Supervisor["行为监督器"]
   API --> Supervisor
-  Supervisor --> Policies["13 条防御策略"]
+  Supervisor --> Policies["15 条防御策略"]
   Supervisor --> Anomaly["轻量异常检测"]
   Supervisor --> Sandbox["本地沙箱工具层"]
   Sandbox --> Receipt["工具执行 / 停止 + 执行回执"]
@@ -169,6 +169,25 @@ flowchart TD
 | `tool-return-trust` | 工具返回低信任隔离 | 开启 | 隔离不可信工具返回 |
 | `environment-trust` | 环境信息低信任隔离 | 开启 | 隔离被污染环境信号 |
 | `anomaly-detection` | 轻量异常检测 | 开启 | 按异常分询问或拒绝 |
+
+## OWASP Agentic Top 10 覆盖度
+
+对齐 [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)（2025-12 发布）逐项标注：
+
+| 编号 | 风险 | 覆盖状态 | 智安哨防线 |
+|---|---|---|---|
+| ASI01 | Agent Goal Hijack（目标劫持） | 🟡 部分覆盖 | 双通道越狱检测：规则通道（中英文关键词增强，B-01 留出集召回 54.5%、零误报、<5ms）+ 语义通道（本地 BERT，模型缺失自动降级）+ `model-output-filter` 输出层兜底 |
+| ASI02 | Tool Misuse & Exploitation（工具滥用） | 🟢 已覆盖 | 工具契约白名单、路径边界、危险命令拦截、敏感 API、批量动作复核、外部邮件人工确认 |
+| ASI03 | Identity & Privilege Abuse（身份权限滥用） | 🟡 部分覆盖 | `agent_tool_allowlists` 按身份授权工具、生产 Token 绑定 `agent_id`、审计链记录身份核验字段 |
+| ASI04 | Agentic Supply Chain（智能体供应链） | 🟡 部分覆盖 | MCP 工具描述投毒扫描（`tool-description-scan`：指令覆盖 / 外传通道 / 凭据读取三类隔离级特征，命中工具禁止调用）；SBOM 与依赖签名在路线图 |
+| ASI05 | Unexpected Code Execution（意外代码执行） | 🟢 已覆盖 | 危险命令黑名单直接拒绝，其余命令进入无网络、只读文件系统、资源受限的一次性沙箱容器 |
+| ASI06 | Memory & Context Poisoning（记忆上下文投毒） | 🟢 已覆盖 | 记忆写入隔离、敏感记忆读取拦截、环境低信任信号隔离、不可信工具返回隔离 |
+| ASI07 | Insecure Inter-Agent Communication（不安全 Agent 间通信） | 🟡 部分覆盖 | 跨 Agent 关联链检测（"敏感读取 → 批量导出 → 外发"分步外泄链前置阻断）；通信加密与消息签名在路线图 |
+| ASI08 | Cascading Failures（级联失败） | 🟡 部分覆盖 | 轻量异常检测按异常分阻断可疑调用链，跨 Agent 链检测在级联发生前暂停执行 |
+| ASI09 | Human-Agent Trust Exploitation（人-Agent 信任滥用） | 🟡 部分覆盖 | 批量/外发动作触发人工复核单闭环，执行回执强校验接入方是否按决策执行 |
+| ASI10 | Rogue Agents（流氓 Agent） | 🟡 部分覆盖 | 工具授权白名单 + 异常行为检测 + 跨 Agent 可疑协作关联 |
+
+覆盖统计：已覆盖 3/10（ASI02/05/06），部分覆盖 7/10，**风险触及率 100%**；MCP Gateway 与 OpenClaw 插件两条强制式接入链路对所有策略提供协议级阻断兜底。
 
 ## 快速启动
 
