@@ -20,6 +20,8 @@
   <a href="#quick-start">Quick Start</a> ·
   <a href="#integration-modes">Integration</a> ·
   <a href="./CONTRIBUTING.md">Contributing</a> ·
+  <a href="./SECURITY.md">Security</a> ·
+  <a href="./CHANGELOG.md">Changelog</a> ·
   <a href="./README.md">中文</a>
 </p>
 
@@ -172,7 +174,32 @@ Coverage summary: fully covered 3/10 (ASI02/05/06), partially covered 7/10, **ri
 
 ## Quick Start
 
-### Prerequisites
+### Option 1: Docker one-click startup (recommended)
+
+Prerequisites: Docker 20.10+ and Docker Compose v2.
+
+```bash
+# 1. Prepare environment variables (both are required; the container refuses to start without them)
+cp .env.example .env
+# Edit .env and fill in at least:
+#   AGENT_SUPERVISOR_API_TOKEN=<bearer token for API calls>
+#   AGENT_SUPERVISOR_AUDIT_HMAC_KEY=<random HMAC key for the audit chain>
+
+# 2. Build and start (multi-stage build: frontend compilation + Python runtime image)
+docker compose up -d --build
+
+# 3. Verify
+curl http://127.0.0.1:8012/api/health
+```
+
+Open `http://127.0.0.1:8012` in a browser to use the console (the API and the frontend static assets are served by the same container). Runtime data such as the audit database persists in the `zhi-an-data` volume.
+
+> [!IMPORTANT]
+> The container listens on `0.0.0.0` (a non-loopback address), so the security policy enforces API token authentication and an audit HMAC key — the service refuses to start when either is missing (fail-closed). For production deployments, add HTTPS via a reverse proxy.
+
+### Option 2: Run from source
+
+Prerequisites:
 
 - Node.js 22.0+
 - Python 3.10+
@@ -291,7 +318,7 @@ agent-security-supervisor/
 | Console lint | `npm run console:lint` |
 | Full verification | `npm run verify` |
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide, [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for the code of conduct, and [CHANGELOG.md](./CHANGELOG.md) for the changelog.
 
 ## Roadmap
 
@@ -306,4 +333,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide.
 
 ## License
 
-This project is open-sourced under the [Apache License 2.0](./LICENSE).
+This project is open-sourced under the [Apache License 2.0](./LICENSE). Please report security vulnerabilities privately as described in [SECURITY.md](./SECURITY.md).

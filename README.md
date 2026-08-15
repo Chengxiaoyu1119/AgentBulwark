@@ -24,6 +24,8 @@
   <a href="#快速启动">快速启动</a> ·
   <a href="#接入方式">接入方式</a> ·
   <a href="./CONTRIBUTING.md">参与贡献</a> ·
+  <a href="./SECURITY.md">安全上报</a> ·
+  <a href="./CHANGELOG.md">变更日志</a> ·
   <a href="./README_EN.md">English</a>
 </p>
 
@@ -191,7 +193,32 @@ flowchart TD
 
 ## 快速启动
 
-### 前置环境
+### 方式一：Docker 一键启动（推荐）
+
+前置环境：Docker 20.10+ 与 Docker Compose v2。
+
+```bash
+# 1. 准备环境变量（两个必填项，缺失时容器拒绝启动）
+cp .env.example .env
+# 编辑 .env，至少填写：
+#   AGENT_SUPERVISOR_API_TOKEN=<调用 API 的 Bearer Token>
+#   AGENT_SUPERVISOR_AUDIT_HMAC_KEY=<审计链 HMAC 随机密钥>
+
+# 2. 构建并启动（多阶段构建：前端编译 + Python 运行镜像）
+docker compose up -d --build
+
+# 3. 验证
+curl http://127.0.0.1:8012/api/health
+```
+
+浏览器打开 `http://127.0.0.1:8012` 即可使用控制台（API 与前端静态资源由同一容器托管）。审计数据库等运行时数据持久化在 `zhi-an-data` 卷中。
+
+> [!IMPORTANT]
+> 容器以 `0.0.0.0` 监听（非回环地址），按安全策略强制要求 API Token 鉴权与审计 HMAC 密钥，二者缺失时服务拒绝启动（fail-closed）。生产部署请通过反向代理追加 HTTPS。
+
+### 方式二：源码启动
+
+前置环境：
 
 - Node.js 22.0 或更高版本
 - Python 3.10 或更高版本
@@ -331,7 +358,7 @@ agent-security-supervisor/
 | 控制台 Lint | `npm run console:lint` |
 | 全量验证 | `npm run verify` |
 
-贡献指南见 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+贡献指南见 [CONTRIBUTING.md](./CONTRIBUTING.md)，行为准则见 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)，版本记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 路线图
 
@@ -346,4 +373,4 @@ agent-security-supervisor/
 
 ## 许可证
 
-本项目基于 [Apache License 2.0](./LICENSE) 开源。
+本项目基于 [Apache License 2.0](./LICENSE) 开源。安全漏洞请按 [SECURITY.md](./SECURITY.md) 私密上报。
