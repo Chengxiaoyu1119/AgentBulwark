@@ -21,6 +21,7 @@
 ### 性能
 
 - 策略配置读取引入 mtime+TTL 缓存：规则通道延迟 p95 15ms → 3.08ms（预算 5ms）。
+- 策略设置 stat 节流（`_load_policy_settings` TTL + 单次 os.stat）：规则通道 p95 3.08ms → 0.209ms（优于预算 24 倍），p99 9.5ms → 1.9ms；进程内策略更新仍即时生效。
 - MCP Gateway 监督开销 p95 = 1.41ms（验收线 10ms）。
 
 ### 测试
