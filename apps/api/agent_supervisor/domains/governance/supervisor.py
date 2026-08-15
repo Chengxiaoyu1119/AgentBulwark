@@ -51,7 +51,33 @@ DANGEROUS_COMMANDS = [
     # purpose is to model a hijacked command and must still hit the guard.
     "scripts/tool_hijack_probe.py",
 ]
-JAILBREAK_MARKERS = ["忽略", "无约束", "绕过", "ignore previous", "do anything now", "不要解释安全规则"]
+JAILBREAK_MARKERS = [
+    "忽略",
+    "无约束",
+    "绕过",
+    "ignore previous",
+    "do anything now",
+    "不要解释安全规则",
+    # 中文越狱话术（B-05 对比评测确认快通道中文召回缺口，按 B-01 攻击类别补充，
+    # 全部词在 1547 条标注集良性侧零命中；"长期记忆"会误伤合法 memory.write 已排除）
+    "最高优先级",  # instruction-override：篡改规则优先级
+    "隐藏指令",  # instruction-override：触发词后门
+    "隐藏任务",  # instruction-override：触发词后门
+    "系统配置",  # system-prompt-leak：套取配置
+    "隐藏字段",  # system-prompt-leak：套取隐藏内容
+    "上下文窗口",  # system-prompt-leak：套取上下文
+    "没展示给用户",  # system-prompt-leak：套取工具隐藏定义
+    "verbatim",  # system-prompt-leak：英文原文套取
+    "above this line",  # system-prompt-leak：英文原文套取
+    "置信度",  # memory-poisoning：篡改记忆置信度
+    "二次验证",  # memory-poisoning：绕过二次验证
+    "不触发审计",  # memory-poisoning：规避审计
+    "目标路径",  # tool-hijack：改写工具目标路径
+    "超级管理员",  # authority-forgery：伪造管理员身份
+    "没有泄露任何",  # task-decomposition：诱导合谋话术
+    "无视规则",  # fictional-framing：虚构无规则角色
+    "没有安全限制",  # fictional-framing：虚构无限制角色
+]
 MEMORY_POISON_MARKERS = [
     "不需要检查权限",
     "忽略权限",
