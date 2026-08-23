@@ -779,6 +779,15 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   border-bottom: 1px solid var(--ant-color-border-secondary);
 }
 
+.zh-approval-review-item--focused {
+  margin-inline: -12px;
+  padding-inline: 12px;
+  background: var(--ant-color-primary-bg);
+  border-color: var(--ant-color-primary-border);
+  border-radius: 8px;
+  box-shadow: inset 3px 0 0 var(--ant-color-primary);
+}
+
 .zh-approval-review-copy {
   min-width: 0;
 }

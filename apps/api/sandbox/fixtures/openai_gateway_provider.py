@@ -114,6 +114,30 @@ def _response(payload: dict[str, Any]) -> dict[str, Any]:
             ],
         }
         finish_reason = "tool_calls"
+    elif "approval workflow" in text:
+        message = {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "fixture-approval-mail",
+                    "type": "function",
+                    "function": {
+                        "name": "mail_send",
+                        "arguments": json.dumps(
+                            {
+                                "to": "external-review@example.net",
+                                "subject": "Operational approval workflow",
+                                "body": "Controlled operational review fixture",
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        ),
+                    },
+                }
+            ],
+        }
+        finish_reason = "tool_calls"
     elif "file_read" in text:
         message = {
             "role": "assistant",

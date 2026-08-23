@@ -61,7 +61,7 @@ The default process is the operational gateway and stores data under `apps/api/r
 | Module | Capability | Entry |
 |---|---|---|
 | Protection | Live request flow, onboarding, provider pre/post checks, and tool-call execution receipts | `apps/console/src/pages/GatewayPanel.tsx` |
-| Events | Operational gateway traces, blocked/quarantined decisions, and audit evidence | `apps/console/src/pages/SecurityEventsPanel.tsx` |
+| Events | Operational risk traces, human approve/reject actions, Agent resume status, and execution audit | `apps/console/src/pages/SecurityEventsPanel.tsx` |
 | Settings | Application endpoints, provider/model selection, and Agent tool/data permissions | `apps/console/src/pages/SettingsPanel.tsx` |
 | Research & regression (development assets) | Fixed samples, historical reports, and comparison experiments validate the gateway but stay out of production navigation and live metrics | `apps/api/agent_supervisor/domains/evaluations/` |
 | Behavior Supervisor | allow / deny / ask / quarantine decisions per tool call | `apps/api/agent_supervisor/domains/governance/supervisor.py` |

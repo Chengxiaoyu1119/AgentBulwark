@@ -256,3 +256,5 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
     copyFilteredAuditEvidence
   };
 }
+
+export type AuditLogViewModel = ReturnType<typeof useAuditLogViewModel>;

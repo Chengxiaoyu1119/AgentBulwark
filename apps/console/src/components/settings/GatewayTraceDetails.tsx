@@ -1,6 +1,6 @@
 import { Drawer, Flex, Space, Typography } from 'antd';
 import { Activity, CircleCheck, ShieldX, Wrench } from 'lucide-react';
-import { LabelTag, MetaGrid } from '../ui';
+import { LabelTag, MetaGrid, UiButton } from '../ui';
 import {
   CONTROLLED_DECISIONS,
   formatTraceTime,
@@ -11,7 +11,18 @@ import {
   type GatewayTrace
 } from './gatewayTraceModel';
 
-export function GatewayTraceDetails({ trace, onClose }: { trace: GatewayTrace | null; onClose: () => void }) {
+export function GatewayTraceDetails({
+  trace,
+  onClose,
+  onOpenApproval
+}: {
+  trace: GatewayTrace | null;
+  onClose: () => void;
+  onOpenApproval?: (auditId: string) => void;
+}) {
+  const reviewAuditId =
+    trace?.stages?.find((stage) => traceLabel(stage.decision) === '询问' && Boolean(stage.audit_id))?.audit_id ?? '';
+
   return (
     <Drawer title="请求安全详情" size="large" open={Boolean(trace)} onClose={onClose} destroyOnHidden>
       {trace ? (
@@ -25,6 +36,18 @@ export function GatewayTraceDetails({ trace, onClose }: { trace: GatewayTrace | 
             </div>
             <LabelTag color={traceDecisionColor(traceLabel(trace.decision))}>{traceLabel(trace.decision)}</LabelTag>
           </Flex>
+
+          {reviewAuditId && onOpenApproval ? (
+            <UiButton
+              type="primary"
+              onClick={() => {
+                onClose();
+                onOpenApproval(reviewAuditId);
+              }}
+            >
+              处理人工复核
+            </UiButton>
+          ) : null}
 
           <MetaGrid
             columns={2}

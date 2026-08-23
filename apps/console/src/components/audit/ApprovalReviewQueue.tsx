@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Space, Typography } from 'antd';
 import type { ApprovalReview, ApprovalReviewList } from '@/types';
-import { LabelTag, PanelCard, UiButton, UiSelect } from '../ui';
+import { LabelTag, PanelCard, UiAlert, UiButton, UiSelect } from '../ui';
 import { compareApprovalReviews } from './approvalReviewSorting';
 
 const REVIEW_PAGE_SIZE = 8;
@@ -16,6 +16,8 @@ interface ApprovalReviewQueueProps {
   onRefresh: () => void;
   onDecision: (review: ApprovalReview, action: 'approve' | 'reject') => void;
   onCopy: (review: ApprovalReview) => void;
+  focusAuditId?: string;
+  onClearFocus?: () => void;
 }
 
 function approvalStatusColor(status: ApprovalReview['status']) {
@@ -47,29 +49,45 @@ export function ApprovalReviewQueue({
   copiedApprovalId,
   onRefresh,
   onDecision,
-  onCopy
+  onCopy,
+  focusAuditId = '',
+  onClearFocus
 }: ApprovalReviewQueueProps) {
   const [statusFilter, setStatusFilter] = useState('待复核');
   const [scopeFilter, setScopeFilter] = useState('operational');
   const [page, setPage] = useState(1);
+  const effectiveStatusFilter = focusAuditId ? '全部' : statusFilter;
+  const effectiveScopeFilter = focusAuditId ? 'operational' : scopeFilter;
+  const focusedReview = useMemo(
+    () => reviews.find((review) => review.audit_id === focusAuditId),
+    [focusAuditId, reviews]
+  );
   const orderedReviews = useMemo(
     () =>
       [...reviews]
-        .filter((review) => statusFilter === '全部' || review.status === statusFilter)
-        .filter((review) => scopeFilter === '全部' || review.scope === scopeFilter)
-        .sort(compareApprovalReviews),
-    [reviews, scopeFilter, statusFilter]
+        .filter((review) => effectiveStatusFilter === '全部' || review.status === effectiveStatusFilter)
+        .filter((review) => effectiveScopeFilter === '全部' || review.scope === effectiveScopeFilter)
+        .sort((left, right) => {
+          if (focusAuditId) {
+            const focusDiff = Number(right.audit_id === focusAuditId) - Number(left.audit_id === focusAuditId);
+            if (focusDiff !== 0) return focusDiff;
+          }
+          return compareApprovalReviews(left, right);
+        }),
+    [effectiveScopeFilter, effectiveStatusFilter, focusAuditId, reviews]
   );
   const pageCount = Math.max(1, Math.ceil(orderedReviews.length / REVIEW_PAGE_SIZE));
   const activePage = Math.min(page, pageCount);
   const visibleReviews = orderedReviews.slice((activePage - 1) * REVIEW_PAGE_SIZE, activePage * REVIEW_PAGE_SIZE);
 
   function updateStatusFilter(value: string) {
+    onClearFocus?.();
     setStatusFilter(value);
     setPage(1);
   }
 
   function updateScopeFilter(value: string) {
+    onClearFocus?.();
     setScopeFilter(value);
     setPage(1);
   }
@@ -84,6 +102,22 @@ export function ApprovalReviewQueue({
       }
       variant="borderless"
     >
+      {focusAuditId ? (
+        <UiAlert
+          type={focusedReview ? 'success' : 'info'}
+          showIcon
+          title={focusedReview ? `已定位复核单 ${focusedReview.id}` : '正在等待对应复核单进入队列'}
+          description={`审计 ID：${focusAuditId}`}
+          action={
+            onClearFocus ? (
+              <UiButton size="small" onClick={onClearFocus}>
+                清除定位
+              </UiButton>
+            ) : undefined
+          }
+          className="zh-mb-16"
+        />
+      ) : null}
       <div className="zh-approval-summary-grid">
         {[
           { label: '待复核', value: queue.summary.pending_count, tone: 'amber' },
@@ -105,7 +139,7 @@ export function ApprovalReviewQueue({
       ) : null}
       <Space wrap className="zh-mb-12">
         <UiSelect
-          value={statusFilter}
+          value={effectiveStatusFilter}
           onChange={(value) => updateStatusFilter(String(value))}
           options={['全部', '待复核', '已批准', '已驳回'].map((value) => ({
             label: value === '全部' ? '全部审批状态' : value,
@@ -113,7 +147,7 @@ export function ApprovalReviewQueue({
           }))}
         />
         <UiSelect
-          value={scopeFilter}
+          value={effectiveScopeFilter}
           onChange={(value) => updateScopeFilter(String(value))}
           options={[
             { label: '全部记录范围', value: '全部' },
@@ -127,92 +161,99 @@ export function ApprovalReviewQueue({
         </Typography.Text>
       </Space>
       <div className="zh-column-stack zh-approval-review-list">
-        {visibleReviews.map((review) => (
-          <div key={review.id} className="zh-approval-review-item">
-            <div className="zh-approval-review-copy">
-              <Space wrap className="zh-approval-review-tags">
-                <LabelTag variant="filled" color={approvalStatusColor(review.status)}>
-                  {review.status}
-                </LabelTag>
-                {executionStatus(review.execution_status) ? (
-                  <LabelTag variant="filled" color={executionStatus(review.execution_status)?.color}>
-                    {executionStatus(review.execution_status)?.label}
+        {visibleReviews.map((review) => {
+          const focused = review.audit_id === focusAuditId;
+          return (
+            <div
+              key={review.id}
+              className={`zh-approval-review-item${focused ? ' zh-approval-review-item--focused' : ''}`}
+              aria-current={focused ? 'true' : undefined}
+            >
+              <div className="zh-approval-review-copy">
+                <Space wrap className="zh-approval-review-tags">
+                  <LabelTag variant="filled" color={approvalStatusColor(review.status)}>
+                    {review.status}
                   </LabelTag>
-                ) : null}
-                <Typography.Text strong>{review.tool}</Typography.Text>
-                {review.standard_capability && review.standard_capability !== review.tool ? (
-                  <Typography.Text type="secondary">→ {review.standard_capability}</Typography.Text>
-                ) : null}
-                <LabelTag variant="filled" color={review.scope === 'operational' ? 'blue' : 'default'}>
-                  {review.scope === 'operational'
-                    ? '业务'
-                    : review.scope === 'experiment'
-                      ? '实验'
-                      : review.scope === 'demo'
-                        ? '演示'
-                        : '未标注'}
-                </LabelTag>
-                <Typography.Text type="secondary" className="zh-policy-inline">
-                  Agent {review.agent_id}
-                </Typography.Text>
-                <Typography.Text type="secondary" className="zh-policy-inline">
-                  策略 {review.policy_id}
-                </Typography.Text>
-                {review.escalation_level ? (
-                  <LabelTag variant="filled" color={review.sla_breached ? 'error' : 'warning'}>
-                    {review.escalation_level} · {review.sla_breached ? '已超时' : `${review.sla_minutes ?? 30} 分钟`}
+                  {executionStatus(review.execution_status) ? (
+                    <LabelTag variant="filled" color={executionStatus(review.execution_status)?.color}>
+                      {executionStatus(review.execution_status)?.label}
+                    </LabelTag>
+                  ) : null}
+                  <Typography.Text strong>{review.tool}</Typography.Text>
+                  {review.standard_capability && review.standard_capability !== review.tool ? (
+                    <Typography.Text type="secondary">→ {review.standard_capability}</Typography.Text>
+                  ) : null}
+                  <LabelTag variant="filled" color={review.scope === 'operational' ? 'blue' : 'default'}>
+                    {review.scope === 'operational'
+                      ? '业务'
+                      : review.scope === 'experiment'
+                        ? '实验'
+                        : review.scope === 'demo'
+                          ? '演示'
+                          : '未标注'}
                   </LabelTag>
-                ) : null}
-              </Space>
-              <div className="zh-mt-4">
-                <Typography.Text type="secondary">{review.reason}</Typography.Text>
+                  <Typography.Text type="secondary" className="zh-policy-inline">
+                    Agent {review.agent_id}
+                  </Typography.Text>
+                  <Typography.Text type="secondary" className="zh-policy-inline">
+                    策略 {review.policy_id}
+                  </Typography.Text>
+                  {review.escalation_level ? (
+                    <LabelTag variant="filled" color={review.sla_breached ? 'error' : 'warning'}>
+                      {review.escalation_level} · {review.sla_breached ? '已超时' : `${review.sla_minutes ?? 30} 分钟`}
+                    </LabelTag>
+                  ) : null}
+                </Space>
+                <div className="zh-mt-4">
+                  <Typography.Text type="secondary">{review.reason}</Typography.Text>
+                </div>
+                <Space wrap size={8} className="zh-mt-4">
+                  <Typography.Text type="secondary" className="zh-text-meta">
+                    tool hash {(review.tool_call_hash || '-').slice(0, 16)}
+                  </Typography.Text>
+                  {review.execution_claim_agent_id ? (
+                    <Typography.Text type="secondary" className="zh-text-meta">
+                      领取 {review.execution_claim_agent_id} ·{' '}
+                      {review.execution_claimed_at?.slice(0, 19).replace('T', ' ')}
+                    </Typography.Text>
+                  ) : null}
+                  {review.execution_result_hash ? (
+                    <Typography.Text type="secondary" className="zh-text-meta">
+                      result {(review.execution_result_hash || '-').slice(0, 16)}
+                    </Typography.Text>
+                  ) : null}
+                </Space>
               </div>
-              <Space wrap size={8} className="zh-mt-4">
-                <Typography.Text type="secondary" className="zh-text-meta">
-                  tool hash {(review.tool_call_hash || '-').slice(0, 16)}
-                </Typography.Text>
-                {review.execution_claim_agent_id ? (
-                  <Typography.Text type="secondary" className="zh-text-meta">
-                    领取 {review.execution_claim_agent_id} ·{' '}
-                    {review.execution_claimed_at?.slice(0, 19).replace('T', ' ')}
-                  </Typography.Text>
+              <Space className="zh-approval-review-actions">
+                {review.status === '待复核' ? (
+                  <UiButton
+                    size="small"
+                    type="primary"
+                    loading={busyId === review.id}
+                    disabled={Boolean(busyId)}
+                    onClick={() => onDecision(review, 'approve')}
+                  >
+                    批准恢复
+                  </UiButton>
                 ) : null}
-                {review.execution_result_hash ? (
-                  <Typography.Text type="secondary" className="zh-text-meta">
-                    result {(review.execution_result_hash || '-').slice(0, 16)}
-                  </Typography.Text>
+                {review.status === '待复核' ? (
+                  <UiButton
+                    size="small"
+                    danger
+                    loading={busyId === review.id}
+                    disabled={Boolean(busyId)}
+                    onClick={() => onDecision(review, 'reject')}
+                  >
+                    驳回
+                  </UiButton>
                 ) : null}
+                <UiButton size="small" onClick={() => onCopy(review)}>
+                  {copiedApprovalId === review.id ? '已复制' : '复制'}
+                </UiButton>
               </Space>
             </div>
-            <Space className="zh-approval-review-actions">
-              {review.status === '待复核' ? (
-                <UiButton
-                  size="small"
-                  type="primary"
-                  loading={busyId === review.id}
-                  disabled={Boolean(busyId)}
-                  onClick={() => onDecision(review, 'approve')}
-                >
-                  批准恢复
-                </UiButton>
-              ) : null}
-              {review.status === '待复核' ? (
-                <UiButton
-                  size="small"
-                  danger
-                  loading={busyId === review.id}
-                  disabled={Boolean(busyId)}
-                  onClick={() => onDecision(review, 'reject')}
-                >
-                  驳回
-                </UiButton>
-              ) : null}
-              <UiButton size="small" onClick={() => onCopy(review)}>
-                {copiedApprovalId === review.id ? '已复制' : '复制'}
-              </UiButton>
-            </Space>
-          </div>
-        ))}
+          );
+        })}
         {!orderedReviews.length && (
           <div className="zh-empty-panel">当前待办范围为空。可切换审批状态或记录范围查看历史记录。</div>
         )}

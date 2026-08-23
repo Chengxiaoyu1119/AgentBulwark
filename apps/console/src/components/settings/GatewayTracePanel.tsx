@@ -16,10 +16,11 @@ import {
 type Props = {
   refreshSignal?: string;
   onCreateRequest?: () => void;
+  onOpenApproval?: (auditId: string) => void;
   mode?: 'traffic' | 'events';
 };
 
-export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, mode = 'traffic' }: Props) {
+export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, onOpenApproval, mode = 'traffic' }: Props) {
   const [index, setIndex] = useState<GatewayTraceIndex>({ traces: [], summary: {} });
   const [selected, setSelected] = useState<GatewayTrace | null>(null);
   const [loading, setLoading] = useState(false);
@@ -226,7 +227,7 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, mode = 
           <GatewayTraceTable traces={filteredTraces} onOpen={(trace) => void openTrace(trace)} />
         )}
       </PanelCard>
-      <GatewayTraceDetails trace={selected} onClose={() => setSelected(null)} />
+      <GatewayTraceDetails trace={selected} onClose={() => setSelected(null)} onOpenApproval={onOpenApproval} />
     </>
   );
 }

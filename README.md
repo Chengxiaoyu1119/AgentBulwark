@@ -69,7 +69,7 @@ Agent 工具调用 -> 执行前监督 -> 允许 / 拒绝 / 询问 / 隔离
 | 模块 | 能力 | 代码入口 |
 |---|---|---|
 | 防护 | 实时请求流、接入向导、Provider 前后检查、Tool Call 执行回执 | `apps/console/src/pages/GatewayPanel.tsx` |
-| 事件 | 只展示运营网关产生的实时调用链、阻断/隔离决策和审计证据 | `apps/console/src/pages/SecurityEventsPanel.tsx` |
+| 事件 | 展示运营网关的风险调用链，支持人工批准/驳回、Agent恢复状态和执行审计 | `apps/console/src/pages/SecurityEventsPanel.tsx` |
 | 设置 | 应用接入地址、Provider 顺序与模型、Agent 工具和数据权限 | `apps/console/src/pages/SettingsPanel.tsx` |
 | 研究与回归（开发资产） | 固定样本、历史报告和对照实验仅用于验证网关能力，不进入生产导航和实时指标 | `apps/api/agent_supervisor/domains/evaluations/` |
 | 行为监督器 | 对工具调用输出允许、拒绝、询问、隔离四类决策 | `apps/api/agent_supervisor/domains/governance/supervisor.py` |

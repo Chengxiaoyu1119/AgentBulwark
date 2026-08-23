@@ -112,4 +112,27 @@ describe('ApprovalReviewQueue', () => {
     expect(screen.getByText('当前范围 0 条 · 每页最多 8 条')).toBeInTheDocument();
     expect(screen.getByText(/当前待办范围为空/)).toBeInTheDocument();
   });
+
+  it('locates the review that belongs to a selected gateway audit stage', async () => {
+    const reviews = [review(1), review(2, { status: '已批准' })];
+
+    render(
+      <ApprovalReviewQueue
+        queue={queue(reviews)}
+        reviews={reviews}
+        loading={false}
+        error=""
+        busyId=""
+        copiedApprovalId=""
+        onRefresh={vi.fn()}
+        onDecision={vi.fn()}
+        onCopy={vi.fn()}
+        focusAuditId="audit-2"
+      />
+    );
+
+    expect(await screen.findByText('已定位复核单 review-2')).toBeInTheDocument();
+    expect(screen.getByText('审计 ID：audit-2')).toBeInTheDocument();
+    expect(screen.getByText('operational-tool-2').closest('[aria-current="true"]')).toBeInTheDocument();
+  });
 });

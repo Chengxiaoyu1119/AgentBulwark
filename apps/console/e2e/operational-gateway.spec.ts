@@ -2,6 +2,7 @@ import { expect, test, type Page } from 'playwright/test';
 
 const ADMIN_TOKEN = 'e2e-admin-token';
 const OBSERVER_TOKEN = 'e2e-observer-token';
+const EXECUTOR_TOKEN = 'e2e-executor-token';
 const PROVIDER_STATS_URL = 'http://127.0.0.1:18081/_fixture/stats';
 
 async function login(page: Page, token = ADMIN_TOKEN) {
@@ -196,6 +197,98 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(toolsList.status()).toBe(200);
     const toolsBody = (await toolsList.json()) as { result?: { tools?: unknown[] } };
     expect(Array.isArray(toolsBody.result?.tools)).toBe(true);
+  });
+
+  test('风险事件可在正式页面批准，并由原始 Agent 领取后提交完成回执', async ({ page }) => {
+    await login(page);
+
+    const toolCall = {
+      tool: 'mail.send',
+      arguments: {
+        to: 'external-review@example.net',
+        subject: 'Operational approval workflow',
+        body: 'Controlled operational review fixture'
+      }
+    };
+    const result = await sendGatewayRequest(page, {
+      model: 'e2e-fixture-model',
+      messages: [{ role: 'user', content: 'Run the approval workflow for this operational request.' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'mail_send',
+            description: 'Send a reviewed operational notification.',
+            parameters: {
+              type: 'object',
+              properties: {
+                to: { type: 'string' },
+                subject: { type: 'string' },
+                body: { type: 'string' }
+              },
+              required: ['to', 'subject', 'body'],
+              additionalProperties: false
+            }
+          }
+        }
+      ],
+      tool_choice: 'auto',
+      agent_supervisor: { agent_id: 'e2e-agent' }
+    });
+    expect(result.agent_supervisor?.decision).toBe('询问');
+    const requestId = String(result.agent_supervisor?.request_id ?? '');
+    const auditId = String(result.agent_supervisor?.audit_id ?? '');
+    expect(requestId).not.toBe('');
+    expect(auditId).not.toBe('');
+
+    await page.getByRole('button', { name: 'Close' }).click();
+    await page.getByRole('menuitem', { name: '事件' }).click();
+    await expect(page.getByRole('heading', { name: '安全事件', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: new RegExp(requestId) })).toBeVisible();
+    await page.getByRole('button', { name: new RegExp(requestId) }).click();
+    await page.getByRole('button', { name: '处理人工复核' }).click();
+
+    await expect(page.getByRole('tab', { name: '待人工复核（1）' })).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByText(new RegExp(`审计 ID：${auditId}`))).toBeVisible();
+    await page.getByRole('button', { name: '批准恢复' }).click();
+    await expect(page.getByText('等待Agent恢复')).toBeVisible();
+
+    const inventory = await page.request.get('/api/approvals?status=全部&scope=operational&limit=100', {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
+    });
+    expect(inventory.status()).toBe(200);
+    const inventoryBody = (await inventory.json()) as {
+      reviews?: Array<{ id?: string; audit_id?: string; status?: string }>;
+    };
+    const review = inventoryBody.reviews?.find((item) => item.audit_id === auditId);
+    expect(review?.status).toBe('已批准');
+    const reviewId = String(review?.id ?? '');
+    expect(reviewId).not.toBe('');
+
+    const executorHeaders = { Authorization: `Bearer ${EXECUTOR_TOKEN}` };
+    const claim = await page.request.post(`/api/approvals/${encodeURIComponent(reviewId)}/claim`, {
+      headers: executorHeaders,
+      data: { agent_id: 'e2e-agent', tool_call: toolCall }
+    });
+    expect(claim.status()).toBe(200);
+    const claimBody = (await claim.json()) as { granted?: boolean; claim_id?: string };
+    expect(claimBody.granted).toBe(true);
+    const claimId = String(claimBody.claim_id ?? '');
+    expect(claimId).not.toBe('');
+
+    const complete = await page.request.post(`/api/approvals/${encodeURIComponent(reviewId)}/complete`, {
+      headers: executorHeaders,
+      data: {
+        agent_id: 'e2e-agent',
+        claim_id: claimId,
+        succeeded: true,
+        result_hash: 'e2e-approved-result-hash'
+      }
+    });
+    expect(complete.status()).toBe(200);
+
+    await expect(page.getByText('工具已执行')).toBeVisible();
+    await expect(page.getByText(/result e2e-approved-res/)).toBeVisible();
   });
 
   test('三个生产页面可交互导航，移动端不产生横向溢出', async ({ page }) => {
