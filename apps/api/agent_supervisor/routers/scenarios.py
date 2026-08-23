@@ -14,11 +14,14 @@ from apps.api.agent_supervisor.domains.attacks.attack_chains import (
     write_attack_chain_report,
 )
 from apps.api.agent_supervisor.domains.governance.integrity import verify_audit_hashes
+from apps.api.agent_supervisor.domains.runtime.lab_access import require_labs_enabled
 from apps.api.agent_supervisor.schemas.main_models import AttackChainRunRequest, BatchCompareRequest, RunRequest
 from apps.api.agent_supervisor.storage.data import get_product_scenarios
 from apps.api.agent_supervisor.storage.database import load_run
 
-router = APIRouter(dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)])
+router = APIRouter(
+    dependencies=[Depends(require_api_token), Depends(restrict_executor_scope), Depends(require_labs_enabled)]
+)
 
 
 def _require_analyst_access(role: str = Depends(current_security_role)) -> None:

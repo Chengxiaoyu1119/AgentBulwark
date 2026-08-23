@@ -19,6 +19,7 @@ _TEST_RUNTIME_DIR = Path(
     tempfile.mkdtemp(prefix=f"agent-supervisor-test-runtime-{os.getpid()}-")
 ).resolve()
 os.environ["AGENT_SUPERVISOR_RUNTIME_DIR"] = str(_TEST_RUNTIME_DIR)
+os.environ.setdefault("AGENT_SUPERVISOR_LABS_ENABLED", "true")
 atexit.register(shutil.rmtree, _TEST_RUNTIME_DIR, ignore_errors=True)
 
 def _initialize_runtime_database() -> None:

@@ -149,13 +149,24 @@ if (process.env.AGENT_SUPERVISOR_CLI_DEBUG === '1') {
 // Evidence scripts can pin the exact interpreter through this environment
 // variable; ordinary CLI usage keeps the historical PATH fallback.
 const pythonCommand = process.env.AGENT_SUPERVISOR_PYTHON || 'python';
+const childEnvironment = {
+  ...process.env,
+  // CLI commands are evidence and experiment workflows. Keep their SQLite,
+  // leases, approvals and runtime events out of the operational console.
+  AGENT_SUPERVISOR_RUNTIME_DIR:
+    process.env.AGENT_SUPERVISOR_LAB_RUNTIME_DIR ||
+    process.env.AGENT_SUPERVISOR_RUNTIME_DIR ||
+    'apps/api/sandbox/runtime/cli-data',
+  AGENT_SUPERVISOR_LABS_ENABLED: process.env.AGENT_SUPERVISOR_LABS_ENABLED || 'true'
+};
 const result = spawnSync(pythonCommand, ['-X', 'utf8', '-m', 'apps.api.agent_supervisor.commands.cli', ...args], {
   stdio: 'inherit',
   // Pass each argument as an argv entry.  Going through cmd.exe on Windows
   // strips JSON quotes from values such as --arguments '{"path":"x"}',
   // turning a valid MCP/OpenAI payload into invalid JSON before Python sees it.
   // Python is resolved directly through PATH on every supported platform.
-  shell: false
+  shell: false,
+  env: childEnvironment
 });
 
 process.exit(result.status ?? 1);

@@ -1,5 +1,8 @@
 $ErrorActionPreference = "Stop"
 
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+Set-Location $repoRoot
+
 function Resolve-ProjectPython {
     $candidates = @()
     if ($env:AGENT_SUPERVISOR_PYTHON) {
@@ -24,6 +27,8 @@ $env:AGENT_SUPERVISOR_API_TOKEN = "admin-token"
 $env:AGENT_SUPERVISOR_DEFAULT_ROLE = "admin"
 $env:AGENT_SUPERVISOR_AUTH_DISABLED = "false"
 $env:AGENT_SUPERVISOR_SECURITY_PROFILE = "local"
+$env:AGENT_SUPERVISOR_LABS_ENABLED = "true"
+$env:AGENT_SUPERVISOR_RUNTIME_DIR = Join-Path $repoRoot "apps\api\sandbox\runtime\fixture-gateway-8034"
 $env:AGENT_SUPERVISOR_AGENT_TOKENS_JSON = (@{ "fixture-agent" = "fixture-agent-token" } | ConvertTo-Json -Compress)
 $env:AGENT_SUPERVISOR_AUDIT_HMAC_KEY = "fixture-hmac-key"
 $env:AGENT_SUPERVISOR_PROXY_REQUIRE_TOOL_RECEIPTS = "true"

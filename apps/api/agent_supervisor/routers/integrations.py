@@ -63,6 +63,7 @@ from apps.api.agent_supervisor.domains.runtime.gateway_execution import (
     GatewayExecutionUncertainError,
     execute_gateway_tool_call,
 )
+from apps.api.agent_supervisor.domains.runtime.lab_access import require_labs_enabled
 from apps.api.agent_supervisor.schemas.main_models import (
     AgentToolEvent,
     AttackLabRunRequest,
@@ -94,6 +95,16 @@ def _require_analyst_access(role: str = Depends(current_security_role)) -> None:
 
 
 def _require_admin_access(role: str = Depends(current_security_role)) -> None:
+    require_any_role({"admin"}, role)
+
+
+def _require_lab_analyst_access(role: str = Depends(current_security_role)) -> None:
+    require_labs_enabled()
+    require_any_role({"analyst", "admin"}, role)
+
+
+def _require_lab_admin_access(role: str = Depends(current_security_role)) -> None:
+    require_labs_enabled()
     require_any_role({"admin"}, role)
 
 
@@ -171,17 +182,17 @@ def write_openclaw_plugin_package_validation_endpoint(inspect_runtime: bool = Fa
     return write_openclaw_plugin_validation_report(inspect_runtime=inspect_runtime)
 
 
-@router.post("/api/integrations/openclaw/minimal_agent_demo", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/integrations/openclaw/minimal_agent_demo", dependencies=[Depends(_require_lab_analyst_access)])
 def openclaw_minimal_agent_demo() -> dict:
     return _run_external_agent_demo()
 
 
-@router.post("/api/integrations/agents/minimal_demo", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/integrations/agents/minimal_demo", dependencies=[Depends(_require_lab_analyst_access)])
 def agent_minimal_demo() -> dict:
     return _run_external_agent_demo()
 
 
-@router.post("/api/integrations/agents/model_driven_demo", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/integrations/agents/model_driven_demo", dependencies=[Depends(_require_lab_analyst_access)])
 def agent_model_driven_demo(request: ModelDrivenAgentRequest) -> dict:
     try:
         return run_model_driven_agent(
@@ -205,12 +216,12 @@ def _run_external_agent_demo() -> dict:
     )
 
 
-@router.get("/api/attack_lab/modules", dependencies=[Depends(_require_analyst_access)])
+@router.get("/api/attack_lab/modules", dependencies=[Depends(_require_lab_analyst_access)])
 def attack_lab_modules() -> dict:
     return list_attack_lab_modules()
 
 
-@router.post("/api/attack_lab/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/attack_lab/run", dependencies=[Depends(_require_lab_analyst_access)])
 def attack_lab_run(request: AttackLabRunRequest) -> dict:
     try:
         return run_attack_lab_module(request.model_dump())
@@ -218,12 +229,12 @@ def attack_lab_run(request: AttackLabRunRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/api/attack_lab/testsets", dependencies=[Depends(_require_analyst_access)])
+@router.get("/api/attack_lab/testsets", dependencies=[Depends(_require_lab_analyst_access)])
 def attack_lab_testsets() -> dict:
     return list_attack_testsets()
 
 
-@router.post("/api/attack_lab/testsets/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/attack_lab/testsets/run", dependencies=[Depends(_require_lab_analyst_access)])
 def attack_lab_testset_run(request: AttackTestsetRunRequest) -> dict:
     try:
         return run_attack_testset(request.model_dump())
@@ -231,17 +242,17 @@ def attack_lab_testset_run(request: AttackTestsetRunRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/capability_replay/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/capability_replay/run", dependencies=[Depends(_require_lab_analyst_access)])
 def capability_replay_run() -> dict:
     return run_capability_replay()
 
 
-@router.get("/api/learning_lab/scenarios", dependencies=[Depends(_require_analyst_access)])
+@router.get("/api/learning_lab/scenarios", dependencies=[Depends(_require_lab_analyst_access)])
 def learning_lab_scenarios() -> dict:
     return list_learning_scenarios()
 
 
-@router.post("/api/learning_lab/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/learning_lab/run", dependencies=[Depends(_require_lab_analyst_access)])
 def learning_lab_run(request: LearningLabRunRequest) -> dict:
     try:
         return run_learning_attack(request.model_dump())
@@ -249,7 +260,7 @@ def learning_lab_run(request: LearningLabRunRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/redteam_lab/jailbreak/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/redteam_lab/jailbreak/run", dependencies=[Depends(_require_lab_analyst_access)])
 def redteam_jailbreak_run(request: JailbreakRedteamRequest) -> dict:
     try:
         return run_jailbreak_redteam(request.model_dump())
@@ -257,7 +268,7 @@ def redteam_jailbreak_run(request: JailbreakRedteamRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/redteam_lab/jailbreak/dual_model/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/redteam_lab/jailbreak/dual_model/run", dependencies=[Depends(_require_lab_analyst_access)])
 def redteam_dual_model_jailbreak_run(request: DualModelJailbreakRequest) -> dict:
     try:
         return run_dual_model_jailbreak(request.model_dump())
@@ -265,7 +276,7 @@ def redteam_dual_model_jailbreak_run(request: DualModelJailbreakRequest) -> dict
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/attack_lab/custom_compare", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/attack_lab/custom_compare", dependencies=[Depends(_require_lab_analyst_access)])
 def attack_lab_custom_compare(request: CustomAttackCompareRequest) -> dict:
     """Execute a user-supplied Agent tool call against equal local fixtures."""
     try:
@@ -274,7 +285,7 @@ def attack_lab_custom_compare(request: CustomAttackCompareRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/attack_lab/custom_chain/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/attack_lab/custom_chain/run", dependencies=[Depends(_require_lab_analyst_access)])
 def attack_lab_custom_chain_run(request: CustomAttackChainRequest) -> dict:
     """Continue the exact caller-authored tool call through a guarded Agent chain."""
     try:
@@ -304,7 +315,7 @@ def attack_lab_custom_chain_run(request: CustomAttackChainRequest) -> dict:
     }
 
 
-@router.post("/api/redteam_lab/jailbreak/refusal_rewrite/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/redteam_lab/jailbreak/refusal_rewrite/run", dependencies=[Depends(_require_lab_analyst_access)])
 def redteam_refusal_rewrite_evasion_run(request: RefusalRewriteEvasionRequest) -> dict:
     try:
         return run_refusal_rewrite_evasion(request.model_dump())
@@ -312,7 +323,7 @@ def redteam_refusal_rewrite_evasion_run(request: RefusalRewriteEvasionRequest) -
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/api/redteam_lab/authorized_target/run", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/redteam_lab/authorized_target/run", dependencies=[Depends(_require_lab_analyst_access)])
 def redteam_authorized_target_run(request: AuthorizedTargetRunRequest) -> dict:
     try:
         return run_authorized_target_test(request.model_dump())
@@ -320,12 +331,12 @@ def redteam_authorized_target_run(request: AuthorizedTargetRunRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/api/target_lab/state", dependencies=[Depends(_require_analyst_access)])
+@router.get("/api/target_lab/state", dependencies=[Depends(_require_lab_analyst_access)])
 def target_lab_state() -> dict:
     return target_lab_snapshot()
 
 
-@router.post("/api/target_lab/reset", dependencies=[Depends(_require_admin_access)])
+@router.post("/api/target_lab/reset", dependencies=[Depends(_require_lab_admin_access)])
 def target_lab_reset() -> dict:
     return reset_target_lab()
 
@@ -493,7 +504,7 @@ def runtime_execution(audit_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"未知审计记录：{audit_id}") from exc
 
 
-@router.post("/api/lab/evaluate", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/lab/evaluate", dependencies=[Depends(_require_lab_analyst_access)])
 def lab_evaluate(event: AgentToolEvent) -> dict:
     try:
         return evaluate_agent_event(
@@ -521,7 +532,7 @@ def supervisor_batch_evaluate(
     )
 
 
-@router.post("/api/lab/batch_evaluate", dependencies=[Depends(_require_analyst_access)])
+@router.post("/api/lab/batch_evaluate", dependencies=[Depends(_require_lab_analyst_access)])
 def lab_batch_evaluate(request: Any = Body(...)) -> dict:
     return _batch_evaluate(request, allow_guard_toggle=True, role="analyst", authenticated_agent_id=None)
 

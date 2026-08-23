@@ -7,13 +7,13 @@ from pathlib import Path
 from apps.api.agent_supervisor.adapters.models.model_adapter import provider_status
 from apps.api.agent_supervisor.adapters.models.model_runtime_config import runtime_real_api_enabled
 from apps.api.agent_supervisor.adapters.proxy.proxy_security import proxy_security_snapshot
-from apps.api.agent_supervisor.domains.attacks.target_lab import target_lab_snapshot
 from apps.api.agent_supervisor.domains.governance.semantic_detector import semantic_detector_status
 from apps.api.agent_supervisor.domains.reports.gateway_evidence import (
     gateway_code_fingerprint,
     gateway_runtime_evidence,
     gateway_source_fingerprint,
 )
+from apps.api.agent_supervisor.domains.runtime.lab_access import labs_enabled
 from apps.api.agent_supervisor.domains.runtime.security_profile import security_profile
 from apps.api.agent_supervisor.mcp_gateway.config import (
     gateway_enabled,
@@ -26,7 +26,7 @@ from apps.api.agent_supervisor.mcp_gateway.config import (
     gateway_timeout_seconds,
     upstream_command,
 )
-from apps.api.agent_supervisor.paths import MEMORY_DIR, OUTBOX_DIR, SANDBOX_RUNTIME_DIR, WORKSPACE_DIR
+from apps.api.agent_supervisor.paths import MEMORY_DIR, OUTBOX_DIR, RUNTIME_DIR, SANDBOX_RUNTIME_DIR, WORKSPACE_DIR
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -53,7 +53,12 @@ def _cors_origins() -> list[str]:
 
 
 def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict:
-    target_lab = target_lab_snapshot()
+    current_labs_enabled = labs_enabled()
+    target_lab: dict = {}
+    if current_labs_enabled:
+        from apps.api.agent_supervisor.domains.attacks.target_lab import target_lab_snapshot
+
+        target_lab = target_lab_snapshot()
     global_models = provider_status()
     optimizer_models = provider_status("optimizer")
     target_models = provider_status("target")
@@ -82,6 +87,9 @@ def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict:
             "auth_disabled": _env_bool("AGENT_SUPERVISOR_AUTH_DISABLED"),
             "security_profile": current_security_profile,
             "cors_origins": _cors_origins(),
+            "data_plane": "operational",
+            "labs_enabled": current_labs_enabled,
+            "storage": _path_status(RUNTIME_DIR, "runtime/operational"),
         },
         "models": {
             "real_api_enabled": runtime_real_api_enabled(_env_bool("MODEL_REAL_API_ENABLED")),
@@ -91,12 +99,14 @@ def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict:
             "target": target_models,
         },
         "sandbox": {
+            "labs_enabled": current_labs_enabled,
             "ready": WORKSPACE_DIR.exists() and OUTBOX_DIR.exists() and MEMORY_DIR.exists(),
             "runtime": _path_status(SANDBOX_RUNTIME_DIR, "sandbox/runtime"),
             "workspace": _path_status(WORKSPACE_DIR, "sandbox/runtime/workspace"),
             "outbox": _path_status(OUTBOX_DIR, "sandbox/runtime/outbox"),
             "memory": _path_status(MEMORY_DIR, "sandbox/runtime/memory"),
             "target_lab": {
+                "enabled": current_labs_enabled,
                 "ready": bool(target_lab.get("version")),
                 "state_path": "sandbox/runtime/target_lab/agent_security_fixture.json"
                 if target_lab.get("state_path")
