@@ -57,6 +57,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
     css: true,
+    exclude: ['e2e/**', '**/node_modules/**', '**/dist/**'],
     // Ant Design's jsdom-heavy gateway and evidence views routinely need
     // several seconds to mount when the full suite is loaded together.  The
     // previous five-second default made the same tests pass in isolation but

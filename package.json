@@ -19,6 +19,7 @@
     "console:format": "npm --prefix apps/console run format",
     "console:format:check": "npm --prefix apps/console run format:check",
     "console:test": "npm --prefix apps/console run test",
+    "console:test:e2e": "npm --prefix apps/console run test:e2e",
     "ui:audit": "npm --prefix apps/console run ui:audit",
     "api": "npm run api:dev",
     "api:dev": "python -X utf8 -m apps.api.dev_server",
@@ -34,7 +35,7 @@
   "materials:refresh": "python -X utf8 scripts/refresh_shanghai_technical_report.py",
   "self:review": "node scripts/project-self-review.mjs --output apps/api/sandbox/reports",
   "self:review:test": "node --test scripts/project-self-review-identity.test.mjs",
-  "verify": "npm run self:review:test && npm run console:lint:strict && npm run ui:audit && npm run console:test && npm run api:lint && npm run api:typecheck && npm run api:check && npm run api:architecture && npm run api:test && npm run build",
+  "verify": "npm run self:review:test && npm run console:lint:strict && npm run ui:audit && npm run console:test && npm run api:lint && npm run api:typecheck && npm run api:check && npm run api:architecture && npm run api:coverage && npm run build && npm run console:test:e2e && npm run audit:security",
     "api:architecture": "node scripts/backend-governance-check.mjs"
   }
 }

@@ -9,8 +9,25 @@ baseline comparison without spending an external API key.
 from __future__ import annotations
 
 import json
+import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+
+_request_count = 0
+_request_count_lock = threading.Lock()
+
+
+def _record_request() -> int:
+    global _request_count
+    with _request_count_lock:
+        _request_count += 1
+        return _request_count
+
+
+def _request_count_snapshot() -> int:
+    with _request_count_lock:
+        return _request_count
 
 
 def _response(payload: dict[str, Any]) -> dict[str, Any]:
@@ -126,7 +143,22 @@ def _response(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 - stdlib handler contract
+        if self.path.rstrip("/") not in {"/health", "/_fixture/stats"}:
+            self.send_error(404)
+            return
+        body = json.dumps(
+            {"ok": True, "request_count": _request_count_snapshot()},
+            ensure_ascii=False,
+        ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self) -> None:  # noqa: N802 - stdlib handler contract
+        _record_request()
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length)
         try:
@@ -147,7 +179,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", 18080), Handler)
+    port = int(os.getenv("FIXTURE_PROVIDER_PORT", "18080"))
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     try:
         server.serve_forever()
     finally:
