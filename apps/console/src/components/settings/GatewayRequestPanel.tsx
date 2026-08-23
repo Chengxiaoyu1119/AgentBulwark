@@ -72,6 +72,7 @@ export function GatewayRequestPanel({
       <UiInput.TextArea
         value={payload}
         onChange={(event) => onPayloadChange(event.target.value)}
+        aria-label="网关请求 JSON"
         autoSize={{ minRows: 22, maxRows: 36 }}
         spellCheck={false}
         className="zh-settings-editor"

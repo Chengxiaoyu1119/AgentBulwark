@@ -166,9 +166,11 @@ export function AppShell({
               <UiButton type="text" icon={<LogOut size={16} />} onClick={onSignOut} aria-label="退出控制台">
                 <span className="hide-on-mobile">退出</span>
               </UiButton>
-              <UiButton type="primary" icon={<ShieldCheck size={16} />} onClick={onOpenGateway ?? onOpenLab}>
-                <span className="hide-on-mobile">打开 LLM API / MCP 网关</span>
-              </UiButton>
+              {page !== 'gateway' ? (
+                <UiButton type="primary" icon={<ShieldCheck size={16} />} onClick={onOpenGateway ?? onOpenLab}>
+                  <span className="hide-on-mobile">打开 LLM API / MCP 网关</span>
+                </UiButton>
+              ) : null}
             </Space>
           </Header>
 

@@ -42,12 +42,29 @@ def build_gateway_trace_index(
     traces.sort(key=lambda item: str(item.get("last_seen") or ""), reverse=True)
     bounded_limit = max(1, min(int(limit), 100))
     selected = traces[:bounded_limit]
+    decision_distribution: dict[str, int] = defaultdict(int)
+    provider_distribution: dict[str, int] = defaultdict(int)
+    for trace in traces:
+        decision_distribution[str(trace.get("decision") or "未知")] += 1
+        provider_distribution[str(trace.get("provider") or "unknown")] += 1
     return {
         "schema_version": "agent-supervisor.gateway-trace.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "count": len(selected),
         "total_available": len(traces),
         "raw_content_exposed": False,
+        "summary": {
+            "request_count": len(traces),
+            "controlled_count": sum(1 for item in traces if item.get("status") == "controlled"),
+            "allowed_count": sum(1 for item in traces if item.get("status") == "allowed"),
+            "provider_failure_count": sum(1 for item in traces if item.get("status") == "provider-failure"),
+            "provider_called_count": sum(1 for item in traces if item.get("provider_called") is True),
+            "tool_call_count": sum(int(item.get("tool_call_stage_count") or 0) for item in traces),
+            "receipt_count": sum(int(item.get("receipt_count") or 0) for item in traces),
+            "max_risk_score": max((int(item.get("risk_score") or 0) for item in traces), default=0),
+            "decision_distribution": dict(decision_distribution),
+            "provider_distribution": dict(provider_distribution),
+        },
         "traces": selected,
     }
 
@@ -105,6 +122,8 @@ def _build_trace(request_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     provider_profile = _first_non_empty(provider_stages or stages, "provider_profile")
     model = _first_non_empty(provider_stages or stages, "model")
     controlled_count = sum(1 for value in decisions if value in CONTROLLED_DECISIONS)
+    risk_score = max((int(stage.get("risk_score") or 0) for stage in stages), default=0)
+    policy_ids = [str(stage.get("policy_id") or "") for stage in stages if stage.get("policy_id")]
     tool_stage_count = sum(1 for stage in stages if stage.get("provider_call_id"))
     observed_count = sum(1 for stage in stages if stage.get("execution_observed_by_server") is True)
     receipt_count = sum(1 for stage in stages if stage.get("execution_receipt_present") is True)
@@ -132,6 +151,9 @@ def _build_trace(request_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "provider_response_hash": _safe_hash(provider_response_hash),
         "provider_response_id": _safe_identifier(provider_response_id),
         "controlled_stage_count": controlled_count,
+        "stage_count": len(stages),
+        "risk_score": risk_score,
+        "primary_policy_id": policy_ids[-1] if policy_ids else "",
         "tool_call_stage_count": tool_stage_count,
         "server_observed_execution_count": observed_count,
         "receipt_count": receipt_count,

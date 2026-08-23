@@ -67,8 +67,6 @@ export function useAppData(page: PageKey) {
       setApiNotice(
         '后端未连接：当前页面只显示空的离线状态，不展示样本、报告或运行数据。启动 FastAPI 后才会读取实时证据。'
       );
-    } else if (!data.recent_runs.length) {
-      setApiNotice('后端已连接，目前暂无真实实验日志；运行脚本后这里会展示最新结果。');
     } else {
       setApiNotice('');
     }
@@ -119,25 +117,32 @@ export function useAppData(page: PageKey) {
       if (ignore || !backendHealthy) {
         return;
       }
-      fetchScenarios()
-        .then((data) => {
-          if (!ignore) setScenarios(data);
-        })
-        .catch(() => undefined);
-      fetchAttackChains()
-        .then((data) => {
-          if (ignore) return;
-          setAttackChains(data);
-          if (data[0]?.id) {
-            setSelectedAttackChain((current) => current || data[0].id);
-          }
-        })
-        .catch(() => undefined);
+      // Experiment endpoints are deliberately absent on an operational
+      // gateway.  Load them only when an operator explicitly opens a lab-only
+      // route, so normal console startup stays free of expected 404 traffic.
+      if (page === 'scenarios' || page === 'lab') {
+        fetchScenarios()
+          .then((scenarioData) => {
+            if (!ignore) setScenarios(scenarioData);
+          })
+          .catch(() => undefined);
+      }
+      if (page === 'chain') {
+        fetchAttackChains()
+          .then((chainData) => {
+            if (ignore) return;
+            setAttackChains(chainData);
+            if (chainData[0]?.id) {
+              setSelectedAttackChain((current) => current || chainData[0].id);
+            }
+          })
+          .catch(() => undefined);
+      }
     });
     return () => {
       ignore = true;
     };
-  }, [refresh]);
+  }, [page, refresh]);
 
   useEffect(() => {
     if (page === 'audit') {

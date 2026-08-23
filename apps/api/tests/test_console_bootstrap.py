@@ -47,9 +47,15 @@ class ConsoleBootstrapTest(unittest.TestCase):
             with TestClient(app) as client:
                 headers = {"Authorization": "Bearer operator-token"}
                 lab_response = client.get("/api/scenarios", headers=headers)
+                overview_response = client.get("/api/overview", headers=headers)
                 runtime_response = client.get("/api/runtime_status", headers=headers)
 
         self.assertEqual(lab_response.status_code, 404)
+        self.assertEqual(overview_response.status_code, 200)
+        self.assertEqual(overview_response.json()["attack_surfaces"], [])
+        self.assertEqual(overview_response.json()["scenarios"], [])
+        self.assertEqual(overview_response.json()["student_competition_attack_map"], [])
+        self.assertEqual(overview_response.json()["summary"]["scenario_count"], 0)
         self.assertEqual(runtime_response.status_code, 200)
         self.assertEqual(runtime_response.json()["backend"]["data_plane"], "operational")
         self.assertEqual(runtime_response.json()["backend"]["labs_enabled"], False)
@@ -70,9 +76,14 @@ class ConsoleBootstrapTest(unittest.TestCase):
                     "/api/scenarios",
                     headers={"Authorization": "Bearer operator-token"},
                 )
+                overview_response = client.get(
+                    "/api/overview",
+                    headers={"Authorization": "Bearer operator-token"},
+                )
 
         self.assertEqual(response.status_code, 200)
         self.assertGreater(len(response.json()), 0)
+        self.assertGreater(len(overview_response.json()["scenarios"]), 0)
 
 
 if __name__ == "__main__":

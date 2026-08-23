@@ -11,6 +11,7 @@ from apps.api.agent_supervisor.auth import (
     restrict_executor_scope,
 )
 from apps.api.agent_supervisor.domains.governance.tool_contract import SUPPORTED_TOOLS
+from apps.api.agent_supervisor.domains.runtime.lab_access import labs_enabled
 from apps.api.agent_supervisor.domains.runtime.memory_governance import (
     memory_governance_snapshot,
     rollback_latest_memory,
@@ -290,17 +291,25 @@ def overview(role: str = Depends(current_security_role)) -> dict:
     guarded_runs = [run for run in runs if run.get("guard_enabled")]
     guarded_controlled = sum(1 for run in guarded_runs if not run.get("attack_success"))
     attack_successes = sum(1 for run in runs if run["attack_success"])
+    # The catalog is experiment input, not operational telemetry.  Returning
+    # its fixed scenarios from the production overview made a fresh gateway
+    # look as if it already contained verified traffic and attack evidence.
+    # Keep the two planes explicit: lab instances receive the catalog, while
+    # operational instances expose only persisted runtime facts.
+    lab_catalog_enabled = labs_enabled()
+    attack_surfaces = get_attack_surfaces() if lab_catalog_enabled else []
+    product_scenarios = get_product_scenarios() if lab_catalog_enabled else []
     payload = {
-        "attack_surfaces": get_attack_surfaces(),
-        "student_competition_attack_map": get_student_competition_attack_map(),
-        "scenarios": get_product_scenarios(),
+        "attack_surfaces": attack_surfaces,
+        "student_competition_attack_map": get_student_competition_attack_map() if lab_catalog_enabled else [],
+        "scenarios": product_scenarios,
         "models": _provider_status_for_role(role),
         "recent_runs": runs,
         "alerts": alerts,
         "audit_logs": audit_logs,
         "summary": {
-            "surface_count": len(get_attack_surfaces()),
-            "scenario_count": len(get_product_scenarios()),
+            "surface_count": len(attack_surfaces),
+            "scenario_count": len(product_scenarios),
             "recent_run_count": total,
             "block_rate": round((controlled_actions / total) * 100) if total else 0,
             "guarded_run_count": len(guarded_runs),

@@ -5,7 +5,10 @@ import { GatewayPanel } from './GatewayPanel';
 import { request } from '../app/apiRequest';
 
 vi.mock('../app/apiRequest', () => ({
-  request: vi.fn()
+  request: vi.fn(),
+  subscribeRuntimeEvents: vi.fn((_onEvent, signal: AbortSignal) =>
+    new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  )
 }));
 
 describe('GatewayPanel', () => {
@@ -72,7 +75,7 @@ describe('GatewayPanel', () => {
     // intentionally separate from the model request so operators can see
     // prior calls before creating a new one.
     expect(request).toHaveBeenCalledTimes(3);
-    expect(vi.mocked(request).mock.calls.some(([path]) => path === '/api/gateway/traces?limit=12')).toBe(true);
+    expect(vi.mocked(request).mock.calls.some(([path]) => path === '/api/gateway/traces?limit=50')).toBe(true);
     expect(vi.mocked(request).mock.calls.some(([path]) => path === '/v1/chat/completions')).toBe(true);
     const gatewayCall = vi.mocked(request).mock.calls.find(([path]) => path === '/v1/chat/completions');
     expect(gatewayCall?.[1]?.headers).toEqual({ 'X-Agent-Session-ID': 'gateway-console-session' });
@@ -103,8 +106,9 @@ describe('GatewayPanel', () => {
     render(<GatewayPanel />);
     await userEvent.click(screen.getByRole('button', { name: '注入测试' }));
 
-    const textboxes = screen.getAllByRole('textbox');
-    expect((textboxes[1] as HTMLTextAreaElement).value).toContain('Ignore previous instructions');
+    expect((screen.getByRole('textbox', { name: '网关请求 JSON' }) as HTMLTextAreaElement).value).toContain(
+      'Ignore previous instructions'
+    );
   });
 
   it('runs the same-request baseline/protected comparison and exposes the protected audit link', async () => {

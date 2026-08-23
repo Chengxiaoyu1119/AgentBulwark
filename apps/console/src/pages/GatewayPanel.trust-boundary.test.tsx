@@ -5,7 +5,10 @@ import { GatewayPanel } from './GatewayPanel';
 import { request } from '../app/apiRequest';
 
 vi.mock('../app/apiRequest', () => ({
-  request: vi.fn()
+  request: vi.fn(),
+  subscribeRuntimeEvents: vi.fn((_onEvent, signal: AbortSignal) =>
+    new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  )
 }));
 
 describe('GatewayPanel trust boundary', () => {

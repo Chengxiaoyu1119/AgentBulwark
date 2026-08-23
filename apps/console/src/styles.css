@@ -3215,6 +3215,180 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   outline-offset: -2px;
 }
 
+.zh-gateway-hero .ant-typography-title {
+  text-wrap: balance;
+}
+
+.zh-gateway-hero .ant-typography-paragraph {
+  max-width: 980px;
+  text-wrap: pretty;
+}
+
+.zh-traffic-metrics {
+  margin-bottom: 18px;
+}
+
+.zh-traffic-metrics .zh-metric-card {
+  height: 100%;
+}
+
+.zh-traffic-metrics .ant-statistic-content,
+.zh-tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.zh-traffic-filters {
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.zh-traffic-search {
+  width: min(100%, 320px);
+}
+
+.zh-traffic-filter {
+  width: 170px;
+}
+
+.zh-traffic-filter-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.zh-traffic-request-link {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+
+.zh-traffic-request-link span {
+  color: var(--ant-color-text-secondary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.zh-traffic-request-link strong {
+  overflow: hidden;
+  color: var(--ant-color-primary);
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zh-traffic-request-link:focus-visible {
+  outline: 2px solid var(--ant-color-primary);
+  outline-offset: 3px;
+}
+
+.zh-traffic-empty {
+  display: flex;
+  min-height: 260px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  padding: 32px;
+  color: var(--ant-color-text-secondary);
+  text-align: center;
+  background: var(--ant-color-fill-quaternary);
+  border: 1px dashed var(--ant-color-border);
+  border-radius: 10px;
+}
+
+.zh-traffic-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.zh-traffic-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.zh-traffic-timeline li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 76px;
+  padding-bottom: 18px;
+}
+
+.zh-traffic-timeline__icon {
+  position: relative;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  color: var(--ant-color-primary);
+  background: var(--ant-color-primary-bg);
+  border: 1px solid var(--ant-color-primary-border);
+  border-radius: 50%;
+}
+
+.zh-traffic-timeline li:not(:last-child) .zh-traffic-timeline__icon::after {
+  position: absolute;
+  top: 30px;
+  left: 14px;
+  width: 1px;
+  height: 46px;
+  content: '';
+  background: var(--ant-color-border-secondary);
+}
+
+.zh-gateway-composer {
+  scroll-margin-top: 16px;
+}
+
+.zh-gateway-composer__head {
+  margin-bottom: 14px;
+  padding-inline: 2px;
+}
+
+.zh-gateway-composer__head .ant-typography-title {
+  text-wrap: balance;
+}
+
+.zh-gateway-runtime-details {
+  overflow: hidden;
+  background: var(--ant-color-bg-container);
+  border: 1px solid var(--ant-color-border-secondary);
+  border-radius: 10px;
+}
+
+.zh-gateway-runtime-details > summary {
+  padding: 14px 18px;
+  color: var(--ant-color-text);
+  font-weight: 600;
+  cursor: pointer;
+  list-style-position: inside;
+}
+
+.zh-gateway-runtime-details[open] > summary {
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+
+.zh-gateway-runtime-details .zh-runtime-status {
+  margin: 0;
+  border: 0;
+  box-shadow: none;
+}
+
 .zh-settings-switch-row {
   display: flex;
   align-items: center;
@@ -3833,6 +4007,25 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
 @media (max-width: 768px) {
   .main-content {
     padding: 12px;
+  }
+
+  .zh-traffic-search,
+  .zh-traffic-filter {
+    width: 100%;
+  }
+
+  .zh-traffic-filter-count {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .zh-auth-page {
+    align-items: flex-start;
+    padding: max(20px, env(safe-area-inset-top)) 12px max(20px, env(safe-area-inset-bottom));
+  }
+
+  .zh-auth-card .ant-card-body {
+    padding: 22px 18px;
   }
 }
 

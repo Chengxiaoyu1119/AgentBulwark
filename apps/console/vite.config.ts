@@ -95,7 +95,12 @@ export default defineConfig({
   server: {
     port: 5178,
     proxy: {
-      '/api': `http://${backendHost}:${backendPort}`
+      '/api': `http://${backendHost}:${backendPort}`,
+      // The console submits real OpenAI-compatible requests from the same
+      // origin.  Without this route development mode sent /v1 requests to
+      // Vite itself and produced a misleading 404 even while the API was
+      // healthy.
+      '/v1': `http://${backendHost}:${backendPort}`
     }
   }
 });
