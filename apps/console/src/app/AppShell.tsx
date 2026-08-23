@@ -1,9 +1,9 @@
 import { type ReactNode, Suspense, useEffect, useMemo } from 'react';
 import { ConfigProvider, Drawer, Layout, Menu, Space, Spin, Typography, theme as antdTheme } from 'antd';
-import { Activity, LogOut, Menu as MenuIcon, Moon, ShieldCheck, Sun, UserRound } from 'lucide-react';
+import { LogOut, Menu as MenuIcon, Moon, RefreshCw, Sun, UserRound } from 'lucide-react';
 import { LabelTag, UiAlert, UiButton } from '../components/ui';
 import type { AuthContext } from '../types';
-import { navGroups, pageLabel, type PageKey } from './navigation';
+import { navItems, pageLabel, type ProductPageKey } from './navigation';
 
 const { Sider, Header, Content } = Layout;
 const { darkAlgorithm, defaultAlgorithm } = antdTheme;
@@ -11,19 +11,17 @@ const { darkAlgorithm, defaultAlgorithm } = antdTheme;
 export type AppTheme = 'light' | 'dark';
 
 type AppShellProps = {
-  page: PageKey;
+  page: ProductPageKey;
   theme: AppTheme;
   drawerVisible: boolean;
   apiNotice: string;
   authContext: AuthContext;
   children: ReactNode;
-  onPageChange: (page: PageKey) => void;
+  onPageChange: (page: ProductPageKey) => void;
   onThemeChange: (theme: AppTheme) => void;
   onRefresh: () => void;
   onOpenDrawer: () => void;
   onCloseDrawer: () => void;
-  onOpenLab: () => void;
-  onOpenGateway?: () => void;
   onSignOut: () => void;
 };
 
@@ -64,8 +62,6 @@ export function AppShell({
   onRefresh,
   onOpenDrawer,
   onCloseDrawer,
-  onOpenLab,
-  onOpenGateway,
   onSignOut
 }: AppShellProps) {
   useEffect(() => {
@@ -74,19 +70,14 @@ export function AppShell({
 
   const menuItems = useMemo(
     () =>
-      navGroups.map((group) => ({
-        type: 'group' as const,
-        key: group.key,
-        label: group.label,
-        children: group.items.map((item) => ({
-          key: item.key,
-          icon: item.icon,
-          label: item.label,
-          onClick: () => {
-            onPageChange(item.key);
-            onCloseDrawer();
-          }
-        }))
+      navItems.map((item) => ({
+        key: item.key,
+        icon: item.icon,
+        label: item.label,
+        onClick: () => {
+          onPageChange(item.key);
+          onCloseDrawer();
+        }
       })),
     [onCloseDrawer, onPageChange]
   );
@@ -103,7 +94,7 @@ export function AppShell({
         <Sider
           breakpoint="lg"
           collapsedWidth="0"
-          width={280}
+          width={236}
           theme={theme}
           className={`desktop-sider zh-app-sider zh-app-sider--${theme}`}
         >
@@ -114,7 +105,7 @@ export function AppShell({
                 智安哨
               </Typography.Title>
               <Typography.Text type="secondary" className="zh-text-meta">
-                AI Agent Runtime Security
+                Agent 防火墙
               </Typography.Text>
             </div>
           </div>
@@ -161,22 +152,14 @@ export function AppShell({
               </div>
               <UiButton
                 type="text"
-                icon={theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+                icon={theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
                 onClick={() => onThemeChange(theme === 'light' ? 'dark' : 'light')}
-              >
-                <span className="hide-on-mobile">{theme === 'light' ? '深色模式' : '浅色模式'}</span>
-              </UiButton>
-              <UiButton icon={<Activity size={16} />} onClick={onRefresh}>
-                <span className="hide-on-mobile">刷新数据</span>
-              </UiButton>
+                aria-label={theme === 'light' ? '切换深色模式' : '切换浅色模式'}
+              />
+              <UiButton type="text" icon={<RefreshCw size={17} />} onClick={onRefresh} aria-label="刷新数据" />
               <UiButton type="text" icon={<LogOut size={16} />} onClick={onSignOut} aria-label="退出控制台">
                 <span className="hide-on-mobile">退出</span>
               </UiButton>
-              {page !== 'gateway' ? (
-                <UiButton type="primary" icon={<ShieldCheck size={16} />} onClick={onOpenGateway ?? onOpenLab}>
-                  <span className="hide-on-mobile">打开 LLM API / MCP 网关</span>
-                </UiButton>
-              ) : null}
             </Space>
           </Header>
 

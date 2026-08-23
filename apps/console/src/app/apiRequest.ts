@@ -217,6 +217,9 @@ export async function subscribeRuntimeEvents(
   });
   if (!response.ok || !response.body) {
     const body = await readErrorBody(response);
+    if (response.status === 401) {
+      window.dispatchEvent(new CustomEvent(authInvalidEvent, { detail: { path } }));
+    }
     throw new ApiError(body || `HTTP ${response.status}`, {
       code: 'http_error',
       path,

@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, fetchOverview, fetchReport, setAuthTokenProvider, writeOpenClawPluginValidation } from './api';
-import { openAuthenticatedResource } from './app/apiRequest';
+import {
+  ApiError,
+  fetchOverview,
+  fetchReport,
+  setAuthTokenProvider,
+  subscribeRuntimeEvents,
+  writeOpenClawPluginValidation
+} from './api';
+import { authInvalidEvent, openAuthenticatedResource } from './app/apiRequest';
 import type { Overview, ReportData } from './types';
 
 afterEach(() => {
@@ -164,6 +171,27 @@ describe('api client', () => {
         status: 403,
         body: 'forbidden'
       });
+    }
+  });
+
+  it('invalidates the operator session when the live event stream returns 401', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => 'expired'
+    } as Response);
+    const invalidation = vi.fn();
+    window.addEventListener(authInvalidEvent, invalidation);
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      await expect(subscribeRuntimeEvents(vi.fn(), new AbortController().signal)).rejects.toMatchObject({
+        status: 401,
+        path: '/api/events/stream'
+      });
+      expect(invalidation).toHaveBeenCalledOnce();
+    } finally {
+      window.removeEventListener(authInvalidEvent, invalidation);
     }
   });
 

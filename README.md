@@ -68,11 +68,10 @@ Agent 工具调用 -> 执行前监督 -> 允许 / 拒绝 / 询问 / 隔离
 
 | 模块 | 能力 | 代码入口 |
 |---|---|---|
-| LLM API 网关 | 直接发送 Chat Completions 或 Responses 文本/函数调用请求，观察 Provider 前检查、Provider 响应和 tool call 处置证据 | `apps/console/src/pages/GatewayPanel.tsx` |
-| 运行总览 | 展示服务、模型、风险事件、待确认回执和真实调用链状态 | `apps/console/src/pages/Dashboard.tsx` |
-| 事件与复核 | 合并审计、告警、审批队列和执行回执，形成处置闭环 | `apps/console/src/pages/AuditLogPanel.tsx` |
-| 网关验证（按需） | 以真实 Provider 请求建立无防护/有防护因果证据；固定样本和历史实验只作为回归材料，不参与生产请求 | `apps/console/src/components/settings/GatewayComparisonPanel.tsx` |
-| 防护策略 | 管理工具调用策略、风险阈值和处置规则 | `apps/console/src/components/policy/PolicyCenter.tsx` |
+| 防护 | 实时请求流、接入向导、Provider 前后检查、Tool Call 执行回执 | `apps/console/src/pages/GatewayPanel.tsx` |
+| 事件 | 只展示运营网关产生的实时调用链、阻断/隔离决策和审计证据 | `apps/console/src/pages/SecurityEventsPanel.tsx` |
+| 设置 | 应用接入地址、Provider 顺序与模型、Agent 工具和数据权限 | `apps/console/src/pages/SettingsPanel.tsx` |
+| 研究与回归（开发资产） | 固定样本、历史报告和对照实验仅用于验证网关能力，不进入生产导航和实时指标 | `apps/api/agent_supervisor/domains/evaluations/` |
 | 行为监督器 | 对工具调用输出允许、拒绝、询问、隔离四类决策 | `apps/api/agent_supervisor/domains/governance/supervisor.py` |
 | 审计与告警 | 记录工具参数、策略命中、风险分、异常分、审计 hash | `apps/api/agent_supervisor/domains/governance/integrity.py` |
 | 评测与证据 | 评测不参与生产请求路径；真实模型盲测只有在 Provider 原始响应、策略快照、当前运行快照和执行回执均匹配时才算就绪 | `apps/api/agent_supervisor/domains/evaluations/` |
@@ -295,7 +294,7 @@ curl http://127.0.0.1:8012/api/health \
 
 浏览器打开 `http://127.0.0.1:8012` 即可使用控制台（API 与前端静态资源由同一容器托管）。审计数据库等运行时数据持久化在 `zhi-an-data` 卷中。
 
-首次打开受保护部署的控制台时，页面会先显示身份验证门禁。粘贴一个已配置的操作员 Bearer Token，点击“验证并进入”后才会加载运营接口。Token 只保存在当前浏览器会话的 `sessionStorage`，不会写入请求 URL、审计记录或构建产物；401 会清除当前会话并返回登录页，403 会保留身份并明确提示权限不足。前端构建时设置的 `VITE_AGENT_SUPERVISOR_API_TOKEN` 只作为未建立浏览器会话时的预配置凭证。
+首次打开受保护部署的控制台时，页面会先显示身份验证门禁。粘贴一个已配置的操作员 Bearer Token，点击“验证并进入”后才会加载运营接口。Token 只保存在当前浏览器会话的 `sessionStorage`，不会写入请求 URL、审计记录或构建产物；401 会清除当前会话并返回登录页，403 会保留身份并明确提示权限不足。控制台不再读取 `VITE_*` 构建变量中的共享 Token，防止凭证进入公开浏览器产物。
 
 > [!IMPORTANT]
 > 容器以 `0.0.0.0` 监听（非回环地址），按安全策略强制要求 API Token 鉴权与审计 HMAC 密钥，二者缺失时服务拒绝启动（fail-closed）。生产部署请通过反向代理追加 HTTPS。

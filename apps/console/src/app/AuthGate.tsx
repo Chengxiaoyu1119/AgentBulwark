@@ -155,12 +155,7 @@ export function AuthGate({ children }: AuthGateProps) {
             </Space>
 
             {!publicStatus && (
-              <UiAlert
-                type="error"
-                showIcon
-                title="后端服务未连接"
-                description="请先运行一键启动脚本，再重试连接。"
-              />
+              <UiAlert type="error" showIcon title="后端服务未连接" description="请先运行一键启动脚本，再重试连接。" />
             )}
 
             {publicStatus && (
@@ -174,12 +169,7 @@ export function AuthGate({ children }: AuthGateProps) {
             {error && <UiAlert type="error" showIcon title={error} />}
 
             {publicStatus?.console_auth.required && (
-              <Form
-                layout="vertical"
-                requiredMark={false}
-                onFinish={() => void submit()}
-                className="zh-auth-form"
-              >
+              <Form layout="vertical" requiredMark={false} onFinish={() => void submit()} className="zh-auth-form">
                 <Form.Item label="运行 Token" required>
                   <UiInput.Password
                     autoFocus

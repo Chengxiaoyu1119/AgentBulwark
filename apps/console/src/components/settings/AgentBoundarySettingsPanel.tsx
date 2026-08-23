@@ -1,4 +1,4 @@
-import { Col, Flex, Row, Switch, Typography } from 'antd';
+import { Col, Collapse, Flex, Row, Switch, Typography } from 'antd';
 import type { PolicySettings } from '@/types';
 import { PanelCard, UiButton, UiSelect } from '../ui';
 import { AgentApiAllowlistEditor } from './AgentApiAllowlistEditor';
@@ -21,7 +21,7 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
     0
   );
   return (
-    <PanelCard title="业务安全边界" type="inner">
+    <PanelCard title="业务安全边界" subtitle="先关闭未登记能力，再按 Agent 精确放行。">
       <Typography.Paragraph type="secondary">
         配置内部邮箱域、敏感路径和高敏 API 边界。生产 Agent 应先登记能力，再发放绑定 Token。
       </Typography.Paragraph>
@@ -77,18 +77,27 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
           onChange={(value) => onPatch({ sensitive_api_markers: value.map(String) })}
         />
       </Row>
-      <AgentToolAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
-      <AgentApiAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
-      <AgentModelAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
-      <AgentContextAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
-      <AgentToolMappingEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
+      <Collapse
+        className="zh-permission-collapse"
+        items={[
+          {
+            key: 'allowlists',
+            label: 'Agent 工具最小权限',
+            children: (
+              <div className="zh-settings-column">
+                <AgentToolAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
+                <AgentApiAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
+                <AgentModelAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
+                <AgentContextAllowlistEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
+                <AgentToolMappingEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
+              </div>
+            )
+          }
+        ]}
+      />
       <Flex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16">
         <Typography.Text type="secondary">
-          Agent 工具最小权限：{Object.keys(policySettings?.agent_tool_allowlists ?? {}).length} 个 Agent；自定义映射：
-          {mappingCount} 条；外部 API 主机白名单：{Object.keys(policySettings?.agent_api_allowlists ?? {}).length} 个
-          Agent；模型白名单：
-          {Object.keys(policySettings?.agent_model_allowlists ?? {}).length} 个 Agent ；MCP 上下文白名单：
-          {Object.keys(policySettings?.agent_context_allowlists ?? {}).length} 个 Agent
+          已登记 {Object.keys(policySettings?.agent_tool_allowlists ?? {}).length} 个 Agent，{mappingCount} 条工具映射。
         </Typography.Text>
         <UiButton type="primary" loading={saving} disabled={!canEdit} onClick={() => void onSave()}>
           保存业务边界

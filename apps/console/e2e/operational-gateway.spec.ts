@@ -9,10 +9,13 @@ async function login(page: Page, token = ADMIN_TOKEN) {
   await expect(page.getByRole('heading', { name: '连接安全控制台' })).toBeVisible();
   await page.getByRole('textbox', { name: '运行 Token' }).fill(token);
   await page.getByRole('button', { name: '验证并进入' }).click();
-  await expect(page.getByRole('heading', { name: '实时流量与执行闸门' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '请求防护' })).toBeVisible();
 }
 
 async function sendGatewayRequest(page: Page, payload?: Record<string, unknown>) {
+  if ((await page.getByRole('button', { name: '发送到网关' }).count()) === 0) {
+    await page.getByRole('button', { name: '验证防护' }).click();
+  }
   if (payload) {
     await page.getByRole('textbox', { name: '网关请求 JSON' }).fill(JSON.stringify(payload, null, 2));
   }
@@ -50,7 +53,8 @@ test.describe.serial('运营网关黑盒验收', () => {
 
     await page.getByRole('textbox', { name: '运行 Token' }).fill(OBSERVER_TOKEN);
     await page.getByRole('button', { name: '验证并进入' }).click();
-    await expect(page.getByRole('heading', { name: '实时流量与执行闸门' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '请求防护' })).toBeVisible();
+    await page.getByRole('button', { name: '验证防护' }).click();
     await expect(page.getByRole('button', { name: '发送到网关' })).toBeDisabled();
     await expect(page.getByText('当前凭证只有观测权限，不能发起模型请求。')).toBeVisible();
 
@@ -61,6 +65,7 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(forbidden.status()).toBe(403);
 
     await page.evaluate(() => sessionStorage.setItem('agent-supervisor-api-token', 'expired-token'));
+    await page.getByRole('button', { name: 'Close' }).click();
     await page.getByRole('button', { name: '刷新数据' }).click();
     await expect(page.getByRole('heading', { name: '连接安全控制台' })).toBeVisible();
     await expect(page.getByText('当前会话已失效，请重新验证身份。')).toBeVisible();
@@ -131,7 +136,7 @@ test.describe.serial('运营网关黑盒验收', () => {
     const toolRequestId = String(toolCall.agent_supervisor?.request_id ?? '');
     await expect(page.getByRole('button', { name: new RegExp(toolRequestId) })).toBeVisible();
     await page.reload();
-    await expect(page.getByRole('heading', { name: '实时流量与执行闸门' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '请求防护' })).toBeVisible();
     await expect(page.getByRole('button', { name: new RegExp(toolRequestId) })).toBeVisible();
     expect(consoleErrors).toEqual([]);
   });
@@ -139,6 +144,7 @@ test.describe.serial('运营网关黑盒验收', () => {
   test('服务端托管 Tool Call 产生可验证回执，MCP JSON-RPC 走真实子进程', async ({ page }) => {
     await login(page);
 
+    await page.getByRole('button', { name: '验证防护' }).click();
     const managedSwitch = page.getByRole('switch');
     await managedSwitch.click();
     await expect(managedSwitch).toBeChecked();
@@ -169,19 +175,30 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(await providerRequestCount(page)).toBe(beforeManaged + 2);
     await expect(page.getByText('服务端托管执行回执')).toBeVisible();
 
-    await page.getByRole('button', { name: 'initialize' }).click();
-    await expect(page.getByText('initialize', { exact: true }).last()).toBeVisible();
-    await expect(page.getByText('result', { exact: true })).toBeVisible();
-
-    await page.getByRole('button', { name: 'tools/list' }).click();
-    await expect(page.getByText(/当前响应可见工具：1 个/)).toBeVisible();
-
-    await page.getByRole('button', { name: 'tools/call' }).click();
-    await expect(page.getByText('forwarded-and-completed', { exact: true })).toBeVisible();
-    await expect(page.getByText(/调用已转发并收到上游结果/)).toBeVisible();
+    const mcpHeaders = {
+      Authorization: `Bearer ${ADMIN_TOKEN}`,
+      'X-Agent-Session-ID': 'mcp-e2e-session'
+    };
+    const initialize = await page.request.post('/api/mcp', {
+      headers: mcpHeaders,
+      data: {
+        jsonrpc: '2.0',
+        id: 'initialize-1',
+        method: 'initialize',
+        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } }
+      }
+    });
+    expect(initialize.status()).toBe(200);
+    const toolsList = await page.request.post('/api/mcp', {
+      headers: mcpHeaders,
+      data: { jsonrpc: '2.0', id: 'tools-list-1', method: 'tools/list', params: {} }
+    });
+    expect(toolsList.status()).toBe(200);
+    const toolsBody = (await toolsList.json()) as { result?: { tools?: unknown[] } };
+    expect(Array.isArray(toolsBody.result?.tools)).toBe(true);
   });
 
-  test('五个运营页面可交互导航，移动端不产生横向溢出', async ({ page }) => {
+  test('三个生产页面可交互导航，移动端不产生横向溢出', async ({ page }) => {
     const failedApiResponses: string[] = [];
     page.on('response', (response) => {
       const url = new URL(response.url());
@@ -191,28 +208,22 @@ test.describe.serial('运营网关黑盒验收', () => {
     });
     await login(page);
 
-    await page.getByRole('menuitem', { name: '运行总览' }).click();
-    await expect(page.getByRole('heading', { name: /看见每次工具调用/ })).toBeVisible();
+    await page.getByRole('menuitem', { name: '事件' }).click();
+    await expect(page.getByRole('heading', { name: '安全事件', exact: true })).toBeVisible();
 
-    await page.getByRole('menuitem', { name: '事件与复核' }).click();
-    await expect(page.getByRole('heading', { name: '安全事件、人工复核与执行审计' })).toBeVisible();
-
-    await page.getByRole('menuitem', { name: '防护策略' }).click();
-    await expect(page.getByRole('heading', { name: '防护策略中心' })).toBeVisible();
-
-    await page.getByRole('menuitem', { name: 'Agent 接入' }).click();
-    await expect(page.getByRole('heading', { name: 'Agent接入与系统设置' })).toBeVisible();
+    await page.getByRole('menuitem', { name: '设置' }).click();
+    await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
     await page.waitForTimeout(500);
     expect(failedApiResponses).toEqual([]);
 
     await page.setViewportSize({ width: 375, height: 812 });
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Agent接入与系统设置' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '设置' })).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)
     ).toBe(true);
     await page.getByRole('button', { name: '打开导航菜单' }).click();
-    await page.getByRole('menuitem', { name: 'LLM API / MCP 网关' }).click();
-    await expect(page.getByRole('heading', { name: '实时流量与执行闸门' })).toBeVisible();
+    await page.getByRole('menuitem', { name: '防护' }).click();
+    await expect(page.getByRole('heading', { name: '请求防护' })).toBeVisible();
   });
 });

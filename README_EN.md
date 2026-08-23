@@ -60,11 +60,10 @@ The default process is the operational gateway and stores data under `apps/api/r
 
 | Module | Capability | Entry |
 |---|---|---|
-| LLM API Gateway | Send OpenAI-compatible requests and inspect pre-provider, provider, and tool-call evidence | `apps/console/src/pages/GatewayPanel.tsx` |
-| Dashboard | Service, model, risk events, pending receipts, live call chains | `apps/console/src/pages/Dashboard.tsx` |
-| Events & Review | Merged audit, alerts, approvals, execution receipts | `apps/console/src/pages/AuditLogPanel.tsx` |
-| Gateway validation (on demand) | Establishes baseline/protected evidence with a real Provider; fixed samples and historical labs remain regression material, not the production path | `apps/console/src/components/settings/GatewayComparisonPanel.tsx` |
-| Policy Center | Tool-call policies, risk thresholds, disposal rules | `apps/console/src/components/policy/PolicyCenter.tsx` |
+| Protection | Live request flow, onboarding, provider pre/post checks, and tool-call execution receipts | `apps/console/src/pages/GatewayPanel.tsx` |
+| Events | Operational gateway traces, blocked/quarantined decisions, and audit evidence | `apps/console/src/pages/SecurityEventsPanel.tsx` |
+| Settings | Application endpoints, provider/model selection, and Agent tool/data permissions | `apps/console/src/pages/SettingsPanel.tsx` |
+| Research & regression (development assets) | Fixed samples, historical reports, and comparison experiments validate the gateway but stay out of production navigation and live metrics | `apps/api/agent_supervisor/domains/evaluations/` |
 | Behavior Supervisor | allow / deny / ask / quarantine decisions per tool call | `apps/api/agent_supervisor/domains/governance/supervisor.py` |
 | Audit & Alerts | Tool params, policy hits, risk/anomaly scores, audit hash | `apps/api/agent_supervisor/domains/governance/integrity.py` |
 | Evaluation & Evidence | Validate the gateway and supervisor with fixed data; not part of the production request path | `apps/api/agent_supervisor/domains/evaluations/` |

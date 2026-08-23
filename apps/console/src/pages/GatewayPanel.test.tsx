@@ -6,8 +6,9 @@ import { request } from '../app/apiRequest';
 
 vi.mock('../app/apiRequest', () => ({
   request: vi.fn(),
-  subscribeRuntimeEvents: vi.fn((_onEvent, signal: AbortSignal) =>
-    new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  subscribeRuntimeEvents: vi.fn(
+    (_onEvent, signal: AbortSignal) =>
+      new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
   )
 }));
 
@@ -68,6 +69,7 @@ describe('GatewayPanel', () => {
     });
 
     render(<GatewayPanel />);
+    await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
     await userEvent.click(screen.getByRole('button', { name: '发送到网关' }));
 
     // The gateway page loads the redacted Trace index on entry, then sends
@@ -85,8 +87,6 @@ describe('GatewayPanel', () => {
     expect(screen.getByText('provider-response-returned')).toBeInTheDocument();
     expect(screen.getByText('caller-owned-tool-execution')).toBeInTheDocument();
     expect(screen.getByText('工具回执要求')).toBeInTheDocument();
-    expect(screen.getByText('工具结果信任')).toBeInTheDocument();
-    expect(screen.getByText('仅接受服务端观察')).toBeInTheDocument();
     expect(screen.getByText('回执信任策略')).toBeInTheDocument();
     expect(screen.getByText('本次回执来源')).toBeInTheDocument();
     expect(screen.getByText('server-observed')).toBeInTheDocument();
@@ -95,7 +95,6 @@ describe('GatewayPanel', () => {
     expect(screen.getByText('已验证回执')).toBeInTheDocument();
     expect(screen.getByText('Tool call 处置')).toBeInTheDocument();
     expect(screen.getByText('Provider 工具参数扫描')).toBeInTheDocument();
-    expect(screen.getByText('网关运行证据')).toBeInTheDocument();
     expect(screen.getByText('源码/配置指纹')).toBeInTheDocument();
     expect(screen.getByText('审计精确定位')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '打开本次审计' })).toBeInTheDocument();
@@ -104,6 +103,7 @@ describe('GatewayPanel', () => {
   it('loads a real injection payload into the request editor for direct gateway testing', async () => {
     vi.mocked(request).mockResolvedValue({});
     render(<GatewayPanel />);
+    await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
     await userEvent.click(screen.getByRole('button', { name: '注入测试' }));
 
     expect((screen.getByRole('textbox', { name: '网关请求 JSON' }) as HTMLTextAreaElement).value).toContain(
@@ -111,59 +111,13 @@ describe('GatewayPanel', () => {
     );
   });
 
-  it('runs the same-request baseline/protected comparison and exposes the protected audit link', async () => {
-    vi.mocked(request).mockImplementation(async (path) => {
-      if (path === '/api/runtime_status') {
-        return {
-          security_context: { role: 'analyst', can_generate: true, can_execute_managed_tools: false },
-          models: {
-            target: [{ provider: 'fixture-provider', model: 'fixture-model', configured: true, mode: 'real-api' }]
-          },
-          proxy: { enabled: true, mode: 'transparent' }
-        };
-      }
-      if (path === '/api/gateway/compare') {
-        return {
-          request_hash: 'request-hash',
-          baseline: {
-            provider: 'fixture-provider',
-            response_model: 'fixture-model',
-            provider_called: true,
-            response_shape: { returned_tool_call_count: 1 },
-            tool_execution: 'not-executed-observation-only',
-            response: { choices: [{ message: { tool_calls: [{ id: 'call-1' }] } }] }
-          },
-          guarded: {
-            provider_called: false,
-            decision: '拒绝',
-            request_stage: 'pre-provider-input',
-            decision_enforced_before_tool_execution: true,
-            response_shape: { returned_tool_call_count: 0 },
-            audit_ids: ['guard-audit-1'],
-            response: { choices: [{ message: { content: '已阻断' } }] }
-          },
-          invariants: { same_provider_request: true, same_provider: null },
-          verdict: {
-            baseline_tool_call_observed: true,
-            guarded_controlled: true,
-            guarded_tool_call_withheld: true,
-            causal_control_observed: true,
-            evidence_complete: true
-          },
-          evidence: { persisted: true, event_id: 7, hash: 'evidence-hash' }
-        };
-      }
-      return {};
-    });
-
+  it('keeps comparison and MCP debug tools out of the primary protection surface', () => {
+    vi.mocked(request).mockResolvedValue({});
     render(<GatewayPanel />);
-    await userEvent.click(await screen.findByRole('button', { name: '运行同请求对照' }));
-
-    expect(await screen.findByText('因果控制已观测')).toBeInTheDocument();
-    expect(screen.getByText('无防护 Provider')).toBeInTheDocument();
-    expect(screen.getByText('智安哨网关')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '打开受保护审计' })).toBeInTheDocument();
-    expect(vi.mocked(request).mock.calls.some(([path]) => path === '/api/gateway/compare')).toBe(true);
+    expect(screen.queryByRole('button', { name: '运行同请求对照' })).not.toBeInTheDocument();
+    expect(screen.queryByText('MCP JSON-RPC 实际入口')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '接入应用' })).toBeInTheDocument();
+    expect(screen.getByText('实时请求')).toBeInTheDocument();
   });
 
   it('adds the managed server execution contract when the switch is enabled', async () => {
@@ -183,6 +137,7 @@ describe('GatewayPanel', () => {
     });
 
     render(<GatewayPanel />);
+    await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
     await userEvent.click(screen.getByRole('switch'));
     await userEvent.click(screen.getByRole('button', { name: '发送到网关' }));
 
@@ -207,6 +162,7 @@ describe('GatewayPanel', () => {
     });
 
     render(<GatewayPanel />);
+    await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
 
     expect(await screen.findByRole('switch')).toBeDisabled();
     expect(screen.getByText(/当前身份可生成模型响应，但没有服务端工具执行权限/)).toBeInTheDocument();
@@ -268,6 +224,7 @@ describe('GatewayPanel', () => {
     });
 
     render(<GatewayPanel />);
+    await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
     await userEvent.click(screen.getByRole('button', { name: '发送到网关' }));
     await userEvent.click(await screen.findByRole('button', { name: '服务端沙箱执行' }));
 

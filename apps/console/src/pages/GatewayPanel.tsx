@@ -1,16 +1,18 @@
-import { useRef } from 'react';
-import { Col, Flex, Row, Typography } from 'antd';
-import { PanelCard } from '../components/ui';
-import { GatewayComparisonPanel } from '../components/settings/GatewayComparisonPanel';
+import { useMemo, useState } from 'react';
+import { Drawer, Flex, Space, Steps, Typography } from 'antd';
+import { ArrowLeft, ArrowRight, CircleCheck, CircleDashed, PlugZap, Send, ShieldCheck } from 'lucide-react';
+import { CopyButton, LabelTag, PanelCard, UiAlert, UiButton } from '../components/ui';
 import { GatewayEvidencePanel } from '../components/settings/GatewayEvidencePanel';
-import { GatewayMcpPanel } from '../components/settings/GatewayMcpPanel';
 import { GatewayRequestPanel, GatewayRequestPresets } from '../components/settings/GatewayRequestPanel';
-import { GatewayRuntimeStatus } from '../components/settings/GatewayRuntimeStatus';
 import { GatewayTracePanel } from '../components/settings/GatewayTracePanel';
 import { useGatewayPanelController } from '../app/useGatewayPanelController';
 
-export function GatewayPanel() {
-  const requestSectionRef = useRef<HTMLDivElement>(null);
+type DrawerMode = 'setup' | 'verify' | null;
+
+export function GatewayPanel({ onOpenSettings }: { onOpenSettings?: () => void }) {
+  const [drawerMode, setDrawerMode] = useState<DrawerMode>(null);
+  const [setupStep, setSetupStep] = useState(0);
+  const controller = useGatewayPanelController();
   const {
     payload,
     setPayload,
@@ -22,19 +24,13 @@ export function GatewayPanel() {
     executionError,
     followupResult,
     followingUp,
-    comparisonResult,
-    comparisonError,
-    comparing,
     runtimeStatus,
-    runtimeStatusError,
     sessionId,
     setSessionId,
     managedMode,
     setManagedMode,
     metadata,
     canExecuteManagedTools,
-    canCompare,
-    canCausalCompare,
     decision,
     blocked,
     toolDecisions,
@@ -44,48 +40,75 @@ export function GatewayPanel() {
     executableToolDecision,
     responsePreview,
     sendRequest,
-    runComparison,
     executeToolCall,
     followupToolResult
-  } = useGatewayPanelController();
+  } = controller;
+
+  const readiness = useMemo(() => {
+    const provider = Boolean(
+      runtimeStatus?.models?.target?.some((item) => item.configured && item.mode === 'real-api')
+    );
+    const gateway = runtimeStatus?.proxy?.enabled === true && Boolean(runtimeStatus?.gateway_evidence?.fingerprint);
+    const toolBoundary =
+      runtimeStatus?.proxy?.tool_receipts_required === true &&
+      runtimeStatus.proxy.server_observed_receipts_required === true;
+    return { provider, gateway, toolBoundary };
+  }, [runtimeStatus]);
+
+  const protectionReady = readiness.provider && readiness.gateway;
 
   return (
-    <div className="zh-page-stack">
-      <PanelCard variant="borderless" className="zh-gateway-hero">
-        <Flex justify="space-between" align="flex-start" gap={16} wrap="wrap">
-          <div className="zh-flex-min">
-            <Typography.Title level={3} className="zh-title-flush">
-              实时流量与执行闸门
-            </Typography.Title>
-            <Typography.Paragraph type="secondary" className="zh-text-body zh-mt-8 zh-mb-0">
-              观察进入 <Typography.Text code>/v1/chat/completions</Typography.Text>、
-              <Typography.Text code>/v1/responses</Typography.Text> 与 MCP 的真实请求，在 Provider 前后、Tool Call 和执行回执阶段完成控制。
-              当前视图只读取运营数据库，不混入实验脚本和固定样本。
-            </Typography.Paragraph>
-          </div>
+    <div className="zh-product-page">
+      <header className="zh-product-heading">
+        <div>
+          <Flex align="center" gap={10} wrap="wrap">
+            <Typography.Title level={1}>请求防护</Typography.Title>
+            <LabelTag color={protectionReady ? 'green' : 'warning'}>
+              {protectionReady ? '防护运行中' : '等待接入'}
+            </LabelTag>
+          </Flex>
+          <Typography.Text type="secondary">实时查看请求如何被放行、阻断或隔离。</Typography.Text>
+        </div>
+        <Flex gap={10} wrap="wrap">
+          <UiButton icon={<Send size={16} />} onClick={() => setDrawerMode('verify')}>
+            验证防护
+          </UiButton>
+          <UiButton type="primary" icon={<PlugZap size={16} />} onClick={() => setDrawerMode('setup')}>
+            接入应用
+          </UiButton>
         </Flex>
-      </PanelCard>
+      </header>
 
       <GatewayTracePanel
-        refreshSignal={String(
-          metadata.request_id || comparisonResult?.comparison_id || metadata.gateway_evidence_fingerprint || ''
-        )}
-        onCreateRequest={() => requestSectionRef.current?.scrollIntoView({ block: 'start' })}
+        refreshSignal={String(metadata.request_id || metadata.gateway_evidence_fingerprint || '')}
+        onCreateRequest={() => setDrawerMode('verify')}
       />
 
-      <div ref={requestSectionRef} className="zh-gateway-composer">
-        <Flex justify="space-between" align="center" gap={12} wrap="wrap" className="zh-gateway-composer__head">
-          <div>
-            <Typography.Title level={4} className="zh-title-flush">
-              发起验证请求
-            </Typography.Title>
-            <Typography.Text type="secondary">请求结果会立即写入上方实时流量并绑定当前运行指纹。</Typography.Text>
-          </div>
-          <GatewayRequestPresets onSelect={setPayload} />
-        </Flex>
-
-        <Row gutter={[16, 16]} align="stretch">
-          <Col xs={24} xl={12}>
+      <Drawer
+        title={drawerMode === 'setup' ? '接入应用' : '验证一条真实请求'}
+        size="large"
+        open={drawerMode !== null}
+        onClose={() => setDrawerMode(null)}
+        destroyOnHidden
+        className="zh-workflow-drawer"
+      >
+        {drawerMode === 'setup' ? (
+          <SetupFlow
+            step={setupStep}
+            onStepChange={setSetupStep}
+            readiness={readiness}
+            onOpenSettings={() => {
+              setDrawerMode(null);
+              onOpenSettings?.();
+            }}
+            onVerify={() => setDrawerMode('verify')}
+          />
+        ) : (
+          <div className="zh-verify-workflow">
+            <Flex justify="space-between" align="center" gap={12} wrap="wrap">
+              <Typography.Text type="secondary">选择一个请求，也可以直接编辑 JSON。</Typography.Text>
+              <GatewayRequestPresets onSelect={setPayload} />
+            </Flex>
             <GatewayRequestPanel
               payload={payload}
               onPayloadChange={setPayload}
@@ -106,47 +129,164 @@ export function GatewayPanel() {
               error={error}
               onSubmit={() => void sendRequest()}
             />
-          </Col>
+            {result ? (
+              <GatewayEvidencePanel
+                result={result}
+                metadata={metadata}
+                blocked={blocked}
+                decision={decision}
+                toolDecisions={toolDecisions}
+                toolDefinitionFindings={toolDefinitionFindings}
+                toolArgumentFindings={toolArgumentFindings}
+                toolResultFindings={toolResultFindings}
+                responsePreview={responsePreview}
+                executableToolDecision={executableToolDecision}
+                executionResult={executionResult}
+                executionError={executionError}
+                executingTool={executingTool}
+                onExecuteTool={() => void executeToolCall()}
+                followupResult={followupResult}
+                followingUp={followingUp}
+                onFollowupToolResult={() => void followupToolResult()}
+              />
+            ) : null}
+          </div>
+        )}
+      </Drawer>
+    </div>
+  );
+}
 
-          <Col xs={24} xl={12}>
-            <GatewayEvidencePanel
-              result={result}
-              metadata={metadata}
-              blocked={blocked}
-              decision={decision}
-              toolDecisions={toolDecisions}
-              toolDefinitionFindings={toolDefinitionFindings}
-              toolArgumentFindings={toolArgumentFindings}
-              toolResultFindings={toolResultFindings}
-              responsePreview={responsePreview}
-              executableToolDecision={executableToolDecision}
-              executionResult={executionResult}
-              executionError={executionError}
-              executingTool={executingTool}
-              onExecuteTool={() => void executeToolCall()}
-              followupResult={followupResult}
-              followingUp={followingUp}
-              onFollowupToolResult={() => void followupToolResult()}
+function SetupFlow({
+  step,
+  onStepChange,
+  readiness,
+  onOpenSettings,
+  onVerify
+}: {
+  step: number;
+  onStepChange: (step: number) => void;
+  readiness: { provider: boolean; gateway: boolean; toolBoundary: boolean };
+  onOpenSettings: () => void;
+  onVerify: () => void;
+}) {
+  const baseUrl = `${window.location.origin}/v1`;
+  const steps = [{ title: '连接模型' }, { title: '修改地址' }, { title: '发送请求' }, { title: '保护工具' }];
+
+  return (
+    <div className="zh-setup-flow">
+      <Steps current={step} items={steps} responsive={false} size="small" />
+      <div className="zh-setup-flow__content">
+        {step === 0 ? (
+          <SetupStep
+            icon={readiness.provider ? <CircleCheck size={22} /> : <CircleDashed size={22} />}
+            title="先连接真实模型"
+            description="智安哨把检查通过的请求转发给你的模型服务。密钥只保存在后端，不进入浏览器。"
+          >
+            <UiAlert
+              type={readiness.provider ? 'success' : 'warning'}
+              showIcon
+              title={readiness.provider ? 'Provider 已连接' : '还没有可用的 Provider'}
             />
-          </Col>
-        </Row>
+            <UiButton type={readiness.provider ? 'default' : 'primary'} onClick={onOpenSettings}>
+              {readiness.provider ? '查看模型设置' : '去连接模型'}
+            </UiButton>
+          </SetupStep>
+        ) : null}
+
+        {step === 1 ? (
+          <SetupStep
+            icon={<PlugZap size={22} />}
+            title="把应用的模型地址指向智安哨"
+            description="Base URL 是模型客户端发送请求的入口。模型名和其余代码保持不变。"
+          >
+            <div className="zh-copy-field">
+              <div>
+                <Typography.Text type="secondary">OpenAI 兼容 Base URL</Typography.Text>
+                <Typography.Text code>{baseUrl}</Typography.Text>
+              </div>
+              <CopyButton text={baseUrl}>复制地址</CopyButton>
+            </div>
+            <UiAlert
+              type="info"
+              showIcon
+              title="为每个 Agent 使用独立 Token"
+              description="操作员登录 Token 只用于控制台，不应写进业务应用。Agent Token 由后端按最小权限单独发放。"
+            />
+          </SetupStep>
+        ) : null}
+
+        {step === 2 ? (
+          <SetupStep
+            icon={<Send size={22} />}
+            title="发送第一条请求"
+            description="先发送一个正常请求，再发送一个注入请求。两条请求会立即出现在实时列表中。"
+          >
+            <UiButton type="primary" onClick={onVerify}>
+              打开验证请求
+            </UiButton>
+          </SetupStep>
+        ) : null}
+
+        {step === 3 ? (
+          <SetupStep
+            icon={<ShieldCheck size={22} />}
+            title="最后开启工具执行保护"
+            description="模型提出 Tool Call 后，网关会再次检查权限与参数；只有服务端观察到的执行回执才作为事实。"
+          >
+            <UiAlert
+              type={readiness.toolBoundary ? 'success' : 'warning'}
+              showIcon
+              title={readiness.toolBoundary ? '工具执行边界已闭合' : '工具回执仍处于兼容或未配置状态'}
+            />
+            <UiButton onClick={onOpenSettings}>配置工具与数据权限</UiButton>
+          </SetupStep>
+        ) : null}
       </div>
 
-      <details className="zh-gateway-runtime-details">
-        <summary>运行配置与边界状态</summary>
-        <GatewayRuntimeStatus status={runtimeStatus} error={runtimeStatusError} />
-      </details>
-
-      <GatewayComparisonPanel
-        result={comparisonResult}
-        canCompare={canCompare}
-        canCausalCompare={canCausalCompare}
-        loading={comparing}
-        error={comparisonError}
-        onRun={(executionMode) => void runComparison(executionMode)}
-      />
-
-      <GatewayMcpPanel runtimeStatus={runtimeStatus} sessionId={sessionId} onSessionIdChange={setSessionId} />
+      <Flex justify="space-between" className="zh-setup-flow__footer">
+        <UiButton
+          icon={<ArrowLeft size={16} />}
+          disabled={step === 0}
+          onClick={() => onStepChange(Math.max(0, step - 1))}
+        >
+          上一步
+        </UiButton>
+        <UiButton
+          type="primary"
+          icon={step < steps.length - 1 ? <ArrowRight size={16} /> : <CircleCheck size={16} />}
+          onClick={() => (step < steps.length - 1 ? onStepChange(step + 1) : onVerify())}
+        >
+          {step < steps.length - 1 ? '下一步' : '完成并验证'}
+        </UiButton>
+      </Flex>
     </div>
+  );
+}
+
+function SetupStep({
+  icon,
+  title,
+  description,
+  children
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <PanelCard variant="borderless" className="zh-setup-step">
+      <Space orientation="vertical" size={18} className="zh-full-width">
+        <span className="zh-setup-step__icon" aria-hidden="true">
+          {icon}
+        </span>
+        <div>
+          <Typography.Title level={3}>{title}</Typography.Title>
+          <Typography.Paragraph type="secondary">{description}</Typography.Paragraph>
+        </div>
+        {children}
+      </Space>
+    </PanelCard>
   );
 }

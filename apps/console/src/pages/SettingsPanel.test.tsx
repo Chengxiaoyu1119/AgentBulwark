@@ -1,17 +1,32 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPanel } from './SettingsPanel';
 import type { Overview } from '../types';
 
 const apiMocks = vi.hoisted(() => ({
-  fetchOpenClawIntegrationBundle: vi.fn().mockResolvedValue(null)
+  fetchAgentIntegrationBundle: vi.fn().mockResolvedValue({
+    version: '1.0',
+    examples: [],
+    event_contract: { required_fields: ['agent_id'], recommended_fields: [], safe_default: 'deny' }
+  })
 }));
 
 vi.mock('../api', () => ({
   fetchAttackCaseDataset: vi.fn().mockResolvedValue(null),
-  fetchOpenClawIntegrationBundle: apiMocks.fetchOpenClawIntegrationBundle,
-  fetchAgentIntegrationBundle: vi.fn().mockResolvedValue(null),
+  fetchAgentIntegrationBundle: apiMocks.fetchAgentIntegrationBundle,
+  fetchAuthContext: vi.fn().mockResolvedValue({ role: 'admin', permissions: { can_edit_policy: true } }),
+  fetchPolicyConfig: vi.fn().mockResolvedValue({
+    settings: {
+      anomaly_review_threshold: 55,
+      anomaly_reject_threshold: 85,
+      approval_sla_minutes: 30,
+      high_risk_auto_escalation: true,
+      internal_email_domains: [],
+      sensitive_path_markers: [],
+      sensitive_api_markers: [],
+      agent_tool_allowlists: {}
+    }
+  }),
   fetchCompetitionReadiness: vi.fn().mockResolvedValue(null),
   fetchDemoDrill: vi.fn().mockResolvedValue(null),
   fetchModelConfig: vi.fn().mockResolvedValue({
@@ -31,6 +46,7 @@ vi.mock('../api', () => ({
   runDemoDrill: vi.fn(),
   runExternalAgentDemo: vi.fn(),
   updateModelConfig: vi.fn(),
+  updatePolicySettings: vi.fn(),
   writeCompetitionReadiness: vi.fn(),
   writeOpenClawPluginPackage: vi.fn(),
   writeOpenClawPluginValidation: vi.fn(),
@@ -75,27 +91,25 @@ const overview = {
 
 describe('SettingsPanel', () => {
   beforeEach(() => {
-    apiMocks.fetchOpenClawIntegrationBundle.mockClear();
+    apiMocks.fetchAgentIntegrationBundle.mockClear();
   });
 
   it('renders the settings shell and primary tabs', async () => {
     render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
 
-    expect(await screen.findByText('Agent接入与系统设置')).toBeInTheDocument();
-    expect(screen.getByText('Agent运行时安全接入')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Agent 运行时接入' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '设置' })).toBeInTheDocument();
+    expect(screen.getByText('应用入口')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '应用接入' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '模型连接' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '验证工具（非生产路径）' })).toBeInTheDocument();
-    expect(screen.queryByText('运行治理与记忆状态')).not.toBeInTheDocument();
-    expect(apiMocks.fetchOpenClawIntegrationBundle).not.toHaveBeenCalled();
+    expect(screen.getByRole('tab', { name: '工具与数据权限' })).toBeInTheDocument();
+    expect(screen.queryByText('验证工具（非生产路径）')).not.toBeInTheDocument();
+    expect(apiMocks.fetchAgentIntegrationBundle).toHaveBeenCalledTimes(1);
   });
 
-  it('loads the optional OpenClaw adapter only after the user expands it', async () => {
-    const user = userEvent.setup();
+  it('does not expose demo drills or framework-specific generators', async () => {
     render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
-
-    await user.click(await screen.findByText('可选框架适配器'));
-
-    expect(apiMocks.fetchOpenClawIntegrationBundle).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('接入契约')).toBeInTheDocument();
+    expect(screen.queryByText('OpenClaw')).not.toBeInTheDocument();
+    expect(screen.queryByText('闭环复现实验')).not.toBeInTheDocument();
   });
 });

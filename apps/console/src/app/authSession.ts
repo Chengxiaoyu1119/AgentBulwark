@@ -2,7 +2,6 @@ import type { AuthContext } from '../types';
 import { request } from './apiRequest';
 
 const AUTH_STORAGE_KEY = 'agent-supervisor-api-token';
-const configuredApiToken = import.meta.env.VITE_AGENT_SUPERVISOR_API_TOKEN?.trim() ?? '';
 
 export type PublicConsoleStatus = {
   ok: boolean;
@@ -16,9 +15,9 @@ export type PublicConsoleStatus = {
 
 export function getAuthToken() {
   try {
-    return window.sessionStorage.getItem(AUTH_STORAGE_KEY) || configuredApiToken || null;
+    return window.sessionStorage.getItem(AUTH_STORAGE_KEY) || null;
   } catch {
-    return configuredApiToken || null;
+    return null;
   }
 }
 

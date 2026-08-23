@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { navItems, pageFromHash, pageLabel } from './navigation';
+import { navItems, pageFromHash, pageLabel, pageToHash } from './navigation';
 
 describe('primary navigation', () => {
-  it('keeps the product surface focused on the gateway and five daily tasks', () => {
-    expect(navItems.map((item) => item.key)).toEqual(['gateway', 'dashboard', 'audit', 'policy', 'settings']);
+  it('keeps only the three daily product surfaces', () => {
+    expect(navItems.map((item) => item.key)).toEqual(['protection', 'events', 'settings']);
   });
 
-  it('preserves old deep links for secondary tools', () => {
-    expect(pageFromHash('#/scenarios')).toBe('scenarios');
-    expect(pageFromHash('#/chain')).toBe('chain');
-    expect(pageFromHash('#/alerts')).toBe('alerts');
-    expect(pageFromHash('#/report')).toBe('report');
-    expect(pageLabel('report')).toBe('证据导出（按需）');
+  it('folds legacy deep links into the nearest product task', () => {
+    expect(pageFromHash('#/gateway')).toBe('protection');
+    expect(pageFromHash('#/dashboard')).toBe('protection');
+    expect(pageFromHash('#/audit')).toBe('events');
+    expect(pageFromHash('#/alerts')).toBe('events');
+    expect(pageFromHash('#/lab')).toBe('protection');
+    expect(pageToHash(pageFromHash('#/lab'))).toBe('#/protection');
+    expect(pageLabel('events')).toBe('事件');
   });
 });

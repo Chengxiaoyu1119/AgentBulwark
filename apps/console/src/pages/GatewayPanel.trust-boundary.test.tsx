@@ -6,8 +6,9 @@ import { request } from '../app/apiRequest';
 
 vi.mock('../app/apiRequest', () => ({
   request: vi.fn(),
-  subscribeRuntimeEvents: vi.fn((_onEvent, signal: AbortSignal) =>
-    new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
+  subscribeRuntimeEvents: vi.fn(
+    (_onEvent, signal: AbortSignal) =>
+      new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
   )
 }));
 
@@ -31,6 +32,7 @@ describe('GatewayPanel trust boundary', () => {
     });
 
     render(<GatewayPanel />);
+    await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
 
     expect(await screen.findByText('当前凭证只有观测权限，不能发起模型请求。')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '发送到网关' })).toBeDisabled();
@@ -57,9 +59,12 @@ describe('GatewayPanel trust boundary', () => {
     });
 
     render(<GatewayPanel />);
+    await userEvent.click(screen.getByRole('button', { name: '接入应用' }));
+    await userEvent.click(screen.getByRole('button', { name: '下一步' }));
+    await userEvent.click(screen.getByRole('button', { name: '下一步' }));
+    await userEvent.click(screen.getByRole('button', { name: '下一步' }));
 
-    expect(await screen.findByText('工具结果信任')).toBeInTheDocument();
-    expect(screen.getByText('调用方声明兼容')).toBeInTheDocument();
+    expect(await screen.findByText('工具回执仍处于兼容或未配置状态')).toBeInTheDocument();
   });
 
   it('warns when one response accepted a caller-declared tool result', async () => {
@@ -94,7 +99,7 @@ describe('GatewayPanel trust boundary', () => {
     });
 
     render(<GatewayPanel />);
-    expect(await screen.findByText('调用方声明兼容')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
     await userEvent.click(screen.getByRole('button', { name: '发送到网关' }));
 
     expect(await screen.findByText('本次工具结果仅有调用方声明')).toBeInTheDocument();
