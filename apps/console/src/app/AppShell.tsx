@@ -142,7 +142,13 @@ export function AppShell({
         <Layout className="zh-app-layout">
           <Header className={`zh-app-header zh-app-header--${theme}`}>
             <Space>
-              <UiButton type="text" icon={<MenuIcon size={20} />} onClick={onOpenDrawer} className="mobile-menu-btn" />
+              <UiButton
+                type="text"
+                icon={<MenuIcon size={20} />}
+                onClick={onOpenDrawer}
+                className="mobile-menu-btn"
+                aria-label="打开导航菜单"
+              />
               <Typography.Title level={3} className="zh-app-header-title">
                 {pageLabel(page)}
               </Typography.Title>

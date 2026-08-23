@@ -180,4 +180,39 @@ test.describe.serial('运营网关黑盒验收', () => {
     await expect(page.getByText('forwarded-and-completed', { exact: true })).toBeVisible();
     await expect(page.getByText(/调用已转发并收到上游结果/)).toBeVisible();
   });
+
+  test('五个运营页面可交互导航，移动端不产生横向溢出', async ({ page }) => {
+    const failedApiResponses: string[] = [];
+    page.on('response', (response) => {
+      const url = new URL(response.url());
+      if (url.pathname.startsWith('/api/') && response.status() >= 400) {
+        failedApiResponses.push(`${response.status()} ${url.pathname}`);
+      }
+    });
+    await login(page);
+
+    await page.getByRole('menuitem', { name: '运行总览' }).click();
+    await expect(page.getByRole('heading', { name: /看见每次工具调用/ })).toBeVisible();
+
+    await page.getByRole('menuitem', { name: '事件与复核' }).click();
+    await expect(page.getByRole('heading', { name: '安全事件、人工复核与执行审计' })).toBeVisible();
+
+    await page.getByRole('menuitem', { name: '防护策略' }).click();
+    await expect(page.getByRole('heading', { name: '防护策略中心' })).toBeVisible();
+
+    await page.getByRole('menuitem', { name: 'Agent 接入' }).click();
+    await expect(page.getByRole('heading', { name: 'Agent接入与系统设置' })).toBeVisible();
+    await page.waitForTimeout(500);
+    expect(failedApiResponses).toEqual([]);
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Agent接入与系统设置' })).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)
+    ).toBe(true);
+    await page.getByRole('button', { name: '打开导航菜单' }).click();
+    await page.getByRole('menuitem', { name: 'LLM API / MCP 网关' }).click();
+    await expect(page.getByRole('heading', { name: '实时流量与执行闸门' })).toBeVisible();
+  });
 });
