@@ -52,6 +52,10 @@ Agent tool call -> Pre-execution supervision -> allow / deny / ask / quarantine
   </tr>
 </table>
 
+### Operational and lab data planes
+
+The default process is the operational gateway and stores data under `apps/api/runtime/operational`. Live traffic, audit, alerts, approvals, and execution receipts read only from that database. Fixed scenarios, historical reports, and regression fixtures are excluded from operational metrics. Scenario, attack-chain, red-team, and target-lab routes are disabled by default; a separate lab process must explicitly set `AGENT_SUPERVISOR_LABS_ENABLED=true` and use a separate `AGENT_SUPERVISOR_RUNTIME_DIR`.
+
 ## Key Capabilities
 
 | Module | Capability | Entry |
@@ -250,7 +254,7 @@ curl http://127.0.0.1:8012/api/health \
 
 Open `http://127.0.0.1:8012` in a browser to use the console (the API and the frontend static assets are served by the same container). Runtime data such as the audit database persists in the `zhi-an-data` volume.
 
-For a protected deployment, paste a configured Bearer Token into the “Runtime Token” field in the top-right corner and click “Apply Token” before refreshing data. The token is kept only in the current browser session's `sessionStorage`; it is not placed in URLs, audit records, or the build output.
+For a protected deployment, the console opens at an authentication gate before any operational API is loaded. Paste a configured operator Bearer Token and click “Validate and enter”. The token is kept only in the current browser session's `sessionStorage`; it is not placed in URLs, audit records, or the build output. A 401 clears the session and returns to the gate, while a 403 keeps the identity and reports the missing permission.
 
 > [!IMPORTANT]
 > The container listens on `0.0.0.0` (a non-loopback address), so the security policy enforces API token authentication and an audit HMAC key — the service refuses to start when either is missing (fail-closed). For production deployments, add HTTPS via a reverse proxy.
@@ -275,6 +279,12 @@ For development (tests and type-checking tools):
 
 ```bash
 python -m pip install -r apps/api/requirements-dev.txt
+```
+
+On Windows, the repository launcher builds the console and starts the same-origin application at `http://127.0.0.1:8012`. Close the window or press `Ctrl+C` to stop it.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\启动智安哨.ps1
 ```
 
 To run the Shanghai information-security materials utility, also install the document libraries:
@@ -426,12 +436,15 @@ agent-security-supervisor/
 | Check | Command |
 |---|---|
 | Backend tests | `npm run api:test` |
+| Backend coverage gate | `npm run api:coverage` (fails below 85%) |
 | Backend lint | `npm run api:lint` |
 | Backend type check | `npm run api:typecheck` |
 | Architecture governance | `npm run api:architecture` |
 | Console build | `npm run console:build` |
 | Console lint | `npm run console:lint` |
-| Full verification | `npm run verify` |
+| Operational browser black-box acceptance | `npm run console:test:e2e` |
+| Dependency security audit | `npm run audit:security` |
+| Full verification | `npm run verify` (static checks, unit tests, coverage, production build, process-level E2E, dependency audit) |
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide, [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for the code of conduct, and [CHANGELOG.md](./CHANGELOG.md) for the changelog.
 

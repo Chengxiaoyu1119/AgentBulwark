@@ -60,6 +60,10 @@ Agent 工具调用 -> 执行前监督 -> 允许 / 拒绝 / 询问 / 隔离
 
 > 表格中的攻击面、样本和策略数量是研究/回归平面的目录统计，不是生产防护覆盖率，也不等于真实 Provider 已经执行了对应场景。生产能力只按当前 HTTP 网关、MCP 上游和服务端执行回执的可验证证据计算；历史盲测、冻结集和本地夹具不会替代真实接入证据。
 
+### 运营平面与实验平面
+
+默认启动的是运营网关，数据写入 `apps/api/runtime/operational`。实时流量、审计、告警、审批与执行回执只读取这套运营数据库；固定场景、历史报告和回归样本不会混入控制台指标。`/api/scenarios`、攻击链、红队和目标实验等路由默认关闭，只有在独立实验进程中显式设置 `AGENT_SUPERVISOR_LABS_ENABLED=true` 才会启用，并应同时指定独立的 `AGENT_SUPERVISOR_RUNTIME_DIR`。
+
 ## 核心能力
 
 | 模块 | 能力 | 代码入口 |
@@ -291,7 +295,7 @@ curl http://127.0.0.1:8012/api/health \
 
 浏览器打开 `http://127.0.0.1:8012` 即可使用控制台（API 与前端静态资源由同一容器托管）。审计数据库等运行时数据持久化在 `zhi-an-data` 卷中。
 
-首次打开受保护部署的控制台时，在右上角“运行 Token”输入框粘贴一个已配置的 Bearer Token，点击“应用 Token”后再刷新数据。Token 只保存在当前浏览器会话的 `sessionStorage`，不会写入请求 URL、审计记录或构建产物；如果前端在构建时设置了 `VITE_AGENT_SUPERVISOR_API_TOKEN`，则优先使用构建配置。
+首次打开受保护部署的控制台时，页面会先显示身份验证门禁。粘贴一个已配置的操作员 Bearer Token，点击“验证并进入”后才会加载运营接口。Token 只保存在当前浏览器会话的 `sessionStorage`，不会写入请求 URL、审计记录或构建产物；401 会清除当前会话并返回登录页，403 会保留身份并明确提示权限不足。前端构建时设置的 `VITE_AGENT_SUPERVISOR_API_TOKEN` 只作为未建立浏览器会话时的预配置凭证。
 
 > [!IMPORTANT]
 > 容器以 `0.0.0.0` 监听（非回环地址），按安全策略强制要求 API Token 鉴权与审计 HMAC 密钥，二者缺失时服务拒绝启动（fail-closed）。生产部署请通过反向代理追加 HTTPS。
@@ -316,6 +320,12 @@ python -m pip install -r apps/api/requirements.txt
 
 ```bash
 python -m pip install -r apps/api/requirements-dev.txt
+```
+
+Windows 本机也可以使用仓库的一键脚本。它会构建控制台并在 `http://127.0.0.1:8012` 启动同源前后端；窗口关闭或按 `Ctrl+C` 后服务停止。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\启动智安哨.ps1
 ```
 
 若需要运行上海信息安全作品材料工具，另安装文档处理库：
@@ -544,12 +554,15 @@ agent-security-supervisor/
 | 检查 | 命令 |
 |---|---|
 | 后端测试 | `npm run api:test` |
+| 后端覆盖率门禁 | `npm run api:coverage`（低于 85% 失败） |
 | 后端 Lint | `npm run api:lint` |
 | 后端类型检查 | `npm run api:typecheck` |
 | 后端架构治理 | `npm run api:architecture` |
 | 控制台构建 | `npm run console:build` |
 | 控制台 Lint | `npm run console:lint` |
-| 全量验证 | `npm run verify` |
+| 运营网关浏览器黑盒验收 | `npm run console:test:e2e` |
+| 依赖安全审计 | `npm run audit:security` |
+| 全量验证 | `npm run verify`（静态检查、单元测试、覆盖率、生产构建、真实进程 E2E、依赖审计） |
 
 贡献指南见 [CONTRIBUTING.md](./CONTRIBUTING.md)，行为准则见 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)，版本记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
