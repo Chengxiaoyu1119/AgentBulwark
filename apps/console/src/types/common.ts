@@ -98,10 +98,13 @@ export interface PolicyConfig {
 export interface AuthContext {
   role: 'admin' | 'analyst' | 'observer' | string;
   agent_id: string | null;
+  identity_bound?: boolean;
   permissions: {
     can_edit_policy: boolean;
     can_review_approval: boolean;
     can_execute_runtime: boolean;
+    can_generate?: boolean;
+    can_execute_managed_tools?: boolean;
     can_view: boolean;
   };
 }

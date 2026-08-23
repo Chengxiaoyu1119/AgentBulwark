@@ -257,13 +257,18 @@ def auth_context(
     role: str = Depends(current_security_role),
     agent_id: str | None = Depends(current_agent_identity),
 ) -> dict:
+    can_generate = role in {"executor", "analyst", "admin"}
+    can_execute_managed_tools = role == "admin" or (role == "executor" and bool(agent_id))
     return {
         "role": role,
         "agent_id": agent_id,
+        "identity_bound": bool(agent_id),
         "permissions": {
             "can_edit_policy": role == "admin",
             "can_review_approval": role in {"admin", "analyst"},
             "can_execute_runtime": role in {"admin", "executor"},
+            "can_generate": can_generate,
+            "can_execute_managed_tools": can_execute_managed_tools,
             "can_view": role in {"admin", "analyst", "observer"},
         },
     }

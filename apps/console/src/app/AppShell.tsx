@@ -1,7 +1,8 @@
-import { type ReactNode, Suspense, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, Suspense, useEffect, useMemo } from 'react';
 import { ConfigProvider, Drawer, Layout, Menu, Space, Spin, Typography, theme as antdTheme } from 'antd';
-import { Activity, Menu as MenuIcon, Moon, ShieldCheck, Sun } from 'lucide-react';
-import { UiAlert, UiButton, UiInput } from '../components/ui';
+import { Activity, LogOut, Menu as MenuIcon, Moon, ShieldCheck, Sun, UserRound } from 'lucide-react';
+import { LabelTag, UiAlert, UiButton } from '../components/ui';
+import type { AuthContext } from '../types';
 import { navGroups, pageLabel, type PageKey } from './navigation';
 
 const { Sider, Header, Content } = Layout;
@@ -14,6 +15,7 @@ type AppShellProps = {
   theme: AppTheme;
   drawerVisible: boolean;
   apiNotice: string;
+  authContext: AuthContext;
   children: ReactNode;
   onPageChange: (page: PageKey) => void;
   onThemeChange: (theme: AppTheme) => void;
@@ -22,6 +24,7 @@ type AppShellProps = {
   onCloseDrawer: () => void;
   onOpenLab: () => void;
   onOpenGateway?: () => void;
+  onSignOut: () => void;
 };
 
 function PageFallback() {
@@ -54,6 +57,7 @@ export function AppShell({
   theme,
   drawerVisible,
   apiNotice,
+  authContext,
   children,
   onPageChange,
   onThemeChange,
@@ -61,33 +65,12 @@ export function AppShell({
   onOpenDrawer,
   onCloseDrawer,
   onOpenLab,
-  onOpenGateway
+  onOpenGateway,
+  onSignOut
 }: AppShellProps) {
-  const [sessionToken, setSessionToken] = useState(() => {
-    try {
-      return window.sessionStorage.getItem('agent-supervisor-api-token') ?? '';
-    } catch {
-      return '';
-    }
-  });
-
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
-
-  const applySessionToken = () => {
-    try {
-      if (sessionToken.trim()) {
-        window.sessionStorage.setItem('agent-supervisor-api-token', sessionToken.trim());
-      } else {
-        window.sessionStorage.removeItem('agent-supervisor-api-token');
-      }
-    } catch {
-      // Private browsing policies may deny sessionStorage; the next request
-      // will simply continue with the configured build-time token, if any.
-    }
-    onRefresh();
-  };
 
   const menuItems = useMemo(
     () =>
@@ -165,21 +148,11 @@ export function AppShell({
               </Typography.Title>
             </Space>
             <Space>
-              <UiInput.Password
-                size="small"
-                value={sessionToken}
-                onChange={(event) => setSessionToken(event.target.value)}
-                onPressEnter={applySessionToken}
-                onClear={applySessionToken}
-                allowClear
-                placeholder="运行 Token"
-                aria-label="运行时 API Token"
-                className="zh-app-token-input"
-              />
-              <UiButton size="small" onClick={applySessionToken}>
-                <span className="hide-on-mobile">应用 Token</span>
-                <span className="mobile-only">应用</span>
-              </UiButton>
+              <div className="zh-app-identity" aria-label={`当前身份 ${authContext.role}`}>
+                <UserRound size={16} aria-hidden="true" />
+                <span className="hide-on-mobile">{authContext.agent_id || '控制台操作员'}</span>
+                <LabelTag color={authContext.role === 'admin' ? 'blue' : 'default'}>{authContext.role}</LabelTag>
+              </div>
               <UiButton
                 type="text"
                 icon={theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
@@ -189,6 +162,9 @@ export function AppShell({
               </UiButton>
               <UiButton icon={<Activity size={16} />} onClick={onRefresh}>
                 <span className="hide-on-mobile">刷新数据</span>
+              </UiButton>
+              <UiButton type="text" icon={<LogOut size={16} />} onClick={onSignOut} aria-label="退出控制台">
+                <span className="hide-on-mobile">退出</span>
               </UiButton>
               <UiButton type="primary" icon={<ShieldCheck size={16} />} onClick={onOpenGateway ?? onOpenLab}>
                 <span className="hide-on-mobile">打开 LLM API / MCP 网关</span>

@@ -13,7 +13,7 @@ from apps.api.agent_supervisor.domains.runtime.request_limits import (
 )
 
 from .paths import REPO_ROOT
-from .routers import core, evaluations, integrations, mcp, proxy, scenarios
+from .routers import core, evaluations, integrations, mcp, proxy, public, scenarios
 
 app = FastAPI(title="智安哨 API", version="0.1.0", lifespan=app_lifespan)
 
@@ -33,6 +33,7 @@ app.add_middleware(
 )
 app.add_middleware(RequestBodyLimitMiddleware, max_body_bytes=MAX_REQUEST_BODY_BYTES)
 
+app.include_router(public.router)
 app.include_router(core.router)
 app.include_router(scenarios.router)
 app.include_router(evaluations.router)

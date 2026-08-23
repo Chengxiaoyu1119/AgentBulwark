@@ -1,8 +1,10 @@
 import { lazy, useCallback, useEffect, useState } from 'react';
+import { AuthGate } from './app/AuthGate';
 import { AppLoading, AppShell, type AppTheme } from './app/AppShell';
 import { useAppActions } from './app/useAppActions';
 import { useAppData } from './app/useAppData';
 import { isPageKey, pageFromHash, pageToHash, type PageKey } from './app/navigation';
+import type { AuthContext } from './types';
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
 const GatewayPanel = lazy(() => import('./pages/GatewayPanel').then((module) => ({ default: module.GatewayPanel })));
@@ -24,6 +26,14 @@ const ReportPanel = lazy(() => import('./pages/ReportPanel').then((module) => ({
 const SettingsPanel = lazy(() => import('./pages/SettingsPanel').then((module) => ({ default: module.SettingsPanel })));
 
 export default function App() {
+  return (
+    <AuthGate>
+      {({ context, signOut }) => <Workspace authContext={context} onSignOut={signOut} />}
+    </AuthGate>
+  );
+}
+
+function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSignOut: () => void }) {
   const [page, setPageState] = useState<PageKey>(() => pageFromHash(window.location.hash));
   const [theme, setTheme] = useState<AppTheme>('light');
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -120,6 +130,7 @@ export default function App() {
       theme={theme}
       drawerVisible={drawerVisible}
       apiNotice={apiNotice}
+      authContext={authContext}
       onPageChange={setPage}
       onThemeChange={setTheme}
       onRefresh={() => {
@@ -129,6 +140,7 @@ export default function App() {
       onCloseDrawer={() => setDrawerVisible(false)}
       onOpenLab={() => setPage('lab')}
       onOpenGateway={() => setPage('gateway')}
+      onSignOut={onSignOut}
     >
       {page === 'dashboard' && <Dashboard overview={overview} apiAvailable={apiAvailable} onOpenPage={setPage} />}
       {page === 'gateway' && <GatewayPanel />}

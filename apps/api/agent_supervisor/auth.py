@@ -13,6 +13,7 @@ from apps.api.agent_supervisor.domains.runtime.agent_credentials import (
     role_token,
     supplied_token,
 )
+from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
 
 # Roles are capability peers, not a single numeric hierarchy: an analyst may
 # inspect and write research artifacts but must not inherit executor side
@@ -70,8 +71,20 @@ def current_security_role(
         if token and supplied and compare_digest(supplied, token):
             return role
 
-    role = (os.getenv("AGENT_SUPERVISOR_DEFAULT_ROLE", "observer") or "observer").strip().lower()
-    return role if role in ROLE_ORDER else "observer"
+    configured_default = (os.getenv("AGENT_SUPERVISOR_DEFAULT_ROLE") or "").strip().lower()
+    if configured_default:
+        return configured_default if configured_default in ROLE_ORDER else "observer"
+
+    # A protected loopback checkout is operated by the human who started it.
+    # Make its explicitly configured shared token useful without weakening a
+    # public deployment. Production keeps the same shared credential read-only;
+    # machine execution still requires a role-specific or Agent-bound token.
+    shared_token = (os.getenv("AGENT_SUPERVISOR_API_TOKEN") or "").strip()
+    if shared_token and supplied and compare_digest(supplied, shared_token) and not production_security_profile():
+        local_role = (os.getenv("AGENT_SUPERVISOR_LOCAL_OPERATOR_ROLE") or "admin").strip().lower()
+        return local_role if local_role in {"observer", "analyst", "admin"} else "admin"
+
+    return "observer"
 
 
 def current_agent_identity(

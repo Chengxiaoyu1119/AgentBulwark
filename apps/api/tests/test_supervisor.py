@@ -80,6 +80,34 @@ class ApiTokenAuthTest(unittest.TestCase):
 
         self.assertEqual(role, "observer")
 
+    def test_shared_token_is_local_operator_when_default_role_is_not_set(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_HOST": "127.0.0.1",
+                "AGENT_SUPERVISOR_API_TOKEN": "shared-token",
+            },
+            clear=True,
+        ):
+            role = current_security_role(authorization="Bearer shared-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(role, "admin")
+
+    def test_shared_token_stays_read_only_in_production(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_SECURITY_PROFILE": "production",
+                "AGENT_SUPERVISOR_API_TOKEN": "shared-token",
+            },
+            clear=True,
+        ):
+            role = current_security_role(authorization="Bearer shared-token", x_agent_supervisor_api_token=None)
+
+        self.assertEqual(role, "observer")
+
 
 class ServerSecurityTest(unittest.TestCase):
     def setUp(self):

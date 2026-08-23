@@ -2,12 +2,14 @@ export type RequestOptions = {
   timeoutMs?: number;
   retry?: number;
   skipAuth?: boolean;
+  authToken?: string | null;
 };
 
 export type ApiErrorCode = 'http_error' | 'network_error' | 'timeout' | 'parse_error';
 
 const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_GET_RETRY = 1;
+export const authInvalidEvent = 'agent-supervisor:auth-invalid';
 
 type ApiErrorParams = {
   code: ApiErrorCode;
@@ -100,8 +102,8 @@ async function buildRequestHeaders(
   if (hasJsonBody(init) && !mergedHeaders.has('Content-Type')) {
     mergedHeaders.set('Content-Type', 'application/json');
   }
-  if (!options.skipAuth && authTokenProvider && !mergedHeaders.has('Authorization')) {
-    const token = await authTokenProvider();
+  if (!options.skipAuth && !mergedHeaders.has('Authorization')) {
+    const token = options.authToken !== undefined ? options.authToken : await authTokenProvider?.();
     if (token) {
       mergedHeaders.set('Authorization', `Bearer ${token}`);
     }
@@ -177,6 +179,9 @@ export async function request<T>(path: string, init?: RequestInit, options: Requ
       });
       if (!response.ok) {
         const body = await readErrorBody(response);
+        if (response.status === 401 && !options.skipAuth) {
+          window.dispatchEvent(new CustomEvent(authInvalidEvent, { detail: { path } }));
+        }
         throw new ApiError(body || `HTTP ${response.status}`, {
           code: 'http_error',
           path,
