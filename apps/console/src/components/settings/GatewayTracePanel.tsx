@@ -1,111 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Col, Drawer, Flex, Row, Space, Typography, type TableColumnsType } from 'antd';
-import { Activity, CircleCheck, Radio, RefreshCw, Search, ShieldX, Wrench } from 'lucide-react';
+import { Col, Flex, Row, Space, Typography } from 'antd';
+import { Activity, Radio, RefreshCw, Search } from 'lucide-react';
 import { request, subscribeRuntimeEvents } from '../../app/apiRequest';
-import {
-  LabelTag,
-  MetaGrid,
-  MetricCard,
-  PanelCard,
-  UiAlert,
-  UiButton,
-  UiInput,
-  UiSelect,
-  UiTable
-} from '../ui';
-
-export type GatewayTraceStage = {
-  audit_id?: string;
-  audit_hash?: string;
-  timestamp?: string;
-  stage?: string;
-  decision?: string;
-  policy_id?: string;
-  risk_score?: number;
-  tool?: string;
-  provider_called?: boolean | null;
-  provider_call_id?: string;
-  execution_status?: string;
-  execution_evidence?: string;
-  execution_observed_by_server?: boolean;
-  execution_receipt_present?: boolean;
-};
-
-export type GatewayTrace = {
-  trace_id?: string;
-  request_id?: string;
-  session_id?: string;
-  agent_id?: string;
-  status?: string;
-  decision?: string;
-  provider_called?: boolean | null;
-  provider?: string;
-  provider_profile?: string;
-  model?: string;
-  request_hash?: string;
-  provider_request_hash?: string;
-  provider_response_hash?: string;
-  provider_response_id?: string;
-  controlled_stage_count?: number;
-  stage_count?: number;
-  risk_score?: number;
-  primary_policy_id?: string;
-  tool_call_stage_count?: number;
-  server_observed_execution_count?: number;
-  receipt_count?: number;
-  first_seen?: string;
-  last_seen?: string;
-  stages?: GatewayTraceStage[];
-};
-
-type GatewayTraceSummary = {
-  request_count?: number;
-  controlled_count?: number;
-  allowed_count?: number;
-  provider_failure_count?: number;
-  provider_called_count?: number;
-  tool_call_count?: number;
-  receipt_count?: number;
-  max_risk_score?: number;
-};
-
-type GatewayTraceIndex = {
-  traces?: GatewayTrace[];
-  count?: number;
-  total_available?: number;
-  summary?: GatewayTraceSummary;
-};
+import { LabelTag, MetricCard, PanelCard, UiAlert, UiButton, UiInput, UiSelect } from '../ui';
+import { GatewayTraceDetails } from './GatewayTraceDetails';
+import { GatewayTraceTable } from './GatewayTraceTable';
+import { gatewayRequestId, traceLabel, type GatewayTrace, type GatewayTraceIndex } from './gatewayTraceModel';
 
 type Props = {
   refreshSignal?: string;
   onCreateRequest?: () => void;
 };
-
-const CONTROLLED_DECISIONS = new Set(['拒绝', '询问', '隔离']);
-
-function label(value: unknown, fallback = '—') {
-  return value === undefined || value === null || value === '' ? fallback : String(value);
-}
-
-function decisionColor(decision: string) {
-  return CONTROLLED_DECISIONS.has(decision) ? 'red' : decision === '允许' ? 'green' : 'blue';
-}
-
-function shortHash(value: unknown) {
-  const text = typeof value === 'string' ? value : '';
-  return text ? `${text.slice(0, 12)}…` : '—';
-}
-
-function formatTime(value: unknown) {
-  const text = typeof value === 'string' ? value : '';
-  if (!text) return '—';
-  const date = new Date(text);
-  return Number.isNaN(date.getTime()) ? text : date.toLocaleString('zh-CN', { hour12: false });
-}
-
-function requestIdOf(trace: GatewayTrace) {
-  return String(trace.request_id || trace.trace_id || '').trim();
-}
 
 export function GatewayTracePanel({ refreshSignal = '', onCreateRequest }: Props) {
   const [index, setIndex] = useState<GatewayTraceIndex>({ traces: [], summary: {} });
@@ -168,7 +73,7 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest }: Props
   }, [loadTraces]);
 
   async function openTrace(trace: GatewayTrace) {
-    const requestId = requestIdOf(trace);
+    const requestId = gatewayRequestId(trace);
     if (!requestId) return;
     setSelected(trace);
     try {
@@ -185,7 +90,7 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest }: Props
 
   const traces = useMemo(() => (Array.isArray(index.traces) ? index.traces : []), [index.traces]);
   const providers = useMemo(
-    () => [...new Set(traces.map((trace) => label(trace.provider, 'unknown')))].sort(),
+    () => [...new Set(traces.map((trace) => traceLabel(trace.provider, 'unknown')))].sort(),
     [traces]
   );
   const filteredTraces = useMemo(() => {
@@ -204,82 +109,10 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest }: Props
       return (
         (!needle || searchable.includes(needle)) &&
         (decisionFilter === '全部' || trace.decision === decisionFilter) &&
-        (providerFilter === '全部' || label(trace.provider, 'unknown') === providerFilter)
+        (providerFilter === '全部' || traceLabel(trace.provider, 'unknown') === providerFilter)
       );
     });
   }, [decisionFilter, providerFilter, query, traces]);
-
-  const columns: TableColumnsType<GatewayTrace> = [
-    {
-      title: '时间 / 请求',
-      key: 'request',
-      width: 230,
-      render: (_, trace) => (
-        <button type="button" className="zh-traffic-request-link" onClick={() => void openTrace(trace)}>
-          <span>{formatTime(trace.last_seen)}</span>
-          <strong>{requestIdOf(trace) || 'unknown-request'}</strong>
-        </button>
-      )
-    },
-    {
-      title: 'Agent / 会话',
-      key: 'agent',
-      width: 180,
-      render: (_, trace) => (
-        <Space orientation="vertical" size={0}>
-          <Typography.Text>{label(trace.agent_id, '未绑定 Agent')}</Typography.Text>
-          <Typography.Text type="secondary" ellipsis>
-            {label(trace.session_id, '无会话')}
-          </Typography.Text>
-        </Space>
-      )
-    },
-    {
-      title: 'Provider / 模型',
-      key: 'provider',
-      width: 180,
-      render: (_, trace) => (
-        <Space orientation="vertical" size={0}>
-          <Typography.Text>{label(trace.provider, trace.provider_called === false ? 'Provider 前阻断' : '未知')}</Typography.Text>
-          <Typography.Text type="secondary" ellipsis>
-            {label(trace.model)}
-          </Typography.Text>
-        </Space>
-      )
-    },
-    {
-      title: '处置',
-      dataIndex: 'decision',
-      width: 92,
-      render: (value) => <LabelTag color={decisionColor(label(value))}>{label(value)}</LabelTag>
-    },
-    {
-      title: '风险 / 策略',
-      key: 'risk',
-      width: 160,
-      render: (_, trace) => (
-        <Space orientation="vertical" size={0}>
-          <Typography.Text strong className="zh-tabular-nums">
-            {trace.risk_score ?? 0}
-          </Typography.Text>
-          <Typography.Text type="secondary" ellipsis>
-            {label(trace.primary_policy_id, '未命中策略')}
-          </Typography.Text>
-        </Space>
-      )
-    },
-    {
-      title: '执行证据',
-      key: 'evidence',
-      width: 150,
-      render: (_, trace) => (
-        <Space orientation="vertical" size={0}>
-          <Typography.Text>{trace.tool_call_stage_count ?? 0} 个 Tool Call</Typography.Text>
-          <Typography.Text type="secondary">{trace.receipt_count ?? 0} 个回执</Typography.Text>
-        </Space>
-      )
-    }
-  ];
 
   const summary = index.summary ?? {};
 
@@ -371,87 +204,10 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest }: Props
             ) : null}
           </div>
         ) : (
-          <UiTable<GatewayTrace>
-            rowKey={(trace) => requestIdOf(trace)}
-            columns={columns}
-            dataSource={filteredTraces}
-            size="small"
-            pagination={{ pageSize: 10, showSizeChanger: false }}
-            scroll={{ x: 990 }}
-          />
+          <GatewayTraceTable traces={filteredTraces} onOpen={(trace) => void openTrace(trace)} />
         )}
       </PanelCard>
-
-      <Drawer
-        title="请求安全详情"
-        size="large"
-        open={Boolean(selected)}
-        onClose={() => setSelected(null)}
-        destroyOnHidden
-      >
-        {selected ? (
-          <div className="zh-traffic-detail">
-            <Flex justify="space-between" align="center" gap={12} wrap="wrap">
-              <div>
-                <Typography.Text type="secondary">请求 ID</Typography.Text>
-                <Typography.Title level={4} className="zh-title-flush zh-code-sm">
-                  {requestIdOf(selected)}
-                </Typography.Title>
-              </div>
-              <LabelTag color={decisionColor(label(selected.decision))}>{label(selected.decision)}</LabelTag>
-            </Flex>
-
-            <MetaGrid
-              columns={2}
-              items={[
-                { key: 'time', label: '最后时间', value: formatTime(selected.last_seen) },
-                { key: 'agent', label: 'Agent', value: label(selected.agent_id, '未绑定') },
-                { key: 'session', label: '会话', value: label(selected.session_id) },
-                { key: 'provider', label: 'Provider', value: label(selected.provider, '未调用') },
-                { key: 'model', label: '模型', value: label(selected.model) },
-                { key: 'policy', label: '主要策略', value: label(selected.primary_policy_id) },
-                { key: 'risk', label: '最高风险', value: selected.risk_score ?? 0 },
-                { key: 'receipt', label: '执行回执', value: selected.receipt_count ?? 0 },
-                { key: 'request-hash', label: '请求 Hash', value: shortHash(selected.request_hash) },
-                { key: 'response-hash', label: '响应 Hash', value: shortHash(selected.provider_response_hash) }
-              ]}
-            />
-
-            <div>
-              <Typography.Title level={5}>处置时间线</Typography.Title>
-              <ol className="zh-traffic-timeline">
-                {(selected.stages ?? []).map((stage, indexValue) => (
-                  <li key={`${stage.audit_id || stage.stage}-${indexValue}`}>
-                    <span className="zh-traffic-timeline__icon" aria-hidden="true">
-                      {stage.execution_receipt_present ? (
-                        <CircleCheck size={16} />
-                      ) : stage.provider_call_id ? (
-                        <Wrench size={16} />
-                      ) : CONTROLLED_DECISIONS.has(label(stage.decision)) ? (
-                        <ShieldX size={16} />
-                      ) : (
-                        <Activity size={16} />
-                      )}
-                    </span>
-                    <div>
-                      <Flex justify="space-between" gap={8} wrap="wrap">
-                        <Typography.Text strong>{label(stage.stage, `阶段 ${indexValue + 1}`)}</Typography.Text>
-                        <Typography.Text type="secondary">{formatTime(stage.timestamp)}</Typography.Text>
-                      </Flex>
-                      <Space wrap size={[6, 4]}>
-                        <LabelTag color={decisionColor(label(stage.decision))}>{label(stage.decision)}</LabelTag>
-                        {stage.policy_id ? <LabelTag>{stage.policy_id}</LabelTag> : null}
-                        {stage.tool ? <LabelTag>{stage.tool}</LabelTag> : null}
-                        {stage.execution_status ? <LabelTag>{stage.execution_status}</LabelTag> : null}
-                      </Space>
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          </div>
-        ) : null}
-      </Drawer>
+      <GatewayTraceDetails trace={selected} onClose={() => setSelected(null)} />
     </>
   );
 }
