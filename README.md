@@ -412,6 +412,8 @@ CLI 用于把真实 Agent 请求送入网关、批量回归和证据导出。`ga
 | 严格验收 Agent 网关证据 | `npm run cli -- gateway-agent-run --strict --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports` |
 | 记录无防护 Provider 与网关的因果对照 | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --baseline-url=http://127.0.0.1:18013/v1/chat/completions --output=apps/api/sandbox/reports` |
 | 记录真实沙箱副作用因果证据 | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-real-full-causal-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --causal-url=http://127.0.0.1:8012/api/gateway/compare --api-token=TOKEN --output=apps/api/sandbox/reports` |
+| 生产式网关证据闭环（临时 Token/HMAC、DoH、公网 Provider、托管回执与因果控制） | `npm run proof:production` |
+| 生产式证据闭环加全量真实模型与 22 条策略对照 | `npm run proof:production -- -FullRegression` |
 | 运行真实 MCP HTTP 网关探针 | `npm run cli -- mcp-probe --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports` |
 | 严格验收 MCP 网关证据 | `npm run cli -- mcp-probe --strict --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports` |
 | 运行服务端托管 Agent 闭环 | `npm run cli -- external-agent-demo --managed-server --output apps/api/sandbox/reports` |
@@ -421,6 +423,8 @@ CLI 用于把真实 Agent 请求送入网关、批量回归和证据导出。`ga
 | 一键体检 | `npm run cli -- readiness --write` |
 | OpenClaw 插件包生成 | `npm run cli -- openclaw-plugin` |
 | OpenClaw 插件包验证 | `npm run cli -- openclaw-plugin-validate` |
+
+`proof:production` 会在 8013 端口启动短生命周期的 production 配置，随机生成 Agent Token、admin Token 和审计 HMAC，仅保存在当前进程；它不读取或覆盖仓库中的真实 Token/API Key。脚本以严格模式运行 HTTP 单条探针、独立 Agent Harness 和 `sandbox-causal` 因果对照，随后自动停止服务。追加 `-FullRegression` 会再运行真实模型盲测、全量策略对照、readiness 和自审。`production_ready` 与 `evaluation_ready` 只表示运行时证据闭合；正式报名材料和人工签署仍由 readiness 单独标记。
 
 MCP 的 `tools/call` 使用调用方 Token 绑定的 `agent_id` 做工具白名单校验。生产或严格本地策略下，请使用已登记工具能力的 Agent Token；仅有 admin 角色的共享 Token 可能看到空工具目录，这是权限边界的真实结果，不是上游故障。
 
