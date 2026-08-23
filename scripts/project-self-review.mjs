@@ -4,7 +4,8 @@ import { spawnSync } from 'node:child_process';
 import {
   compareGatewayIdentity,
   identityNeedsWarning,
-  identityNote
+  identityNote,
+  usesCurrentProductNavigation
 } from './project-self-review-identity.mjs';
 
 const root = process.cwd();
@@ -375,10 +376,8 @@ const checks = [
   {
     id: 'frontend-runtime-entry',
     title: '控制台默认入口',
-    status: readText('apps/console/src/app/navigation.tsx').includes("defaultPage: PageKey = 'gateway'")
-      ? 'passed'
-      : 'warning',
-    evidence: '控制台默认页面应直接进入 LLM API / MCP 网关，实验室与报告仅作为按需验证入口。'
+    status: usesCurrentProductNavigation(readText('apps/console/src/app/navigation.tsx')) ? 'passed' : 'warning',
+    evidence: '控制台默认页面应直接进入防护工作台，事件与设置作为主导航入口；实验室与报告仅作为按需验证入口。'
   },
   {
     id: 'readiness-source',

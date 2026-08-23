@@ -151,14 +151,20 @@ if (process.env.AGENT_SUPERVISOR_CLI_DEBUG === '1') {
 const pythonCommand = process.env.AGENT_SUPERVISOR_PYTHON || 'python';
 const childEnvironment = {
   ...process.env,
-  // CLI commands are evidence and experiment workflows. Keep their SQLite,
-  // leases, approvals and runtime events out of the operational console.
-  AGENT_SUPERVISOR_RUNTIME_DIR:
-    process.env.AGENT_SUPERVISOR_LAB_RUNTIME_DIR ||
-    process.env.AGENT_SUPERVISOR_RUNTIME_DIR ||
-    'apps/api/sandbox/runtime/cli-data',
   AGENT_SUPERVISOR_LABS_ENABLED: process.env.AGENT_SUPERVISOR_LABS_ENABLED || 'true'
 };
+if (args[0] !== 'readiness') {
+  // CLI commands are evidence and experiment workflows. Keep their SQLite,
+  // leases, approvals and runtime events out of the operational console.
+  // Readiness is different: it reads the operational runtime and validates
+  // evidence captured by the running API. Giving it the lab runtime here
+  // changes the source fingerprint and makes a current gateway artifact look
+  // stale even when the server and checkout are identical.
+  childEnvironment.AGENT_SUPERVISOR_RUNTIME_DIR =
+    process.env.AGENT_SUPERVISOR_LAB_RUNTIME_DIR ||
+    process.env.AGENT_SUPERVISOR_RUNTIME_DIR ||
+    'apps/api/sandbox/runtime/cli-data';
+}
 const result = spawnSync(pythonCommand, ['-X', 'utf8', '-m', 'apps.api.agent_supervisor.commands.cli', ...args], {
   stdio: 'inherit',
   // Pass each argument as an argv entry.  Going through cmd.exe on Windows

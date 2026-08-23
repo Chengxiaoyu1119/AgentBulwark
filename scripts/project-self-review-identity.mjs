@@ -115,3 +115,9 @@ export function identityNote(identity, label = '网关证据') {
       return `${label}缺少可验证的代码或部署 source/config 指纹。`;
   }
 }
+
+export function usesCurrentProductNavigation(source) {
+  const navigation = typeof source === 'string' ? source : '';
+  return navigation.includes("defaultPage: ProductPageKey = 'protection'")
+    && ["key: 'protection'", "key: 'events'", "key: 'settings'"].every((entry) => navigation.includes(entry));
+}
