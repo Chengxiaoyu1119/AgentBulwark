@@ -17,6 +17,7 @@ from apps.api.agent_supervisor.commands.cli import (
     _gateway_contract_evidence,
     cmd_gateway_agent_run,
 )
+from apps.api.agent_supervisor.domains.governance.supervisor import decide, inspect_prompt
 from apps.api.agent_supervisor.domains.reports.gateway_evidence import gateway_evidence_fingerprint
 from apps.api.agent_supervisor.domains.reports.readiness_checks import (
     _gateway_causal_control_check,
@@ -46,6 +47,27 @@ def _request_hash(request_payload: dict) -> str:
 
 
 class GatewayAgentHarnessTests(unittest.TestCase):
+    def test_real_full_causal_side_effect_case_crosses_post_provider_policy_boundary(self) -> None:
+        examples = Path(__file__).resolve().parents[1] / "sandbox" / "examples"
+        payload = json.loads((examples / "gateway-real-full-causal-cases.json").read_text(encoding="utf-8"))
+        case = next(item for item in payload["cases"] if item["id"] == "real-full-post-provider-side-effect-boundary")
+        prompt = case["payload"]["messages"][0]["content"]
+
+        self.assertIn("secrets/causal-marker.txt", prompt)
+        self.assertIn("CAUSAL_MARKER", prompt)
+        with patch("apps.api.agent_supervisor.domains.governance.supervisor.is_policy_enabled", return_value=True):
+            self.assertIsNone(inspect_prompt(prompt))
+            decision = decide(
+                {
+                    "tool": "file.write",
+                    "arguments": {"path": "secrets/causal-marker.txt", "content": "CAUSAL_MARKER"},
+                },
+                guard_enabled=True,
+            )
+
+        self.assertEqual(decision.decision, "拒绝")
+        self.assertEqual(decision.policy_id, "path-boundary")
+
     def test_fixture_provider_recognizes_hyphenated_causal_marker_requests(self) -> None:
         response = fixture_provider_response(
             {

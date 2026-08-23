@@ -28,8 +28,9 @@ $env:AGENT_SUPERVISOR_DEFAULT_ROLE = "admin"
 $env:AGENT_SUPERVISOR_AUTH_DISABLED = "false"
 $env:AGENT_SUPERVISOR_SECURITY_PROFILE = "local"
 $env:AGENT_SUPERVISOR_LABS_ENABLED = "true"
-$env:AGENT_SUPERVISOR_RUNTIME_DIR = Join-Path $repoRoot "apps\api\sandbox\runtime\fixture-gateway-8034"
+$env:AGENT_SUPERVISOR_RUNTIME_DIR = Join-Path $repoRoot "apps\api\sandbox\runtime\fixture-evidence-8034"
 $env:AGENT_SUPERVISOR_AGENT_TOKENS_JSON = (@{ "fixture-agent" = "fixture-agent-token" } | ConvertTo-Json -Compress)
+$env:AGENT_SUPERVISOR_REAL_MODEL_EVALUATION_AGENT_ID = "real-model-target-agent"
 $env:AGENT_SUPERVISOR_AUDIT_HMAC_KEY = "fixture-hmac-key"
 $env:AGENT_SUPERVISOR_PROXY_REQUIRE_TOOL_RECEIPTS = "true"
 $env:AGENT_SUPERVISOR_PROXY_REQUIRE_SERVER_OBSERVED_RECEIPTS = "true"
@@ -60,5 +61,42 @@ $targetEnvironmentNames = @(
 )
 foreach ($name in $targetEnvironmentNames) {
     Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+}
+$fixturePolicyScript = @'
+from apps.api.agent_supervisor.adapters.models.model_adapter import provider_status
+from apps.api.agent_supervisor.storage.data import update_policy_settings
+
+agent_ids = ('real-model-target-agent', 'fixture-agent', 'openai-compatible-proxy')
+configured_models = sorted({
+    str(item.get('model') or '').strip()
+    for item in provider_status('target')
+    if item.get('configured') and str(item.get('model') or '').strip()
+})
+if not configured_models:
+    raise SystemExit('Fixture evidence requires at least one configured target model.')
+update_policy_settings({
+    'require_agent_capability_registration': True,
+    'require_agent_model_registration': True,
+    'require_agent_context_registration': True,
+    'agent_tool_allowlists': {
+        'real-model-target-agent': ['file.read', 'api.call', 'mail.send'],
+        'fixture-agent': ['file.read', 'file.write', 'api.call', 'mail.send'],
+        'openai-compatible-proxy': ['file.read', 'file.write', 'api.call', 'mail.send'],
+    },
+    'agent_api_allowlists': {agent_id: [] for agent_id in agent_ids},
+    'agent_model_allowlists': {agent_id: configured_models for agent_id in agent_ids},
+    'agent_context_allowlists': {
+        agent_id: {
+            'resources': ['fixture://public/*'],
+            'resource_templates': ['fixture://public/{name}'],
+            'prompts': ['fixture-summary'],
+        }
+        for agent_id in agent_ids
+    },
+})
+'@
+& $python -X utf8 -c $fixturePolicyScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to initialize fixture evidence Agent policy bindings."
 }
 & $python -m apps.api.dev_server

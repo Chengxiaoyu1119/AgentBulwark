@@ -434,6 +434,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start-fixture-gate
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-fixture-gateway-evidence.ps1
 ```
 
+两条命令共用隔离的 `apps/api/sandbox/runtime/fixture-evidence-8034` 运行目录。启动脚本会为证据专用 Agent 写入工具、模型、外部 API 与 MCP 上下文四类最小权限，并开启未登记身份默认拒绝；该配置不会覆盖控制台使用的 `apps/api/runtime/operational` 运营数据。
+
 证据快照更新后，可用 `npm run materials:refresh` 刷新上海信息安全作品技术报告草稿和材料状态文件。该材料工具需要当前 Python 环境已安装 `python-docx`；它只更新当前证据引用，并保留学校、成员、联系方式、官方模板和签署件的待补状态；运行时证据与正式提交完成状态始终分开标记。
 
 依赖供应链门禁使用 `npm run audit:security`。报告同时记录当前 `package-lock.json` SHA-256、漏洞摘要、`npm audit fix --dry-run` 修复预览和 `node_modules` 安装树观察；审计脚本不写入 `package-lock.json`，门禁结论以锁文件审计结果为准。

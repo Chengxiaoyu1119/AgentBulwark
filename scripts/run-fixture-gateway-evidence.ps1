@@ -33,6 +33,7 @@ $env:AGENT_SUPERVISOR_SECURITY_PROFILE = "local"
 $env:AGENT_SUPERVISOR_LABS_ENABLED = "true"
 $env:AGENT_SUPERVISOR_RUNTIME_DIR = Join-Path $repoRoot "apps\api\sandbox\runtime\fixture-evidence-8034"
 $env:AGENT_SUPERVISOR_AGENT_TOKENS_JSON = (@{ "fixture-agent" = "fixture-agent-token" } | ConvertTo-Json -Compress)
+$env:AGENT_SUPERVISOR_REAL_MODEL_EVALUATION_AGENT_ID = "real-model-target-agent"
 $env:AGENT_SUPERVISOR_AUDIT_HMAC_KEY = "fixture-hmac-key"
 $env:AGENT_SUPERVISOR_PROXY_REQUIRE_TOOL_RECEIPTS = "true"
 $env:AGENT_SUPERVISOR_PROXY_REQUIRE_SERVER_OBSERVED_RECEIPTS = "true"
