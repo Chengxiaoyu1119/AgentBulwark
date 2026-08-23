@@ -70,7 +70,7 @@ def build_competition_package(runs: list[dict[str, Any]] | None = None) -> dict[
             _persisted_markdown("OpenClaw源码级插件包验收报告.md", "尚未生成 OpenClaw 插件验收报告。"),
         ),
         _file("15_连续正常业务任务流程误报评测.md", "连续正常业务任务流程误报评测", "验证多步正常业务任务流程中的工具调用误报率、边界控制和审计 hash 链。", build_benign_workflow_markdown()),
-        _file("16_赛前一键体检报告.md", "赛前一键体检报告", "自动检查攻击面、误报、连续流程、OpenClaw 插件和报告证据。", build_competition_readiness_markdown()),
+        _file("16_AI-Agent安全网关就绪检查.md", "AI Agent 安全网关就绪检查", "检查 LLM API / MCP 执行边界、真实模型证据、误报和审计闭环；赛事适配信息仅作可选交付材料。", build_competition_readiness_markdown()),
         _file("17_人工复核队列与审批闭环.md", "人工复核队列与审批闭环", "展示询问决策如何生成复核单、人工批准/驳回和 review_hash 证据。", build_approval_review_markdown()),
         _file("18_答辩复现闭环报告.md", "答辩复现闭环报告", "把正常放行、外发复核、批量导出审批和记忆隔离串成现场复现流程。", build_judge_demo_drill_markdown()),
         _file("19_组合攻击链评测.md", "组合攻击链评测", "把提示注入、工具劫持、数据外泄、记忆中毒等单点脚本串成多步红队路径。", build_attack_chain_catalog_markdown()),

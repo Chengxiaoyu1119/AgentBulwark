@@ -11,19 +11,21 @@ from docx import Document
 from openpyxl import load_workbook
 
 CONTEST_TITLE = "第十一届上海市大学生网络安全大赛暨“磐石行动”2026第四届全国高校网络安全攻防活动"
-PROJECT_TITLE = "智安哨：面向大模型智能体工具调用链的运行时行为防火墙与评测系统"
+PROJECT_TITLE = "智安哨：面向 LLM Agent、OpenAI 兼容 API 与 MCP 的运行时安全网关"
 DEFAULT_PROFILE = {
-    "school": "广州应用科技学院",
+    # Keep the generator free of historical participant identity data.  A
+    # real profile must be supplied explicitly for any registration artifact.
+    "school": "",
     "instructors": [],
     "members": [
         {
-            "name": "何彬",
+            "name": "",
             "major": "",
             "grade": "",
             "student_id": "",
             "phone": "",
-            "email": "2583130081@qq.com",
-            "remark": "队长",
+            "email": "",
+            "remark": "",
         }
     ],
     "submission_date": "",
@@ -39,14 +41,14 @@ ABSTRACT = (
     "随着大语言模型从文本问答系统发展为可以调用文件、邮件、API、代码执行器和长期记忆的智能体系统，安全风险已经从输出内容合规扩展到模型行为是否会触发真实动作。传统输入过滤和输出审核难以覆盖工具调用、上下文污染、长期记忆污染和低信任工具返回等执行层风险。作品参加信息安全作品赛软件作品类别，所属安全检测方向，构建“攻击面研究—样本构造—本地夹具复现—行为监督—独立评测”的闭环。"
 )
 ABSTRACT_2 = (
-    "作品覆盖提示注入、模型越狱、数据泄露、滥用风险、工具调用劫持、记忆中毒和环境感知污染7类攻击面，包含22个攻击脚本、66条对抗样本和66条越狱用例。系统在智能体与外部工具之间增加行为监督层，对文件、邮件、API、代码、记忆、环境和模型输出执行前判定，输出允许、拒绝、询问、隔离四类决策。"
+    "作品覆盖提示注入、模型越狱、数据泄露、滥用风险、工具调用劫持、记忆中毒和环境感知污染7类攻击面，包含22个历史攻防脚本和当前 OpenAI 兼容 API、MCP Gateway 的真实接入路径。系统在客户端消息进入 Provider 前、Provider 输出返回 Agent 前以及工具执行前设置监督点，对工具定义、工具参数、上下文返回和执行回执进行校验，输出允许、拒绝、询问、隔离四类决策。"
 )
 def build_abstract_3(benchmark: dict, e2e: dict, reproducibility: dict) -> str:
     full = benchmark["full_runtime"]
     perf = benchmark["performance"]
     return (
         "工程上，系统由React控制台、FastAPI后端、本地目标夹具、沙箱工具、CLI评测器和通用AgentToolGuard组成，OpenClaw仅作为可选兼容。"
-        "22个攻防脚本均由工具副作用断言验证；在不含risk_hint的200条内部冻结回归集中，完整运行时方案攻击召回率"
+        "22个历史攻防脚本均由工具副作用断言验证；在不含risk_hint的200条内部冻结回归集中，完整运行时方案攻击召回率"
         f"{full['attack_recall_rate']}%、正常误报率{full['benign_false_positive_rate']}%。四组基线表明，仅使用工具白名单的攻击召回率为10%，"
         f"加入参数策略后为90%，加入上下文与运行时判定后为{full['attack_recall_rate']}%。20并发下P95判定延迟"
         f"{perf['concurrent_latency_ms']['p95']}毫秒、吞吐{perf['concurrent_throughput_per_second']}次/秒。完整HTTP、Token鉴权、SQLite和HMAC审计链路在"
@@ -119,6 +121,19 @@ def load_profile(path: Path | None = None) -> dict[str, Any]:
     return profile
 
 
+def load_policy_count(repo_root: Path) -> int:
+    """Read the current policy catalog instead of freezing an old count."""
+
+    policy_path = repo_root / "apps" / "api" / "agent_supervisor" / "config" / "policies.json"
+    try:
+        payload = json.loads(policy_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"当前防护策略目录无法读取：{policy_path}") from exc
+    if not isinstance(payload, list) or not payload:
+        raise SystemExit(f"当前防护策略目录不是非空数组：{policy_path}")
+    return len(payload)
+
+
 def profile_missing_fields(profile: dict[str, Any]) -> list[str]:
     missing: list[str] = []
     if not str(profile.get("school", "")).strip():
@@ -159,6 +174,7 @@ def update_report(
     e2e: dict,
     reproducibility: dict,
     profile: dict[str, Any],
+    policy_count: int,
 ) -> None:
     document = Document(source)
     first_member = (profile.get("members") or [{}])[0]
@@ -242,7 +258,7 @@ def update_report(
         elif text.startswith("当前系统覆盖7类攻击面"):
             set_text(
                 paragraph,
-                "当前系统覆盖7类攻击面、22个攻击脚本、66条对抗样本、66条越狱用例和13条监督策略。22个脚本均完成无防护副作用复现和有防护控制；200条无risk_hint内部冻结回归集包含100条攻击和100条正常样本，完整方案攻击召回率100%、正常误报率0%，并提供四组基线和P50/P95/P99性能数据。",
+                f"当前系统覆盖7类攻击面、22个历史攻击脚本和{policy_count}条监督策略；OpenAI 兼容代理与 MCP Gateway 的真实 Provider/上游证据按运行记录生成。历史脚本均完成无防护副作用复现和有防护控制；200条无risk_hint内部冻结回归集包含100条攻击和100条正常样本，完整方案攻击召回率100%、正常误报率0%，并提供四组基线和P50/P95/P99性能数据。",
             )
 
     instruction_start = next((i for i, paragraph in enumerate(document.paragraphs) if paragraph.text.strip() == "填写说明"), None)
@@ -251,8 +267,8 @@ def update_report(
             remove_paragraph(paragraph)
 
     table0_rows = [
-        ["原创性与创新性", "提出工具调用链运行时行为防火墙，将监督点前移到执行层。", "7类攻击面、22脚本、四类决策、通用AgentToolGuard。"],
-        ["作品完成度", "形成样本、脚本、目标夹具、监督器、沙箱、报告和控制台闭环。", f"100项后端测试、16项前端测试、通用Agent端到端证据、独立复现{reproducibility['summary']['passed_count']}/{reproducibility['summary']['trial_count']}次通过。"],
+                ["原创性与创新性", "提出面向 LLM Agent、OpenAI 兼容 API 与 MCP 的运行时安全网关，将监督点前移到 Provider 输出和工具执行边界。", f"7类攻击面、{policy_count}条策略、四类决策、通用 AgentToolGuard。"],
+        ["作品完成度", "形成样本、脚本、目标夹具、监督器、沙箱、报告和控制台闭环。", f"全量后端/前端回归测试、通用Agent端到端证据、独立复现{reproducibility['summary']['passed_count']}/{reproducibility['summary']['trial_count']}次通过。"],
         ["性能与可靠性", "以无标签冻结集、四组基线和完整链路压力测试验证。", f"内部判定20并发P95 {benchmark['performance']['concurrent_latency_ms']['p95']}ms；HTTP+SQLite+HMAC链路{e2e['performance']['call_count']}次请求全部成功，P95 {e2e['performance']['latency_ms']['p95']}ms。"],
         ["应用与推广价值", "面向办公Agent敏感数据外泄防护、工具最小权限和上线前评测。", "可配置内部域、敏感路径/API、Agent工具权限；插件支持鉴权、默认关闭risk_hint。"],
         ["文档规范性", "提供技术报告、样本集、脚本、实验报告和答辩演示链路。", "JSON/Markdown证据包、fixture_source、副作用断言和复核Hash。"],
@@ -260,8 +276,8 @@ def update_report(
     update_table(document.tables[0], ["评审指标", "作品响应", "可核验证据"], table0_rows)
     table1_rows = [
         ["攻击研究", "覆盖提示注入、越狱、数据泄露等7类攻击面。", "攻击面矩阵、22个脚本。"],
-        ["攻击材料", "每个脚本包含对抗输入、越狱用例、步骤和工具调用。", "66条对抗样本、66条越狱用例。"],
-        ["监督原型", "工具执行前输出允许、拒绝、询问、隔离。", "13条策略、9类工具、审计日志。"],
+        ["攻击材料", "历史脚本包含对抗输入、步骤和工具调用；当前 API/MCP 证据以真实运行记录为准。", "历史材料中的66条对抗样本和66条越狱用例。"],
+                ["监督原型", "Provider 前后和工具执行前输出允许、拒绝、询问、隔离。", f"{policy_count}条策略、9类工具、OpenAI/MCP 审计日志。"],
         ["真实可验证性", "以本地目标夹具副作用和沙箱状态断言结果。", "attack_outcome、fixture_source、Hash链。"],
         ["误报控制", "同时验证正常单步任务和连续业务流程。", "36条样本误报0、4条流程误报0。"],
         ["开放适配", "提供通用事件接口、AgentToolGuard和多框架示例；OpenClaw为可选插件。", "带Token/HMAC的4次端到端工具调度全部生成审计证据；风险控制3次、正常执行1次。"],
@@ -393,7 +409,7 @@ def update_registration(
         sheet[f"G{row}"] = str(member.get("email", "")).strip() or "待填写"
         sheet[f"H{row}"] = str(member.get("remark", "")).strip()
     sheet["A13"] = (
-        "智安哨是一套面向大模型智能体工具调用链的运行时行为防火墙与评测系统，属于安全检测方向。作品在工具产生副作用前联合分析上下文来源、Agent身份、工具能力、资源敏感度、目标去向和跨步骤时序，输出允许、拒绝、询问、隔离决策。22个本地攻防脚本均完成副作用对照；200条无risk_hint内部冻结回归集包含100条攻击和100条正常样本，完整方案攻击召回率100%、正常误报率0%。四组基线召回率依次为0%、10%、90%、100%；20并发P95判定延迟"
+        "智安哨是一套面向 LLM Agent、OpenAI 兼容 API 与 MCP 的运行时安全网关，属于人工智能应用安全与安全检测方向。作品在模型请求进入 Provider 前、模型输出返回 Agent 前、工具执行和 MCP 上下文回灌前建立统一信任边界，联合分析上下文来源、Agent 身份、工具能力、资源敏感度、目标去向和跨步骤时序，输出允许、拒绝、询问、隔离决策。22 个本地攻击脚本和 200 条内部冻结回归样本仅作为防线验证证据；真实 Provider、MCP 上游和正式材料状态单独标注，不把离线评测当作生产接入证明。四组基线和并发延迟数据只用于说明策略增量与工程成本，"
         f"{benchmark['performance']['concurrent_latency_ms']['p95']}毫秒。通用AgentToolGuard已完成带Token/HMAC的4次端到端工具调度；HTTP、SQLite与审计完整链路"
         f"{e2e['performance']['call_count']}次请求全部成功，P95为{e2e['performance']['latency_ms']['p95']}毫秒。独立复现入口作者侧"
         f"{reproducibility['summary']['passed_count']}/{reproducibility['summary']['trial_count']}轮通过并记录源码、数据集、策略和报告SHA-256；非作者签署待回收。OpenClaw仅作为可选兼容。"
@@ -450,6 +466,32 @@ def validate_report_template(report_path: Path, official_template: Path) -> None
         raise SystemExit(f"技术报告 XML 仍包含旧赛事、身份或未填入口信息：{leaked}")
 
 
+def material_input_paths(repo_root: Path, profile_path: Path | None) -> tuple[dict[str, Path], list[str]]:
+    """Resolve source files before creating any output artifact.
+
+    The official Shanghai templates live in an ignored, operator-provided
+    directory.  Reporting every missing input together keeps a clean checkout
+    diagnosable and avoids a half-generated package or an accidental fallback
+    to historical participant data.
+    """
+
+    source_report_dir = repo_root / "docs" / "长城信息安全"
+    source_report_candidates = sorted(source_report_dir.glob("*作品报告.docx")) if source_report_dir.exists() else []
+    paths = {
+        "参赛信息填写模板": profile_path or Path(""),
+        "历史技术报告源文件": (
+            source_report_candidates[0]
+            if source_report_candidates
+            else repo_root / "docs/长城信息安全/*作品报告.docx"
+        ),
+        "官方技术报告模板": repo_root / "docs/上海信息安全/作品赛报名表及附件/附件1a：作品技术报告（软件作品模板）.docx",
+        "官方原创性声明模板": repo_root / "docs/上海信息安全/作品赛报名表及附件/附件2：作品赛作品原创性声明.docx",
+        "官方报名表模板": repo_root / "docs/上海信息安全/作品赛报名表及附件/信息安全作品赛报名表.xlsx",
+    }
+    missing = [label for label, path in paths.items() if not path.is_file()]
+    return paths, missing
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="生成上海市大学生网络安全大赛信息安全作品赛材料草稿")
     parser.add_argument("--output", default="docs/上海信息安全/参赛材料草稿")
@@ -457,7 +499,12 @@ def main() -> None:
     parser.add_argument("--signed-declaration", help="已签署的原创性声明 DOCX/PDF 路径；提供后复制为正式声明文件")
     args = parser.parse_args()
     repo_root = Path(__file__).resolve().parents[1]
-    profile = load_profile(repo_root / args.profile if args.profile else None)
+    profile_path = repo_root / args.profile if args.profile else None
+    source_paths, missing_inputs = material_input_paths(repo_root, profile_path)
+    if missing_inputs:
+        details = [f"- {label}: {source_paths[label]}" for label in missing_inputs]
+        raise SystemExit("参赛材料生成前置输入缺失：\n" + "\n".join(details))
+    profile = load_profile(profile_path)
     missing_profile_fields = profile_missing_fields(profile)
     benchmark_report = json.loads((repo_root / "apps/api/sandbox/reports/200条冻结集与基线性能评测.json").read_text(encoding="utf-8"))
     benchmark = {
@@ -468,17 +515,18 @@ def main() -> None:
     }
     e2e = json.loads((repo_root / "apps/api/sandbox/reports/HTTP-SQLite-审计完整链路性能评测.json").read_text(encoding="utf-8"))
     reproducibility = json.loads((repo_root / "apps/api/sandbox/reports/独立复现一致性验收报告.json").read_text(encoding="utf-8"))
+    policy_count = load_policy_count(repo_root)
     output = repo_root / args.output
-    source_report = next((repo_root / "docs/长城信息安全").glob("*作品报告.docx"))
-    official_template = repo_root / "docs/上海信息安全/作品赛报名表及附件/附件1a：作品技术报告（软件作品模板）.docx"
-    source_declaration = repo_root / "docs/上海信息安全/作品赛报名表及附件/附件2：作品赛作品原创性声明.docx"
-    source_registration = repo_root / "docs/上海信息安全/作品赛报名表及附件/信息安全作品赛报名表.xlsx"
+    source_report = source_paths["历史技术报告源文件"]
+    official_template = source_paths["官方技术报告模板"]
+    source_declaration = source_paths["官方原创性声明模板"]
+    source_registration = source_paths["官方报名表模板"]
     report_name = f"{PROJECT_TITLE}-技术报告.docx" if report_ready(profile) else f"{PROJECT_TITLE}-技术报告-待提交.docx"
     declaration_draft_path = output / f"{PROJECT_TITLE}-原创性声明-待签署.docx"
     registration_name = f"{PROJECT_TITLE}-报名表.xlsx" if registration_ready(profile) else f"{PROJECT_TITLE}-报名表-待补个人信息.xlsx"
     report_path = output / report_name
     registration_path = output / registration_name
-    update_report(source_report, report_path, benchmark, e2e, reproducibility, profile)
+    update_report(source_report, report_path, benchmark, e2e, reproducibility, profile, policy_count)
     update_declaration(source_declaration, declaration_draft_path, profile)
     update_registration(source_registration, registration_path, benchmark, e2e, reproducibility, profile)
     declaration_path = declaration_draft_path

@@ -1,14 +1,9 @@
 import type { JSX } from 'react';
-import {
-  Activity,
-  Play,
-  ScrollText,
-  Settings2,
-  ShieldCheck
-} from 'lucide-react';
+import { Activity, ScrollText, Settings2, ShieldCheck } from 'lucide-react';
 
 export type PageKey =
   | 'dashboard'
+  | 'gateway'
   | 'scenarios'
   | 'lab'
   | 'chain'
@@ -30,21 +25,17 @@ export type NavGroup = {
   items: NavItem[];
 };
 
-export const defaultPage: PageKey = 'dashboard';
+export const defaultPage: PageKey = 'gateway';
 
 export const navGroups: NavGroup[] = [
   {
     key: 'operations',
-    label: '运行与处置',
+    label: '网关运行',
     items: [
+      { key: 'gateway', label: 'LLM API / MCP 网关', icon: <ShieldCheck size={18} /> },
       { key: 'dashboard', label: '运行总览', icon: <Activity size={18} /> },
       { key: 'audit', label: '事件与复核', icon: <ScrollText size={18} /> }
     ]
-  },
-  {
-    key: 'validation',
-    label: '验证',
-    items: [{ key: 'lab', label: '攻防验证', icon: <Play size={18} /> }]
   },
   {
     key: 'protection',
@@ -61,6 +52,7 @@ export const navGroups: NavGroup[] = [
 export const navItems: NavItem[] = navGroups.flatMap((group) => group.items);
 const allPageKeys: PageKey[] = [
   'dashboard',
+  'gateway',
   'scenarios',
   'lab',
   'chain',
@@ -85,6 +77,9 @@ export function pageToHash(page: PageKey) {
 }
 
 export function pageLabel(page: PageKey) {
+  if (page === 'gateway') return 'LLM API / MCP 网关';
+  if (page === 'dashboard') return '安全运行总览';
+  if (page === 'lab') return '现场验证';
   if (page === 'report') return '证据导出（按需）';
   if (page === 'scenarios') return '攻击场景与样本';
   if (page === 'chain') return '多 Agent 攻击链';

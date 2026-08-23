@@ -11,7 +11,6 @@ from uuid import uuid4
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.tool_contract import normalize_tool_call
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
-from apps.api.agent_supervisor.domains.runtime.tools import execute_tool
 from apps.api.agent_supervisor.paths import SANDBOX_REPORTS_DIR
 from apps.api.agent_supervisor.storage.data import get_policy_settings
 from apps.api.agent_supervisor.storage.database import get_connection
@@ -27,8 +26,8 @@ SCOPE_VALUES = {"operational", "experiment", "demo"}
 ACTION_MAP = {
     "approve": (APPROVED_STATUS, "允许", "人工批准后，原始Agent可以领取并恢复一次该工具调用。"),
     "批准": (APPROVED_STATUS, "允许", "人工批准后，原始Agent可以领取并恢复一次该工具调用。"),
-    "reject": (REJECTED_STATUS, "拒绝", "人工驳回后，工具调用保持阻断，建议补充赛事授权或改用脱敏结果。"),
-    "驳回": (REJECTED_STATUS, "拒绝", "人工驳回后，工具调用保持阻断，建议补充赛事授权或改用脱敏结果。"),
+    "reject": (REJECTED_STATUS, "拒绝", "人工驳回后，工具调用保持阻断，建议补充业务依据或改用脱敏结果。"),
+    "驳回": (REJECTED_STATUS, "拒绝", "人工驳回后，工具调用保持阻断，建议补充业务依据或改用脱敏结果。"),
 }
 
 
@@ -154,6 +153,52 @@ def list_approval_reviews(
     }
 
 
+def redact_approval_review_for_observer(review: dict[str, Any]) -> dict[str, Any]:
+    """Keep queue state visible without exposing another Agent's context.
+
+    An approval record is an operational security object, not a public report:
+    its arguments and model excerpts may contain credentials, business data or
+    prompt-injection text.  Analysts and administrators retain the full record;
+    observer credentials receive the decision metadata and evidence hashes only.
+    """
+
+    redacted = dict(review)
+    for key in (
+        "arguments",
+        "standard_arguments",
+        "tool_mapping",
+        "model_input_excerpt",
+        "model_output_excerpt",
+        "comment",
+        "execution_note",
+        "sandbox_replay",
+    ):
+        if key in redacted:
+            redacted[key] = {} if key.endswith("arguments") or key == "tool_mapping" else ""
+    for key in ("agent_id", "authenticated_agent_id", "execution_claim_agent_id"):
+        if key in redacted and redacted[key]:
+            redacted[key] = "<redacted>"
+    redacted["reason"] = "该复核单包含受保护的 Agent 上下文；仅 analyst/admin 可查看详情。"
+    redacted["recommendation"] = "请由 analyst/admin 在受控复核界面查看处置依据。"
+    redacted["access_scope"] = "summary-redacted"
+    return redacted
+
+
+def redact_approval_inventory_for_observer(data: dict[str, Any]) -> dict[str, Any]:
+    """Project an approval inventory for a read-only observer credential."""
+
+    projected = dict(data)
+    reviews = data.get("reviews")
+    if isinstance(reviews, list):
+        projected["reviews"] = [
+            redact_approval_review_for_observer(item)
+            for item in reviews
+            if isinstance(item, dict)
+        ]
+    projected["access_scope"] = "summary-redacted"
+    return projected
+
+
 def decide_approval_review(
     review_id: str,
     action: str,
@@ -164,6 +209,8 @@ def decide_approval_review(
     normalized_action = action.strip().lower() if action else ""
     if normalized_action not in ACTION_MAP:
         raise ValueError("action 必须是 approve/reject，或中文“批准/驳回”")
+    if execute_in_sandbox:
+        raise ValueError("审批决策只改变恢复状态，不在数据库事务内执行工具")
 
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -176,24 +223,6 @@ def decide_approval_review(
         status, final_decision, execution_note = ACTION_MAP[normalized_action]
         sandbox_replay = review.get("sandbox_replay")
         sandbox_replayed_at = review.get("sandbox_replayed_at", "")
-        if status == APPROVED_STATUS and execute_in_sandbox:
-            sandbox_replayed_at = _now()
-            try:
-                sandbox_replay = execute_tool(
-                    {
-                        "tool": review.get("standard_capability", review["tool"]),
-                        "arguments": review.get("standard_arguments", review.get("arguments", {})),
-                    },
-                    "允许",
-                )
-                execution_note = "人工批准后已在本地沙箱重放工具调用；不会触达真实外部系统。"
-            except Exception as exc:  # noqa: BLE001 - persisted as review evidence
-                sandbox_replay = {
-                    "executed": False,
-                    "sandboxed": True,
-                    "output": f"沙箱重放失败：{exc}",
-                }
-                execution_note = "人工批准后尝试沙箱重放，但执行失败；真实外部系统仍需重新发起并按最小权限执行。"
 
         updated = {
             **review,
@@ -204,13 +233,11 @@ def decide_approval_review(
             "comment": comment,
             "reviewed_at": _now(),
             "execution_note": execution_note,
-            "sandbox_replay_requested": bool(execute_in_sandbox),
+            "sandbox_replay_requested": False,
             "sandbox_replayed_at": sandbox_replayed_at,
             "sandbox_replay": sandbox_replay,
             "execution_status": (
-                "sandbox_replayed"
-                if status == APPROVED_STATUS and execute_in_sandbox
-                else "ready_to_resume"
+                "ready_to_resume"
                 if status == APPROVED_STATUS
                 else "rejected"
             ),

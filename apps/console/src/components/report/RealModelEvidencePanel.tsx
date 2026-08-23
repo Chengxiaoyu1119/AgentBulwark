@@ -25,12 +25,17 @@ export function RealModelEvidencePanel({ evaluation }: RealModelEvidencePanelPro
   const { summary } = evaluationData;
   const integrityValid =
     summary.report_integrity_valid === true && evaluationData.integrity_verification?.valid !== false;
-  const strictEvidenceReady = summary.strict_real_api_ready === true && integrityValid;
+  const freshnessValid =
+    summary.report_freshness_valid === true && evaluationData.freshness_verification?.current !== false;
+  const strictEvidenceReady = summary.strict_real_api_ready === true && integrityValid && freshnessValid;
+  const gatewayPathExercised = evaluationData.method?.gateway_path_exercised === true;
   const hasRealApi = summary.real_api_case_count > 0;
   const sourceLabel = strictEvidenceReady
     ? '全量真实 API 严格证据通过'
     : hasRealApi
-      ? '含真实 API，但严格证据未通过'
+      ? freshnessValid
+        ? '含真实 API，但严格证据未通过'
+        : '真实 API 历史记录，运行配置已变化'
       : '报告仅含本地兜底';
   const sourceColor = strictEvidenceReady ? 'success' : 'warning';
   const realApiCoverage =
@@ -97,6 +102,9 @@ export function RealModelEvidencePanel({ evaluation }: RealModelEvidencePanelPro
               报告 Hash {evaluationData.report_hash.slice(0, 12)}…
             </LabelTag>
           ) : null}
+          <LabelTag variant="filled" color={freshnessValid ? 'success' : 'warning'}>
+            {freshnessValid ? '运行快照匹配当前配置' : '运行快照与当前配置不匹配'}
+          </LabelTag>
         </Space>
         <UiAlert
           type={strictEvidenceReady ? 'success' : 'warning'}
@@ -114,6 +122,17 @@ export function RealModelEvidencePanel({ evaluation }: RealModelEvidencePanelPro
                 : '重新运行盲测后，将补齐独立沙箱因果对照、执行回执和严格来源判定。'
           }
         />
+        {!gatewayPathExercised && (
+          <UiAlert
+            type="info"
+            showIcon
+            title="证据范围：模型行为，不是网关阻断"
+            description={
+              evaluationData.method?.gateway_contract_note ??
+              '该评测直接调用模型适配器；要证明 /v1/chat/completions 或 MCP Gateway 的阻断效果，请使用网关探针并核对审计回执。'
+            }
+          />
+        )}
         <Row gutter={[12, 12]}>
           <Col xs={12} md={8} xl={4}>
             <MetricCard

@@ -183,10 +183,10 @@ export function SurfaceDefenseBriefCard({
             ))}
           </Space>
           <Space orientation="vertical" className="zh-full-width">
-            <UiButton block href={briefingSheetHref} target="_blank" icon={<ScrollText size={14} />}>
+            <UiButton block authenticatedHref={briefingSheetHref} icon={<ScrollText size={14} />}>
               打开独立单页
             </UiButton>
-            <UiButton block type="dashed" href={markdownHref} target="_blank" icon={<ScrollText size={14} />}>
+            <UiButton block type="dashed" authenticatedHref={markdownHref} icon={<ScrollText size={14} />}>
               Markdown
             </UiButton>
           </Space>

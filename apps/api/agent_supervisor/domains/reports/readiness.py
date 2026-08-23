@@ -12,11 +12,12 @@ from ...storage.data import get_attack_surfaces, get_policies, get_policy_settin
 from ...storage.database import latest_scenario_run_pairs
 from ..attacks.attack_chains import list_attack_chains
 from ..evaluations.benign import evaluate_benign_cases
-from ..evaluations.benign_workflows import evaluate_benign_workflows
+from ..evaluations.benign_workflows import load_benign_workflow_report
 from ..evaluations.calibration import build_anomaly_calibration
 from ..evaluations.datasets import build_attack_case_dataset
 from ..evaluations.demo_drill import load_judge_demo_drill_report
 from ..governance.approvals import list_approval_reviews
+from ..runtime.runtime_evaluation import load_real_model_evaluation_report
 from .readiness_checks import (
     _approval_review_check,
     _attack_dataset_check,
@@ -24,20 +25,32 @@ from .readiness_checks import (
     _benign_check,
     _benign_workflow_check,
     _calibration_check,
-    _competition_benchmark_check,
-    _demo_drill_check,
+    _dependency_security_check,
     _deployment_security_check,
     _end_to_end_benchmark_check,
     _external_agent_e2e_check,
+    _gateway_boundary_check,
+    _gateway_causal_control_check,
     _next_actions,
+    _real_gateway_agent_evidence_check,
+    _real_model_evidence_check,
+    _resource_governance_check,
     _runtime_governance_check,
-    _student_competition_domain_check,
     _submission_materials_check,
     _supervisor_check,
 )
 from .roadmap import build_project_roadmap
 
 REPORT_ROOT = SANDBOX_REPORTS_DIR
+
+
+def _completion_claim_allowed(
+    blockers: list[dict[str, Any]],
+    warnings: list[dict[str, Any]],
+) -> bool:
+    """Allow a whole-project completion claim only after every check passes."""
+
+    return not blockers and not warnings
 
 
 def build_competition_readiness(
@@ -52,7 +65,7 @@ def build_competition_readiness(
     attack_chains = list_attack_chains()
     attack_dataset = build_attack_case_dataset()
     benign = evaluate_benign_cases()
-    workflows = evaluate_benign_workflows()
+    workflows = load_benign_workflow_report()
     calibration = build_anomaly_calibration()
     roadmap = build_project_roadmap(runs)
     approval_inventory = list_approval_reviews(limit=200)
@@ -62,28 +75,35 @@ def build_competition_readiness(
     demo_drill = load_judge_demo_drill_report()
     openclaw_validation = _openclaw_validation_for_readiness()
     competition_benchmark = _competition_benchmark_for_readiness()
+    real_model_evaluation = load_real_model_evaluation_report()
     external_agent_e2e = _load_report("最小外部Agent接入运行证据.json")
     end_to_end_benchmark = _load_report("HTTP-SQLite-审计完整链路性能评测.json")
     reproducibility = _load_report("独立复现一致性验收报告.json")
+    dependency_security = _load_report("dependency-security-audit.json")
     eligibility = _load_report("上海信息安全参赛资格审查.json")
     submission_materials = package_snapshot or _submission_materials_for_readiness()
     deployment_security = _deployment_security_for_readiness()
     policy_settings = get_policy_settings()
+    gateway_boundary = _gateway_boundary_check()
+    resource_governance = _resource_governance_check()
     checks = [
         _attack_surface_check(surfaces, scenarios),
-        _student_competition_domain_check(student_profiles, scenarios, attack_chains),
+        gateway_boundary,
+        _real_gateway_agent_evidence_check(),
+        _gateway_causal_control_check(),
         _attack_dataset_check(attack_dataset),
         _supervisor_check(policies, scenarios, runs),
         _benign_check(benign),
         _benign_workflow_check(workflows),
         _calibration_check(calibration),
-        _approval_review_check(approvals),
-        _demo_drill_check(demo_drill),
-        _competition_benchmark_check(competition_benchmark),
+        _approval_review_check(operational_approvals),
+        _real_model_evidence_check(real_model_evaluation),
         _external_agent_e2e_check(external_agent_e2e),
         _end_to_end_benchmark_check(end_to_end_benchmark),
         _runtime_governance_check(policy_settings),
+        resource_governance,
         _deployment_security_check(deployment_security),
+        _dependency_security_check(dependency_security),
         _submission_materials_check(submission_materials),
     ]
     total_weight = sum(item["weight"] for item in checks)
@@ -95,7 +115,7 @@ def build_competition_readiness(
     if blockers:
         overall_status = "has-p0-proof-gap"
         status_label = "有 P0 补证项"
-        verdict = "项目主体已经可演示、可打包，但仍有 P0 证据项未通过，详见阻塞项。"
+        verdict = "核心代码链可以运行和验证，但当前仍有 P0 证据或提交材料缺口，不能按最终参赛作品宣称完成。"
     elif warnings:
         overall_status = "ready-with-warning"
         status_label = "可提交但建议补强"
@@ -106,12 +126,68 @@ def build_competition_readiness(
         verdict = "核心功能、证据和演示链路均已通过本地体检。"
 
     next_actions = _next_actions(checks)
+    # ``overall_status`` is kept for compatibility with the competition
+    # material API.  It is intentionally not the production readiness
+    # verdict: historical fixture/approval checks can produce warnings that
+    # do not describe the live LLM gateway, while a deployment can be unsafe
+    # even when the local gateway harness is green.  Expose a separate,
+    # fail-closed claim gate so the console and evidence writers cannot turn a
+    # warning-heavy report into an accidental "完成" statement.
+    # A production claim is about the live gateway trust boundary, not about
+    # historical evaluation or competition paperwork.  The previous
+    # implementation mixed every P0 checklist blocker into this boolean, so a
+    # missing baseline comparison could make an otherwise closed gateway look
+    # unavailable (or, conversely, a hand-picked subset could omit a new
+    # gateway check).  Derive the claim from the same domain partition exposed
+    # to the console and include every check marked as required for that
+    # domain.
+    readiness_domains = _readiness_domains(checks, gateway_boundary)
+    gateway_check_ids = {
+        str(item.get("id"))
+        for item in checks
+        if str(item.get("id")) in set(readiness_domains.get("gateway", {}).get("check_ids", []))
+    }
+    production_gaps = [
+        item
+        for item in checks
+        if str(item.get("id")) in gateway_check_ids and item.get("status") != "passed"
+    ]
+    production_ready = bool(gateway_check_ids) and not production_gaps
+    completion_claim_allowed = _completion_claim_allowed(blockers, warnings)
+    production_verdict = (
+        "生产网关主线已通过当前配置与实时接入证据检查；模型行为评测与因果对照另列为支持证据。"
+        if production_ready
+        else "核心网关链可以运行，但仍有生产配置或实时接入证据缺口；当前不能宣称项目功能全部完成。"
+    )
     return {
-        "project": "智安哨：面向大模型智能体工具调用链的运行时行为防火墙与评测系统",
+        "project": "智安哨：面向 LLM Agent、OpenAI 兼容 API 与 MCP 的运行时安全网关",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "overall_status": overall_status,
         "status_label": status_label,
         "verdict": verdict,
+        "production_ready": production_ready,
+        "production_claim_allowed": production_ready,
+        "completion_claim_allowed": completion_claim_allowed,
+        "gateway_ready": readiness_domains["gateway"]["status"] == "passed",
+        "evaluation_ready": readiness_domains["evaluation"]["status"] == "passed",
+        "production_verdict": production_verdict,
+        # The old report score intentionally remains for compatibility with
+        # competition material APIs.  Operators should use these domain states
+        # to distinguish the live gateway from model research and submission
+        # paperwork; a large historical evaluation score must not look like a
+        # production security claim.
+        "readiness_domains": readiness_domains,
+        "production_gaps": [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "status": item["status"],
+                "severity": item["severity"],
+                "evidence": item["evidence"],
+                "next_action": item["next_action"],
+            }
+            for item in production_gaps
+        ],
         "readiness_score": readiness_score,
         "summary": {
             "check_count": len(checks),
@@ -147,6 +223,10 @@ def build_competition_readiness(
             "competition_benchmark_sha256": competition_benchmark.get("dataset", {}).get("sha256", ""),
             "competition_benchmark_baseline_count": len(competition_benchmark.get("baselines", [])),
             "competition_benchmark_call_count": competition_benchmark.get("performance", {}).get("call_count", 0),
+            "real_model_case_count": (real_model_evaluation or {}).get("summary", {}).get("case_count", 0),
+            "real_model_strict_ready": (real_model_evaluation or {}).get("summary", {}).get("strict_real_api_ready", False),
+            "real_model_evidence_verdict": (real_model_evaluation or {}).get("summary", {}).get("evidence_verdict", "missing"),
+            "real_model_freshness_current": (real_model_evaluation or {}).get("freshness_verification", {}).get("current", False),
             "external_agent_task_count": external_agent_e2e.get("summary", {}).get("task_count", 0),
             "end_to_end_benchmark_call_count": end_to_end_benchmark.get("performance", {}).get("call_count", 0),
             "reproducibility_trial_count": reproducibility.get("summary", {}).get("trial_count", 0),
@@ -159,8 +239,33 @@ def build_competition_readiness(
             "submission_material_ready_count": submission_materials.get("ready_count", 0),
             "submission_material_required_count": submission_materials.get("required_count", 3),
             "agent_tool_allowlist_count": len(policy_settings.get("agent_tool_allowlists", {})),
+            "agent_api_allowlist_count": len(policy_settings.get("agent_api_allowlists", {})),
+            "agent_model_allowlist_count": len(policy_settings.get("agent_model_allowlists", {})),
+            "agent_context_allowlist_count": len(policy_settings.get("agent_context_allowlists", {})),
+            "agent_resource_governance": resource_governance.get("details", {}),
+            "dependency_audit_status": dependency_security.get("status", "missing"),
+            "dependency_audit_high_count": dependency_security.get("projects", [{}])[0].get("vulnerability_counts", {}).get("high", 0)
+            if isinstance(dependency_security.get("projects"), list) and dependency_security.get("projects")
+            else 0,
             "openclaw_contract_e2e_passed": openclaw_validation.get("contract_e2e_passed", False),
             "openclaw_runtime_inspect_passed": openclaw_validation.get("runtime_inspect_passed", False),
+            "gateway_probe_passed": gateway_boundary.get("details", {}).get("gateway_probe_passed", False),
+            "gateway_probe_endpoint": gateway_boundary.get("details", {}).get("gateway_probe_endpoint", ""),
+            "gateway_agent_run_passed": gateway_boundary.get("details", {}).get("gateway_agent_run_passed", False),
+            "gateway_agent_run_endpoint": gateway_boundary.get("details", {}).get("gateway_agent_run_endpoint", ""),
+            "mcp_probe_passed": gateway_boundary.get("details", {}).get("mcp_probe_passed", False),
+            "mcp_probe_endpoint": gateway_boundary.get("details", {}).get("mcp_probe_endpoint", ""),
+            "mcp_operator_evidence_requested": gateway_boundary.get("details", {}).get(
+                "mcp_operator_evidence_requested", False
+            ),
+            "mcp_operator_evidence_passed": gateway_boundary.get("details", {}).get(
+                "mcp_operator_evidence_passed"
+            ),
+            "gateway_boundary_evidence_passed": gateway_boundary.get("details", {}).get("boundary_evidence_passed", False),
+            "gateway_causal_control_passed": next(
+                (item["status"] == "passed" for item in checks if item["id"] == "gateway-causal-control"),
+                False,
+            ),
         },
         "checks": checks,
         "blockers": [
@@ -175,13 +280,12 @@ def build_competition_readiness(
         ],
         "next_actions": next_actions,
         "acceptance_commands": [
-            "node scripts/agent-supervisor-cli.mjs competition-benchmark --output apps/api/sandbox/reports",
+            "node scripts/agent-supervisor-cli.mjs gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --output apps/api/sandbox/reports",
+            "node scripts/agent-supervisor-cli.mjs real-model-eval --output apps/api/sandbox/reports",
             "node scripts/agent-supervisor-cli.mjs http-e2e-benchmark --output apps/api/sandbox/reports",
             "node scripts/agent-supervisor-cli.mjs external-agent-demo --managed-server --output apps/api/sandbox/reports",
-            "node scripts/agent-supervisor-cli.mjs repro-check --trials 3 --operator OPERATOR --operator-role ROLE --output apps/api/sandbox/reports",
-            "python -X utf8 scripts/audit_shanghai_eligibility.py",
-            "node scripts/agent-supervisor-cli.mjs readiness --write --output apps/api/sandbox/reports",
-            "npm run build",
+            "python -m pytest apps/api/tests -q",
+            "npm run verify",
         ],
         "latest_package": submission_materials,
         "qualification_audit": {
@@ -205,6 +309,113 @@ def _openclaw_validation_for_readiness() -> dict[str, Any]:
         except (OSError, json.JSONDecodeError):
             pass
     return {}
+
+
+def _readiness_domains(
+    checks: list[dict[str, Any]],
+    gateway_boundary: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Partition the legacy checklist into product-facing state domains.
+
+    The project is an LLM Agent/API gateway.  Frozen datasets, model behavior
+    studies and submission material are supporting evidence, not interchangeable
+    with a live gateway boundary.  Keeping the partition in the returned
+    contract lets the console show the useful answer without deleting the
+    historical checks that existing competition exports consume.
+    """
+
+    groups: dict[str, tuple[str, set[str]]] = {
+        "gateway": (
+            "生产网关",
+            {
+                "llm-gateway-execution-boundary",
+                "real-gateway-agent-evidence",
+                "agent-tool-least-privilege",
+                "agent-resource-governance",
+                "deployment-auth-and-hmac",
+            },
+        ),
+        "evaluation": (
+            "模型与对抗评测",
+            {
+                "gateway-causal-control",
+                "real-model-agent-evidence",
+                "generic-agent-runtime-e2e",
+                "http-sqlite-audit-benchmark",
+                "benign-single-step",
+                "benign-workflows",
+                "anomaly-calibration",
+                "attack-sample-dataset",
+                "supervisor-policy-runtime",
+            },
+        ),
+        "competition": (
+            "赛事材料与历史能力",
+            {"attack-surface-coverage", "human-approval-loop", "formal-submission-materials"},
+        ),
+        "supply_chain": (
+            "依赖与供应链",
+            {"dependency-security-audit"},
+        ),
+    }
+    by_id = {str(item.get("id")): item for item in checks}
+    domains: dict[str, dict[str, Any]] = {}
+    for domain_id, (label, check_ids) in groups.items():
+        selected = [by_id[item_id] for item_id in check_ids if item_id in by_id]
+        statuses = [str(item.get("status") or "warning") for item in selected]
+        status = (
+            "blocked"
+            if any(value == "blocked" for value in statuses)
+            else "warning"
+            if any(value == "warning" for value in statuses)
+            else "passed"
+            if selected
+            else "unknown"
+        )
+        domains[domain_id] = {
+            "label": label,
+            "status": status,
+            "required_for_gateway_claim": domain_id == "gateway",
+            "check_count": len(selected),
+            "passed_count": sum(value == "passed" for value in statuses),
+            "warning_count": sum(value == "warning" for value in statuses),
+            "blocked_count": sum(value == "blocked" for value in statuses),
+            "check_ids": sorted(check_ids),
+            "gaps": [
+                {
+                    "id": item.get("id", ""),
+                    "title": item.get("title", ""),
+                    "status": item.get("status", ""),
+                    "next_action": item.get("next_action", ""),
+                }
+                for item in selected
+                if item.get("status") != "passed"
+            ],
+        }
+
+    gateway_details = gateway_boundary.get("details", {}) if isinstance(gateway_boundary, dict) else {}
+    mcp_configured = bool(gateway_details.get("gateway_enabled"))
+    mcp_probe_passed = bool(gateway_details.get("mcp_probe_passed"))
+    mcp_operator_evidence_requested = bool(gateway_details.get("mcp_operator_evidence_requested"))
+    mcp_operator_evidence_passed = gateway_details.get("mcp_operator_evidence_passed")
+    domains["mcp_adapter"] = {
+        "label": "MCP 可选适配器",
+        "status": "passed" if mcp_configured and mcp_probe_passed else "warning" if mcp_configured else "not-configured",
+        "status_label": "已验证" if mcp_configured and mcp_probe_passed else "已配置待验证" if mcp_configured else "未启用（可选）",
+        "required_for_gateway_claim": False,
+        "configured": mcp_configured,
+        "probe_passed": mcp_probe_passed,
+        "operator_evidence_requested": mcp_operator_evidence_requested,
+        "operator_evidence_passed": mcp_operator_evidence_passed,
+        "next_action": (
+            "保持 MCP 上游命令、工具目录和回执探针绑定当前代码。"
+            if mcp_configured and mcp_probe_passed
+            else "配置 MCP 上游后运行 mcp-probe；未使用 MCP 时无需为主线就绪额外补齐。"
+            if not mcp_configured
+            else "运行 mcp-probe 补齐 initialize、tools/list、tools/call、operator 工具/上下文证据和审计回执证据。"
+        ),
+    }
+    return domains
 
 
 def _competition_benchmark_for_readiness() -> dict[str, Any]:
@@ -294,21 +505,60 @@ def _pending_markers(path: Path | None) -> list[str]:
 def _deployment_security_for_readiness() -> dict[str, Any]:
     local_env = _read_env_file(REPO_ROOT / ".env")
     example_env = _read_env_file(REPO_ROOT / ".env.example")
-    auth_disabled = (local_env.get("AGENT_SUPERVISOR_AUTH_DISABLED") or "false").strip().lower() in {"1", "true", "yes", "on"}
+    # Deployment environments commonly inject secrets and flags through the
+    # process environment (Docker/Kubernetes/CI) instead of writing them to a
+    # repository `.env` file.  Readiness must use the same precedence as the
+    # runtime loader: an explicitly present environment variable wins over the
+    # file, while a missing variable falls back to the local file.
+    effective_env = dict(local_env)
+    for name in {
+        "AGENT_SUPERVISOR_AUTH_DISABLED",
+        "AGENT_SUPERVISOR_API_TOKEN",
+        "AGENT_SUPERVISOR_API_TOKEN_ADMIN",
+        "AGENT_SUPERVISOR_API_TOKEN_ANALYST",
+        "AGENT_SUPERVISOR_API_TOKEN_OBSERVER",
+        "AGENT_SUPERVISOR_AGENT_TOKENS_JSON",
+        "AGENT_SUPERVISOR_AUDIT_HMAC_KEY",
+        "AGENT_SUPERVISOR_API_HOST",
+    }:
+        if name in os.environ:
+            effective_env[name] = os.environ[name]
+    auth_disabled = (effective_env.get("AGENT_SUPERVISOR_AUTH_DISABLED") or "false").strip().lower() in {"1", "true", "yes", "on"}
     token_keys = (
         "AGENT_SUPERVISOR_API_TOKEN",
         "AGENT_SUPERVISOR_API_TOKEN_ADMIN",
         "AGENT_SUPERVISOR_API_TOKEN_ANALYST",
         "AGENT_SUPERVISOR_API_TOKEN_OBSERVER",
     )
+    agent_tokens_configured = _agent_tokens_configured(effective_env.get("AGENT_SUPERVISOR_AGENT_TOKENS_JSON", ""))
     return {
         "auth_enabled": not auth_disabled,
-        "api_token_configured": any(bool(local_env.get(key, "").strip()) for key in token_keys),
-        "hmac_configured": bool(local_env.get("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "").strip()),
+        "api_token_configured": any(bool(effective_env.get(key, "").strip()) for key in token_keys)
+        or agent_tokens_configured,
+        "agent_tokens_configured": agent_tokens_configured,
+        "hmac_configured": bool(effective_env.get("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "").strip()),
         "example_safe_default": (example_env.get("AGENT_SUPERVISOR_AUTH_DISABLED") or "false").strip().lower() == "false",
-        "host": local_env.get("AGENT_SUPERVISOR_API_HOST", os.getenv("AGENT_SUPERVISOR_API_HOST", "127.0.0.1")),
-        "source": ".env（仅返回是否配置，不返回密钥内容）",
+        "host": effective_env.get("AGENT_SUPERVISOR_API_HOST", "127.0.0.1"),
+        "source": ".env + process environment（仅返回是否配置，不返回密钥内容）",
     }
+
+
+def _agent_tokens_configured(raw_value: str) -> bool:
+    """Match the runtime credential contract without exposing token values.
+
+    Production deployments may intentionally configure only
+    ``AGENT_SUPERVISOR_AGENT_TOKENS_JSON``.  Readiness used to inspect only the
+    role-token variables and therefore reported such a deployment as
+    unauthenticated even though ``auth.py`` would accept the bound Agent token.
+    """
+
+    try:
+        payload = json.loads(str(raw_value or ""))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(payload, dict):
+        return False
+    return any(isinstance(token, str) and token.strip() for token in payload.values())
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -335,28 +585,57 @@ def build_competition_readiness_markdown(data: dict[str, Any] | None = None) -> 
     data = data or build_competition_readiness()
     summary = data["summary"]
     lines = [
-        "# 赛前一键体检报告",
+        "# AI Agent 安全网关就绪检查",
         "",
         f"- 总体状态：{data['status_label']}",
         f"- 就绪分：{data['readiness_score']}%",
         f"- 结论：{data['verdict']}",
+        f"- 生产主线就绪：{'是' if data.get('production_ready') else '否'}",
+        f"- 完成声明允许：{'是' if data.get('completion_claim_allowed') else '否'}",
+        f"- 生产主线结论：{data.get('production_verdict', '未生成')}",
         f"- 通过/警告/阻塞：{summary['passed_count']} / {summary['warning_count']} / {summary['blocker_count']}",
-        f"- 攻击面/脚本：{summary['surface_count']} / {summary['scenario_count']}",
+        f"- LLM Agent 攻击面/样本：{summary['surface_count']} / {summary['scenario_count']}",
         f"- 正常业务任务误报率：{summary['benign_false_positive_rate']}%",
         f"- 连续流程误报率：{summary['benign_workflow_false_positive_rate']}%",
         f"- 人工复核闭环：{summary['approval_review_count']} 条复核单，待处理 {summary['pending_approval_count']}，已处理 {summary['resolved_approval_count']}",
-        f"- 答辩一键演示：{summary['demo_drill_stage_count']} 步，复核 hash {summary['demo_drill_review_hash_count']} 个",
-        f"- 冻结评测集：{summary['competition_benchmark_case_count']} 条，四组基线 {summary['competition_benchmark_baseline_count']}/4，判定 {summary['competition_benchmark_call_count']} 次",
+        f"- 真实模型证据：{summary['real_model_case_count']} 条，严格就绪 {'是' if summary['real_model_strict_ready'] else '否'}，状态 {summary['real_model_evidence_verdict']}",
+        f"- OpenAI 网关契约探针：{'通过' if summary.get('gateway_probe_passed') else '缺失或失败'}",
         f"- 通用 Agent 端到端任务：{summary['external_agent_task_count']} 条",
         f"- 完整链路性能请求：{summary['end_to_end_benchmark_call_count']} 条",
-        f"- 正式提交材料：{summary['submission_material_ready_count']} / {summary['submission_material_required_count']} 就绪",
-        f"- 可选 OpenClaw 兼容：契约 {'通过' if summary['openclaw_contract_e2e_passed'] else '未验证'}，runtime inspect {'通过' if summary['openclaw_runtime_inspect_passed'] else '未验证'}",
+        f"- 历史赛事/fixture 材料：{summary['submission_material_ready_count']} / {summary['submission_material_required_count']}（不计入运行时主线）",
+        "",
+        "## 产品状态分域",
+        "",
+        "| 分域 | 状态 | 通过/警告/阻塞 | 说明 |",
+        "|---|---|---:|---|",
+    ]
+    for domain_id, domain in data.get("readiness_domains", {}).items():
+        status_label = domain.get("status_label") or {
+            "passed": "通过",
+            "warning": "需补强",
+            "blocked": "阻塞",
+            "not-configured": "未启用（可选）",
+        }.get(str(domain.get("status")), "未知")
+        counts = (
+            f"{domain.get('passed_count', 0)} / {domain.get('warning_count', 0)} / "
+            f"{domain.get('blocked_count', 0)}"
+        )
+        note = (
+            "MCP 未启用不阻塞 LLM API 主线。"
+            if domain_id == "mcp_adapter" and domain.get("status") == "not-configured"
+            else "生产主线状态以本分域为准。"
+            if domain_id == "gateway"
+            else "支持证据，不等同于 Provider 已被网关保护。"
+        )
+        lines.append(f"| {domain.get('label', domain_id)} | {status_label} | {counts} | {note} |")
+
+    lines.extend([
         "",
         "## 检查项",
         "",
         "| 检查项 | 状态 | 权重 | 证据 | 下一步 |",
         "|---|---|---:|---|---|",
-    ]
+    ])
     for item in data["checks"]:
         lines.append(
             "| {title} | {status} | {weight} | {evidence} | {next_action} |".format(
@@ -369,7 +648,7 @@ def build_competition_readiness_markdown(data: dict[str, Any] | None = None) -> 
         )
 
     if data["blockers"]:
-        lines.extend(["", "## P0 补证项", ""])
+        lines.extend(["", "## 必须补齐的运行时证据", ""])
         for item in data["blockers"]:
             lines.append(f"- {item['title']}：{item['next_action']}")
 
@@ -386,8 +665,8 @@ def write_competition_readiness_report(
     root = Path(output_root) if output_root else REPORT_ROOT
     root.mkdir(parents=True, exist_ok=True)
     data = build_competition_readiness(runs=runs, package_snapshot=package_snapshot)
-    json_path = root / "赛前一键体检报告.json"
-    markdown_path = root / "赛前一键体检报告.md"
+    json_path = root / "AI Agent安全网关就绪检查.json"
+    markdown_path = root / "AI Agent安全网关就绪检查.md"
     json_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     markdown_path.write_text(build_competition_readiness_markdown(data), encoding="utf-8")
     return {

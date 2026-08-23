@@ -263,6 +263,24 @@ def write_competition_benchmark_report(
     return {"json_path": str(json_path.resolve()), "markdown_path": str(markdown_path.resolve()), "benchmark": data}
 
 
+def load_competition_benchmark_report(output_root: str | Path | None = None) -> dict[str, Any] | None:
+    """Load the last persisted benchmark without running the CPU benchmark."""
+
+    root = Path(output_root) if output_root else SANDBOX_REPORTS_DIR
+    json_path = root / "200条冻结集与基线性能评测.json"
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema_version") != "agent-supervisor.competition-benchmark.v1":
+        return None
+    if not isinstance(data.get("dataset"), dict) or not isinstance(data.get("baselines"), list):
+        return None
+    return data
+
+
 def build_competition_benchmark_markdown(data: dict[str, Any]) -> str:
     dataset = data["dataset"]
     performance = data["performance"]

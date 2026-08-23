@@ -57,3 +57,7 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "raise NotImplementedError",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["apps/api/tests"]
+norecursedirs = [".git", "node_modules", "apps/api/sandbox", "apps/api/runtime", "apps/console/dist", "archive"]

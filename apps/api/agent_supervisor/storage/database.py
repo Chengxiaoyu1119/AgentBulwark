@@ -120,11 +120,92 @@ def _ensure_governance_tables(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gateway_execution_claims (
+            audit_id TEXT PRIMARY KEY,
+            claim_id TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            tool_call_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL DEFAULT '',
+            receipt_id TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gateway_resource_buckets (
+            agent_id TEXT PRIMARY KEY,
+            window_started REAL NOT NULL,
+            consumed_tokens INTEGER NOT NULL DEFAULT 0,
+            reserved_tokens INTEGER NOT NULL DEFAULT 0,
+            consumed_cost_usd REAL NOT NULL DEFAULT 0,
+            reserved_cost_usd REAL NOT NULL DEFAULT 0,
+            in_flight INTEGER NOT NULL DEFAULT 0,
+            last_seen REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gateway_resource_leases (
+            lease_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            provider_calls INTEGER NOT NULL,
+            estimated_tokens INTEGER NOT NULL,
+            estimated_cost_usd REAL NOT NULL,
+            acquired_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            status TEXT NOT NULL,
+            provider_called INTEGER NOT NULL DEFAULT 0,
+            charged_tokens INTEGER NOT NULL DEFAULT 0,
+            charged_cost_usd REAL NOT NULL DEFAULT 0,
+            settled_at REAL NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_gateway_resource_leases_agent_status
+        ON gateway_resource_leases (agent_id, status, expires_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS gateway_rate_limit_buckets (
+            key_hash TEXT PRIMARY KEY,
+            window_started REAL NOT NULL,
+            request_count INTEGER NOT NULL DEFAULT 0,
+            last_seen REAL NOT NULL,
+            updated_at REAL NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_gateway_rate_limit_buckets_last_seen
+        ON gateway_rate_limit_buckets (last_seen)
+        """
+    )
 
 
-def write_run(result: dict[str, Any]) -> None:
+def write_run(result: dict[str, Any], *, append_runtime_event: bool = True) -> None:
+    """Persist one run snapshot and its audit rows.
+
+    Server-owned execution uses this function twice: once for a durable
+    pre-execution intent and once for the final observed result.  The intent
+    must not create a second, stale ``run`` event, so callers can defer the
+    append-only event until the final snapshot is known.
+    """
     with get_connection() as conn:
         _ensure_governance_tables(conn)
+        if not append_runtime_event:
+            return
         conn.execute(
             """
             INSERT OR REPLACE INTO experiment_runs (
@@ -408,6 +489,226 @@ def persist_execution_receipt(payload: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+def claim_gateway_execution(
+    *,
+    audit_id: str,
+    claim_id: str,
+    agent_id: str,
+    session_id: str,
+    tool_call_hash: str,
+    created_at: str,
+) -> dict[str, Any]:
+    """Atomically reserve one gateway tool call before executing its side effect.
+
+    The receipt is written after the tool returns, so checking for an existing
+    receipt alone leaves a race where two workers execute the same call before
+    either worker can persist the receipt.  A durable claim closes that window.
+    A claim is deliberately fail-closed: if a worker dies after acquiring it,
+    a later request must be inspected/reconciled instead of retrying an
+    unknown side effect automatically.
+    """
+    if not audit_id or not claim_id or not agent_id or not session_id or not tool_call_hash:
+        raise ValueError("网关执行占用缺少审计、身份、会话或工具 Hash")
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT claim_id, agent_id, session_id, tool_call_hash, status, created_at, completed_at, receipt_id
+            FROM gateway_execution_claims
+            WHERE audit_id = ?
+            """,
+            (audit_id,),
+        ).fetchone()
+        if row is not None:
+            existing = dict(row)
+            if (
+                existing.get("agent_id") == agent_id
+                and existing.get("session_id") == session_id
+                and existing.get("tool_call_hash") == tool_call_hash
+                and existing.get("status") in {"completed", "unknown"}
+            ):
+                return {"status": str(existing.get("status") or ""), **existing}
+            raise ValueError("该网关工具调用已被其他执行请求占用，拒绝重复执行")
+        conn.execute(
+            """
+            INSERT INTO gateway_execution_claims (
+                audit_id, claim_id, agent_id, session_id, tool_call_hash,
+                status, created_at
+            ) VALUES (?, ?, ?, ?, ?, 'running', ?)
+            """,
+            (audit_id, claim_id, agent_id, session_id, tool_call_hash, created_at),
+        )
+        return {
+            "status": "running",
+            "audit_id": audit_id,
+            "claim_id": claim_id,
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "tool_call_hash": tool_call_hash,
+            "created_at": created_at,
+            "completed_at": "",
+            "receipt_id": "",
+        }
+
+
+def complete_gateway_execution_claim(
+    *,
+    audit_id: str,
+    claim_id: str,
+    receipt_id: str,
+    completed_at: str,
+) -> None:
+    """Mark a previously acquired gateway execution claim as completed."""
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        cursor = conn.execute(
+            """
+            UPDATE gateway_execution_claims
+            SET status = 'completed', completed_at = ?, receipt_id = ?
+            WHERE audit_id = ? AND claim_id = ? AND status = 'running'
+            """,
+            (completed_at, receipt_id, audit_id, claim_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("网关执行占用不存在、已完成或不属于当前请求")
+
+
+def mark_gateway_execution_claim_unknown(
+    *,
+    audit_id: str,
+    claim_id: str,
+    completed_at: str,
+) -> bool:
+    """Freeze a claim after a side-effect boundary has an uncertain outcome.
+
+    A tool may have changed the outside world before receipt persistence fails.
+    Retrying such a claim would be an unsafe duplicate execution, so the claim
+    becomes a durable ``unknown`` state that requires operator reconciliation.
+    """
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        cursor = conn.execute(
+            """
+            UPDATE gateway_execution_claims
+            SET status = 'unknown', completed_at = ?
+            WHERE audit_id = ? AND claim_id = ? AND status = 'running'
+            """,
+            (completed_at, audit_id, claim_id),
+        )
+        return cursor.rowcount == 1
+
+
+def load_gateway_execution_claim(audit_id: str) -> dict[str, Any] | None:
+    """Load the durable execution claim for operator reconciliation."""
+    if not audit_id:
+        return None
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        row = conn.execute(
+            """
+            SELECT audit_id, claim_id, agent_id, session_id, tool_call_hash,
+                   status, created_at, completed_at, receipt_id
+            FROM gateway_execution_claims
+            WHERE audit_id = ?
+            """,
+            (audit_id,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def list_gateway_execution_claims(limit: int = 200) -> list[dict[str, Any]]:
+    """Return durable gateway execution states for operator reconciliation."""
+    bounded_limit = max(1, min(int(limit), 1000))
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        rows = conn.execute(
+            """
+            SELECT audit_id, claim_id, agent_id, session_id, tool_call_hash,
+                   status, created_at, completed_at, receipt_id
+            FROM gateway_execution_claims
+            ORDER BY rowid DESC
+            LIMIT ?
+            """,
+            (bounded_limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def persist_execution_receipt_use(payload: dict[str, Any]) -> dict[str, Any]:
+    """Atomically claim one OpenAI proxy tool receipt for one request.
+
+    A verified execution receipt proves that a tool ran, but without a
+    consumption record the same result could be replayed in a later request.
+    Exact network retries remain idempotent; a different request attempting to
+    reuse the same receipt is reported as a conflict.
+    """
+    event_type = "openai-proxy-tool-receipt-use"
+    audit_id = str(payload.get("audit_id") or "")
+    request_hash = str(payload.get("request_hash") or "")
+    if not audit_id or not request_hash:
+        raise ValueError("回执消费记录缺少 audit_id 或 request_hash")
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            """
+            SELECT id, created_at, payload
+            FROM runtime_events
+            WHERE event_type = ?
+              AND json_extract(payload, '$.audit_id') = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (event_type, audit_id),
+        ).fetchall()
+        for row in rows:
+            try:
+                existing = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if not isinstance(existing, dict):
+                continue
+            if (
+                str(existing.get("request_hash") or "") == request_hash
+                and str(existing.get("agent_id") or "") == str(payload.get("agent_id") or "")
+                and str(existing.get("session_id") or "") == str(payload.get("session_id") or "")
+            ):
+                return {
+                    "event_id": int(row["id"]),
+                    "event_type": event_type,
+                    "created_at": row["created_at"],
+                    "payload": existing,
+                    "idempotent": True,
+                    "conflict": False,
+                }
+            return {
+                "event_id": int(row["id"]),
+                "event_type": event_type,
+                "created_at": row["created_at"],
+                "payload": existing,
+                "idempotent": False,
+                "conflict": True,
+            }
+
+        created_at = str(payload.get("created_at") or datetime.now(timezone.utc).isoformat())
+        cursor = conn.execute(
+            """
+            INSERT INTO runtime_events (event_type, created_at, payload)
+            VALUES (?, ?, ?)
+            """,
+            (event_type, created_at, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+        )
+        return {
+            "event_id": int(cursor.lastrowid or 0),
+            "event_type": event_type,
+            "created_at": created_at,
+            "payload": payload,
+            "idempotent": False,
+            "conflict": False,
+        }
+
+
 def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Add receipt state to response copies without mutating the hashed audit log."""
     receipts = execution_receipts_for_audits(limit=max(500, len(logs) * 3 or 500))
@@ -419,6 +720,12 @@ def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> lis
         if receipt:
             copy["execution_status"] = str(receipt.get("status"))
             copy["execution_target"] = str(receipt.get("execution_target"))
+        elif str(log.get("execution_status") or "") in {"pending", "unknown", "failed"}:
+            # MCP intent records are deliberately visible until a result record
+            # proves what happened. Do not collapse them into ``not_applicable``
+            # merely because they have no generic execution receipt.
+            copy["execution_status"] = str(log.get("execution_status"))
+            copy["execution_target"] = str(log.get("execution_target") or "mcp-upstream")
         elif log.get("execution_receipt_expected"):
             copy["execution_status"] = "awaiting_receipt"
             copy["execution_target"] = "unknown"
@@ -489,6 +796,163 @@ def load_audit_log(audit_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute("SELECT payload FROM audit_logs WHERE id = ?", (audit_id,)).fetchone()
     return json.loads(row["payload"]) if row else None
+
+
+def load_gateway_request_audit_logs(
+    request_id: str,
+    *,
+    agent_id: str = "",
+    session_id: str = "",
+) -> list[dict[str, Any]]:
+    """Load all Provider-stage audits belonging to one gateway request.
+
+    A single Provider response may contain several parallel tool calls, including
+    a malformed or output-blocked sibling that has no ``provider_call_id``.  The
+    gateway decides that response atomically, so a later execution request must
+    see every Provider-stage audit before executing one immutable audit record.
+    Filtering only rows with a call id would let a caller replay an allowed
+    sibling after the malformed/blocked sibling had been omitted from the
+    all-or-nothing check.
+    """
+
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT payload
+            FROM audit_logs
+            WHERE json_extract(payload, '$.source_app') = ?
+              AND json_extract(payload, '$.stage_context.request_id') = ?
+            ORDER BY rowid ASC
+            """,
+            ("openai-compatible-proxy", normalized_request_id),
+        ).fetchall()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if agent_id and str(payload.get("agent_id") or "") != str(agent_id):
+            continue
+        stage_context = payload.get("stage_context")
+        if not isinstance(stage_context, dict):
+            continue
+        if session_id and str(stage_context.get("session_id") or "") != str(session_id):
+            continue
+        if stage_context.get("provider_called") is not True:
+            continue
+        result.append(payload)
+    return result
+
+
+def latest_gateway_audit_logs(
+    limit: int = 2000,
+    *,
+    agent_id: str = "",
+    session_id: str = "",
+) -> list[dict[str, Any]]:
+    """Load recent audit rows produced by the OpenAI-compatible gateway.
+
+    Gateway traces must not depend on the generic ``latest_audit_logs`` window:
+    a busy experiment run can otherwise evict the request/response evidence
+    before the operator opens the gateway page.  The SQL predicate keeps the
+    query focused on the gateway source, while the identity/session filters are
+    applied again after JSON decoding so malformed or stale rows cannot widen a
+    caller's view.
+    """
+
+    bounded_limit = max(1, min(int(limit), 5000))
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT payload
+            FROM audit_logs
+            WHERE json_extract(payload, '$.source_app') = ?
+            ORDER BY rowid DESC
+            LIMIT ?
+            """,
+            ("openai-compatible-proxy", bounded_limit),
+        ).fetchall()
+
+    result: list[dict[str, Any]] = []
+    normalized_agent_id = str(agent_id or "")
+    normalized_session_id = str(session_id or "")
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if normalized_agent_id and str(payload.get("agent_id") or "") != normalized_agent_id:
+            continue
+        stage_context = payload.get("stage_context")
+        if not isinstance(stage_context, dict):
+            continue
+        if normalized_session_id and str(stage_context.get("session_id") or "") != normalized_session_id:
+            continue
+        if not str(stage_context.get("request_id") or "").strip():
+            continue
+        result.append(payload)
+    return result
+
+
+def load_gateway_request_audit_events(
+    request_id: str,
+    *,
+    agent_id: str = "",
+    session_id: str = "",
+) -> list[dict[str, Any]]:
+    """Load every gateway audit stage for one request, including plain text.
+
+    ``load_gateway_request_audit_logs`` intentionally returns only Provider
+    tool-call siblings for execution.  Operator traces need the broader set:
+    pre-provider blocks, provider failures, text responses and post-provider
+    tool decisions all belong to the same request timeline.
+    """
+
+    normalized_request_id = str(request_id or "").strip()
+    if not normalized_request_id:
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT payload
+            FROM audit_logs
+            WHERE json_extract(payload, '$.source_app') = ?
+              AND json_extract(payload, '$.stage_context.request_id') = ?
+            ORDER BY rowid ASC
+            """,
+            ("openai-compatible-proxy", normalized_request_id),
+        ).fetchall()
+
+    result: list[dict[str, Any]] = []
+    normalized_agent_id = str(agent_id or "")
+    normalized_session_id = str(session_id or "")
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if normalized_agent_id and str(payload.get("agent_id") or "") != normalized_agent_id:
+            continue
+        stage_context = payload.get("stage_context")
+        if not isinstance(stage_context, dict):
+            continue
+        if str(stage_context.get("request_id") or "") != normalized_request_id:
+            continue
+        if normalized_session_id and str(stage_context.get("session_id") or "") != normalized_session_id:
+            continue
+        result.append(payload)
+    return result
 
 
 def load_audit_logs_by_conversation_ids(conversation_ids: set[str]) -> list[dict[str, Any]]:

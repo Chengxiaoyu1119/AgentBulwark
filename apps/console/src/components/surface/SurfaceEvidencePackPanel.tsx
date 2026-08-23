@@ -28,10 +28,10 @@ export function SurfaceEvidencePackPanel({
       title="攻击面证据包"
       extra={
         <Space>
-          <UiButton type="link" size="small" href={jsonHref} target="_blank" icon={<ClipboardList size={14} />}>
+          <UiButton type="link" size="small" authenticatedHref={jsonHref} icon={<ClipboardList size={14} />}>
             JSON
           </UiButton>
-          <UiButton type="link" size="small" href={markdownHref} target="_blank" icon={<ScrollText size={14} />}>
+          <UiButton type="link" size="small" authenticatedHref={markdownHref} icon={<ScrollText size={14} />}>
             Markdown
           </UiButton>
         </Space>

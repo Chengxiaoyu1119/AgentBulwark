@@ -37,6 +37,27 @@ def audit_signature(audit_hash_value: str) -> str:
     return hmac.new(key, audit_hash_value.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
+def audit_signature_required() -> bool:
+    """Return whether the deployment has opted into mandatory HMAC evidence.
+
+    Hashes deliberately remain useful in local, keyless development runs.  Once
+    an HMAC key is configured, however, an attacker must not be able to delete
+    the signature field while leaving the content hash unchanged: signatures
+    are excluded from ``audit_hash`` so that exact tampering case needs an
+    explicit presence check.
+    """
+    return bool(os.getenv("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "").strip())
+
+
+def verify_audit_signature(value: str, signature: str) -> bool:
+    """Verify an optional signature, requiring presence when HMAC is enabled."""
+    expected = audit_signature(value)
+    supplied = str(signature or "")
+    if not expected:
+        return not audit_signature_required() and not supplied
+    return bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
 def verify_audit_hashes(logs: list[dict[str, Any]], seed: str) -> dict[str, Any]:
     previous_hash = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     failures = []
@@ -49,12 +70,14 @@ def verify_audit_hashes(logs: list[dict[str, Any]], seed: str) -> dict[str, Any]
         expected = audit_hash(log)
         if log.get("audit_hash") != expected:
             failures.append({"step": index, "reason": "audit_hash 与内容不匹配"})
-        if log.get("audit_signature"):
+        if audit_signature_required() and not log.get("audit_signature"):
+            failures.append({"step": index, "reason": "已配置审计签名密钥但记录缺少 audit_signature"})
+        elif log.get("audit_signature"):
             signature_checked += 1
-            expected_signature = audit_signature(str(log.get("audit_hash", "")))
-            if not expected_signature:
-                failures.append({"step": index, "reason": "当前环境缺少审计签名密钥，签名不可验证"})
-            elif not hmac.compare_digest(str(log.get("audit_signature", "")), expected_signature):
+            if not verify_audit_signature(
+                str(log.get("audit_hash", "")),
+                str(log.get("audit_signature", "")),
+            ):
                 failures.append({"step": index, "reason": "audit_signature 与审计内容不匹配"})
         previous_hash = str(log.get("audit_hash", ""))
     return {

@@ -31,7 +31,7 @@ import type {
   SurfaceEvidencePackIndex,
   SurfaceEvidencePackWriteResult
 } from './types';
-import { fallbackOverview, fallbackPolicies, fallbackScenarios } from './fallback';
+import { offlineOverview, offlinePolicies, offlineScenarios } from './fallback';
 import { ApiError, request } from './app/apiRequest';
 export { ApiError, setAuthTokenProvider, subscribeRuntimeEvents } from './app/apiRequest';
 export * from './app/attackLabApi';
@@ -66,7 +66,7 @@ export async function fetchOverview(): Promise<Overview> {
   try {
     return await request<Overview>('/api/overview');
   } catch (error) {
-    return fallbackOrThrow(error, fallbackOverview);
+    return fallbackOrThrow(error, offlineOverview);
   }
 }
 
@@ -74,7 +74,10 @@ export async function fetchScenarios(): Promise<Scenario[]> {
   try {
     return await request<Scenario[]>('/api/scenarios');
   } catch (error) {
-    return fallbackOrThrow(error, fallbackScenarios);
+    // A failed live catalog must not silently turn historical fixtures into
+    // current security evidence.  The UI shows an empty/offline state until
+    // the backend can supply the actual scenario definitions.
+    return fallbackOrThrow(error, offlineScenarios);
   }
 }
 
@@ -82,7 +85,7 @@ export async function fetchStudentCompetitionAttackMap(): Promise<StudentCompeti
   try {
     return await request<StudentCompetitionAttackProfile[]>('/api/student_competition_attack_map');
   } catch (error) {
-    return fallbackOrThrow(error, fallbackOverview.student_competition_attack_map ?? []);
+    return fallbackOrThrow(error, offlineOverview.student_competition_attack_map ?? []);
   }
 }
 
@@ -90,7 +93,7 @@ export async function fetchPolicies(): Promise<Policy[]> {
   try {
     return await request<Policy[]>('/api/policies');
   } catch (error) {
-    return fallbackOrThrow(error, fallbackPolicies);
+    return fallbackOrThrow(error, offlinePolicies);
   }
 }
 
@@ -98,7 +101,7 @@ export async function fetchAuditLogs(limit = 100): Promise<AuditLog[]> {
   try {
     return await request<AuditLog[]>(`/api/audit_logs?limit=${limit}`);
   } catch (error) {
-    return fallbackOrThrow(error, fallbackOverview.audit_logs);
+    return fallbackOrThrow(error, offlineOverview.audit_logs);
   }
 }
 
@@ -110,7 +113,7 @@ export async function fetchAlerts(limit = 100): Promise<AlertItem[]> {
   try {
     return await request<AlertItem[]>(`/api/alerts?limit=${limit}`);
   } catch (error) {
-    return fallbackOrThrow(error, fallbackOverview.alerts);
+    return fallbackOrThrow(error, offlineOverview.alerts);
   }
 }
 
@@ -121,16 +124,14 @@ export async function fetchApprovalReviews(status = '全部', limit = 100): Prom
 export async function decideApprovalReview(
   reviewId: string,
   action: 'approve' | 'reject',
-  comment = '已完成人工复核，按当前安全策略处置。',
-  executeInSandbox = false
+  comment = '已完成人工复核，按当前安全策略处置。'
 ): Promise<ApprovalDecisionResult> {
   return request<ApprovalDecisionResult>(`/api/approvals/${encodeURIComponent(reviewId)}/decision`, {
     method: 'POST',
     body: JSON.stringify({
       action,
       operator: 'security-reviewer',
-      comment,
-      execute_in_sandbox: executeInSandbox
+      comment
     })
   });
 }
@@ -269,7 +270,7 @@ export async function runDemoDrill(): Promise<DemoDrillResult> {
 }
 
 export async function runExternalAgentDemo(): Promise<ExternalAgentDemoResult> {
-  return request<ExternalAgentDemoResult>('/api/integrations/openclaw/minimal_agent_demo', {
+  return request<ExternalAgentDemoResult>('/api/integrations/agents/minimal_demo', {
     method: 'POST',
     body: JSON.stringify({})
   });

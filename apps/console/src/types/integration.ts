@@ -12,6 +12,8 @@ export interface ExternalAgentDemoRecord {
   executed: boolean;
   execution_target?: string;
   execution_status?: string;
+  execution_evidence?: 'caller-declared' | 'server-observed' | string;
+  execution_observed_by_server?: boolean;
   receipt_confirmed?: boolean;
   receipt_error?: string;
   execution_receipt?: ExecutionReceipt | null;
@@ -38,6 +40,8 @@ export interface ExternalAgentDemoResult {
     receipt_count?: number;
     receipt_confirmed_count?: number;
     receipt_unconfirmed_count?: number;
+    caller_attested_count?: number;
+    server_observed_count?: number;
     control_verified_count?: number;
   };
   records: ExternalAgentDemoRecord[];

@@ -7,7 +7,7 @@ from typing import Any, cast
 from apps.api.agent_supervisor.domains.evaluations.ablation import load_policy_ablation_report
 from apps.api.agent_supervisor.domains.evaluations.assessment import build_attack_effectiveness
 from apps.api.agent_supervisor.domains.evaluations.benign import evaluate_benign_cases
-from apps.api.agent_supervisor.domains.evaluations.benign_workflows import evaluate_benign_workflows
+from apps.api.agent_supervisor.domains.evaluations.benign_workflows import load_benign_workflow_report
 from apps.api.agent_supervisor.domains.evaluations.calibration import build_anomaly_calibration
 from apps.api.agent_supervisor.domains.evaluations.evidence import build_output_filter_evidence, build_surface_conclusions
 from apps.api.agent_supervisor.domains.evaluations.holdout import evaluate_adversarial_holdout
@@ -32,7 +32,9 @@ def build_report() -> dict:
     evidence_runs = latest_scenario_run_pairs([scenario["id"] for scenario in scenarios])
     policies = get_policies()
     benign_eval = evaluate_benign_cases()
-    benign_workflow_eval = evaluate_benign_workflows()
+    # Report reads are observational. Running sandbox tools or subprocesses is
+    # an explicit analyst action handled by the evaluation POST endpoint.
+    benign_workflow_eval = load_benign_workflow_report()
     surface_conclusion_eval = build_surface_conclusions(runs)
     output_filter_eval = build_output_filter_evidence()
     attack_effectiveness_eval = build_attack_effectiveness(evidence_runs)
@@ -41,8 +43,8 @@ def build_report() -> dict:
     openclaw_dimension = cast(
         dict[str, Any],
         next(
-            (item for item in project_roadmap_eval["dimensions"] if item["name"] == "OpenClaw/外部 Agent 接入"),
-            {"score": 0, "evidence": "OpenClaw 接入证据未生成。"},
+            (item for item in project_roadmap_eval["dimensions"] if item["name"] == "LLM API / MCP / Agent 接入"),
+            {"score": 0, "evidence": "LLM API / MCP / Agent 接入证据未生成。"},
         ),
     )
     anomaly_calibration_eval = build_anomaly_calibration()
@@ -50,6 +52,7 @@ def build_report() -> dict:
     real_model_eval = load_real_model_evaluation_report()
     real_model_summary = (real_model_eval or {}).get("summary", {})
     real_model_strict_ready = bool(real_model_summary.get("strict_real_api_ready"))
+    real_model_freshness_valid = bool(real_model_summary.get("report_freshness_valid"))
     real_model_has_api = int(real_model_summary.get("real_api_case_count") or 0) > 0
     competition_package = load_competition_package_snapshot(evidence_runs)
     surface_name = {surface["id"]: surface["name"] for surface in surfaces}
@@ -134,8 +137,8 @@ def build_report() -> dict:
             "evidence": "记录 agent_trace、audit_logs、alerts 与模型输出。",
         },
         {
-            "name": "OpenClaw 源码级工具调用 Hook",
-            "status": "已验证" if openclaw_dimension["score"] >= 90 else "已提供插件包",
+            "name": "LLM API / MCP / 通用 Agent 接入",
+            "status": "已验证" if openclaw_dimension["score"] >= 90 else "已提供接入契约",
             "evidence": openclaw_dimension["evidence"],
         },
         {
@@ -186,7 +189,8 @@ def build_report() -> dict:
                 f"预期决策匹配率 {real_model_summary.get('expected_control_match_rate', 0)}%，"
                 f"因果一致性 {real_model_summary.get('causal_integrity_rate', 0)}%，"
                 f"供应商响应指纹覆盖率 {real_model_summary.get('provider_evidence_coverage_rate', 0)}%，"
-                f"报告 Hash 校验 {'通过' if real_model_summary.get('report_integrity_valid') else '未通过'}。"
+                f"报告 Hash 校验 {'通过' if real_model_summary.get('report_integrity_valid') else '未通过'}，"
+                f"运行快照{'匹配当前配置' if real_model_freshness_valid else '与当前配置不匹配'}。"
                 if real_model_eval
                 else "运行真实模型盲测后，将展示模型来源、无防护副作用、有防护控制结果和双分支执行回执。"
             ),
@@ -248,15 +252,16 @@ def build_report() -> dict:
             real_model_summary.get("provider_evidence_coverage_rate") or 0
         ),
         "real_model_report_integrity_valid": bool(real_model_summary.get("report_integrity_valid")),
+        "real_model_report_freshness_valid": real_model_freshness_valid,
         "real_model_strict_ready": real_model_strict_ready,
     }
 
     lines = [
-        "# 智安哨初赛报告素材",
+        "# 智安哨当前安全证据摘要",
         "",
         "## 1. 作品定位",
         "",
-        "本作品面向“面向大模型及其应用的安全性研究”方向，构建红队攻击面研究、智能体受控实验环境复现、行为监督拦截和防御评测闭环。",
+        "本作品面向 LLM Agent、OpenAI 兼容 API 与 MCP 的运行时安全，构建 Provider 前后检查、工具调用监督、执行回执和审计证据闭环。固定攻防实验只用于回归验证，当前真实接入证据必须以实际 Provider/MCP 运行记录为准。",
         "",
         "## 2. 核心统计",
         "",
@@ -287,6 +292,7 @@ def build_report() -> dict:
             f"- 真实模型因果一致性通过率：{summary['real_model_causal_integrity_rate']}%",
             f"- 真实模型供应商响应指纹覆盖率：{summary['real_model_provider_evidence_coverage_rate']}%",
             f"- 真实模型报告 Hash 校验：{'通过' if summary['real_model_report_integrity_valid'] else '未通过'}",
+            f"- 真实模型运行快照：{'匹配当前配置' if summary['real_model_report_freshness_valid'] else '与当前配置不匹配'}",
             f"- 真实模型严格证据判定：{'通过' if summary['real_model_strict_ready'] else '未通过'}",
             f"- 平均检测延迟：{summary['avg_latency_ms']}ms",
         "",

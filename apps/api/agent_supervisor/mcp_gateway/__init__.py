@@ -14,8 +14,10 @@ tools/call；tools/list 聚合所有路由并标注来源。
 from apps.api.agent_supervisor.mcp_gateway.audit import SOURCE_APP, record_gateway_tool_call
 from apps.api.agent_supervisor.mcp_gateway.config import (
     gateway_enabled,
+    gateway_max_sessions,
     gateway_routes,
     gateway_server_name,
+    gateway_session_isolation,
     gateway_timeout_seconds,
     upstream_command,
 )
@@ -41,7 +43,9 @@ __all__ = [
     "build_blocked_result",
     "evaluate_tools_call",
     "gateway_enabled",
+    "gateway_max_sessions",
     "gateway_routes",
+    "gateway_session_isolation",
     "gateway_server_name",
     "gateway_timeout_seconds",
     "get_gateway",

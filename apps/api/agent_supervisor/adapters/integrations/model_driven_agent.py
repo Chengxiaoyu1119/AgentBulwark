@@ -13,7 +13,10 @@ from apps.api.agent_supervisor.adapters.models.model_adapter import (
     generate_model_tool_followup,
     generate_model_tool_plan,
 )
-from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
+from apps.api.agent_supervisor.domains.governance.redaction import (
+    redact_sensitive,
+    sanitize_model_visible_tool_result,
+)
 from apps.api.agent_supervisor.domains.runtime.events import evaluate_agent_event
 from apps.api.agent_supervisor.domains.runtime.execution_receipts import complete_execution
 from apps.api.agent_supervisor.domains.runtime.tools import execute_tool, init_sandbox
@@ -111,12 +114,15 @@ def run_model_driven_agent(
     receipt = receipt_result["receipt"]
 
     safe_tool_output = redact_sensitive(tool_output)
+    model_visible_tool_result = sanitize_model_visible_tool_result(tool_output)
     followup = generate_model_tool_followup(
         task,
         scenario_id,
         plan,
         {"id": tool_call_id, **tool_call},
-        safe_tool_output if isinstance(safe_tool_output, dict) else {"output": str(safe_tool_output)},
+        model_visible_tool_result["model_value"]
+        if isinstance(model_visible_tool_result.get("model_value"), dict)
+        else {"output": str(model_visible_tool_result.get("model_value"))},
         force_real=force_real_model,
         provider_profile="target",
     )
@@ -212,6 +218,14 @@ def run_model_driven_agent(
             "result_hash": result_hash,
             "output": safe_tool_output,
             "error": str(redact_sensitive(execution_error)),
+            "model_visible_result": {
+                "original_hash": model_visible_tool_result["original_hash"],
+                "model_visible_hash": model_visible_tool_result["model_visible_hash"],
+                "redacted": model_visible_tool_result["redacted"],
+                "trust": model_visible_tool_result["trust"],
+                "verdict": model_visible_tool_result["verdict"],
+                "signals": model_visible_tool_result["signals"],
+            },
         },
         "receipt": receipt,
         "model_followup": {

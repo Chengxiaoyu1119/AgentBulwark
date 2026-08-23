@@ -309,8 +309,22 @@ def write_openclaw_plugin_validation_report(
     }
 
 
-def build_openclaw_plugin_validation_markdown(validation: dict[str, Any] | None = None) -> str:
-    validation = validation or validate_openclaw_plugin_package()
+def load_openclaw_plugin_validation_report(output_root: str | Path | None = None) -> dict[str, Any] | None:
+    """Load persisted validation evidence without writing a package or running Node/OpenClaw."""
+
+    root = Path(output_root) if output_root else SANDBOX_REPORTS_DIR
+    json_path = root / "OpenClaw源码级插件包验收报告.json"
+    try:
+        validation = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(validation, dict):
+        return None
+    required = {"generated_at", "overall_status", "file_checks", "static_checks"}
+    return validation if required.issubset(validation) else None
+
+
+def build_openclaw_plugin_validation_markdown(validation: dict[str, Any]) -> str:
     lines = [
         "# OpenClaw 源码级插件包验收报告",
         "",

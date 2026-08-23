@@ -13,7 +13,11 @@ from apps.api.agent_supervisor.domains.governance.correlation import reset_corre
 from apps.api.agent_supervisor.domains.governance.supervisor import decide
 from apps.api.agent_supervisor.domains.runtime import tools
 from apps.api.agent_supervisor.domains.runtime.events import evaluate_agent_event
-from apps.api.agent_supervisor.domains.runtime.server_security import configure_server_security
+from apps.api.agent_supervisor.domains.runtime.server_security import (
+    configure_server_security,
+    configured_bind_host,
+    load_environment_file,
+)
 from apps.api.agent_supervisor.storage import data as policy_data
 
 
@@ -78,15 +82,75 @@ class ApiTokenAuthTest(unittest.TestCase):
 
 
 class ServerSecurityTest(unittest.TestCase):
+    def setUp(self):
+        # Startup now reads the real repository .env before applying defaults.
+        # Keep unit tests hermetic so a developer's local credentials cannot
+        # change the expected fail-closed branch.
+        self._env_root = tempfile.TemporaryDirectory()
+        self._env_root_patch = patch(
+            "apps.api.agent_supervisor.domains.runtime.server_security._REPO_ROOT",
+            Path(self._env_root.name),
+        )
+        self._env_root_patch.start()
+
+    def tearDown(self):
+        self._env_root_patch.stop()
+        self._env_root.cleanup()
+
+    def test_env_file_is_loaded_before_loopback_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                "AGENT_SUPERVISOR_AUTH_DISABLED=false\n"
+                "AGENT_SUPERVISOR_API_TOKEN=env-token\n",
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {}, clear=True):
+                load_environment_file(env_path)
+                configure_server_security("127.0.0.1")
+                self.assertEqual(os.environ["AGENT_SUPERVISOR_AUTH_DISABLED"], "false")
+                self.assertEqual(os.environ["AGENT_SUPERVISOR_API_TOKEN"], "env-token")
+
+    def test_process_environment_wins_over_env_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text("AGENT_SUPERVISOR_AUTH_DISABLED=false\n", encoding="utf-8")
+            with patch.dict(os.environ, {"AGENT_SUPERVISOR_AUTH_DISABLED": "true"}, clear=True):
+                load_environment_file(env_path)
+                self.assertEqual(os.environ["AGENT_SUPERVISOR_AUTH_DISABLED"], "true")
+
     def test_loopback_keeps_local_demo_default(self):
         with patch.dict(os.environ, {}, clear=True):
             configure_server_security("127.0.0.1")
             self.assertEqual(os.environ["AGENT_SUPERVISOR_AUTH_DISABLED"], "true")
 
+    def test_explicit_production_profile_is_not_downgraded_by_loopback_bind(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_SECURITY_PROFILE": "production",
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN": "test-token",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "审计 HMAC"):
+                configure_server_security("127.0.0.1")
+
     def test_public_bind_requires_token_and_hmac(self):
         with patch.dict(os.environ, {"AGENT_SUPERVISOR_AUTH_DISABLED": "false"}, clear=True):
             with self.assertRaisesRegex(RuntimeError, "API Token"):
                 configure_server_security("0.0.0.0")
+
+    def test_direct_uvicorn_public_host_is_detected_before_startup(self):
+        with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["uvicorn", "app:app", "--host", "0.0.0.0"]):
+            self.assertEqual(configured_bind_host(), "0.0.0.0")
+            with self.assertRaisesRegex(RuntimeError, "公网监听地址要求"):
+                configure_server_security(configured_bind_host())
+
+    def test_direct_uvicorn_equals_host_form_is_detected(self):
+        with patch.dict(os.environ, {}, clear=True), patch("sys.argv", ["uvicorn", "app:app", "--host=127.0.0.1"]):
+            self.assertEqual(configured_bind_host(), "127.0.0.1")
 
     def test_public_bind_accepts_hardened_configuration(self):
         with patch.dict(
@@ -112,7 +176,7 @@ class ServerSecurityTest(unittest.TestCase):
         ):
             configure_server_security("0.0.0.0")
 
-    def test_public_bind_rejects_unbound_shared_executor_token(self):
+    def test_public_bind_rejects_shared_executor_compatibility_path(self):
         with patch.dict(
             os.environ,
             {
@@ -122,7 +186,23 @@ class ServerSecurityTest(unittest.TestCase):
             },
             clear=True,
         ):
-            with self.assertRaisesRegex(RuntimeError, "绑定"):
+            with self.assertRaisesRegex(RuntimeError, "不允许共享 executor Token"):
+                configure_server_security("0.0.0.0")
+
+    def test_production_profile_rejects_shared_executor_compatibility_path(self):
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_SECURITY_PROFILE": "production",
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN": "admin-token",
+                "AGENT_SUPERVISOR_API_TOKEN_EXECUTOR": "shared-executor-token",
+                "AGENT_SUPERVISOR_ALLOW_SHARED_EXECUTOR_TOKEN": "true",
+                "AGENT_SUPERVISOR_AUDIT_HMAC_KEY": "test-hmac",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "不允许共享 executor Token"):
                 configure_server_security("0.0.0.0")
 
     def test_agent_bound_token_sets_executor_role_and_identity(self):
@@ -386,6 +466,26 @@ class RuntimeGovernanceTest(unittest.TestCase):
         self.assertNotIn("abcdefghijklmnop", serialized)
         self.assertNotIn("reviewer@example.com", serialized)
 
+    def test_runtime_audit_redacts_free_form_system_prompt_secret(self):
+        with patch("apps.api.agent_supervisor.domains.runtime.events.write_run"):
+            result = evaluate_agent_event(
+                {
+                    "conversation_id": "free-form-redaction-test",
+                    "agent_id": "reader-agent",
+                    "model_input": "system prompt: TOP_SECRET_INTERNAL",
+                    "model_output": "system prompt: TOP_SECRET_INTERNAL",
+                    "tool_call": {
+                        "tool": "model.respond",
+                        "arguments": {"topic": "system prompt: TOP_SECRET_INTERNAL"},
+                    },
+                },
+                guard_enabled=True,
+            )
+
+        serialized = str(result)
+        self.assertNotIn("TOP_SECRET_INTERNAL", serialized)
+        self.assertIn("<redacted", serialized)
+
     def test_quarantined_memory_is_not_returned_by_default_read(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -402,6 +502,45 @@ class RuntimeGovernanceTest(unittest.TestCase):
 
         self.assertIn("正常偏好", output)
         self.assertNotIn("污染记忆", output)
+
+    def test_agent_memory_scope_prevents_cross_agent_read(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            with (
+                patch.object(tools, "WORKSPACE_DIR", root / "workspace"),
+                patch.object(tools, "OUTBOX_DIR", root / "outbox"),
+                patch.object(tools, "MEMORY_DIR", root / "memory"),
+                patch.object(tools, "FIXTURE_WORKSPACE_DIR", root / "fixtures"),
+                patch("apps.api.agent_supervisor.domains.runtime.events.write_run"),
+            ):
+                write_result = evaluate_agent_event(
+                    {
+                        "agent_id": "agent-A",
+                        "conversation_id": "memory-scope-a",
+                        "tool_call": {
+                            "tool": "memory.write",
+                            "arguments": {"content": "agent-A private project note"},
+                        },
+                    },
+                    guard_enabled=True,
+                    execute_in_sandbox=True,
+                )
+                read_result = evaluate_agent_event(
+                    {
+                        "agent_id": "agent-B",
+                        "conversation_id": "memory-scope-b",
+                        "tool_call": {
+                            "tool": "memory.read",
+                            "arguments": {"query": "private project note"},
+                        },
+                    },
+                    guard_enabled=True,
+                    execute_in_sandbox=True,
+                )
+
+        self.assertEqual(write_result["decision"], "允许")
+        self.assertEqual(read_result["decision"], "允许")
+        self.assertNotIn("agent-A private project note", read_result["audit_log"]["tool_output"]["output"])
 
     def test_benign_workflow_evaluation_does_not_mutate_runtime_memory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

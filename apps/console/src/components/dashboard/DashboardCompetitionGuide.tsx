@@ -24,7 +24,7 @@ export function DashboardCompetitionGuide({
   onOpenPage: (page: PageKey) => void;
 }) {
   const guardedControlRate = overview.summary.guarded_control_rate ?? overview.summary.block_rate;
-  const configuredModelCount = overview.models.filter((model) => model.configured).length;
+  const configuredModelCount = overview.models.filter((model) => model.configured && model.mode === 'real-api').length;
   const items: CompetitionGuideItem[] = [
     {
       title: '风险与攻击场景',

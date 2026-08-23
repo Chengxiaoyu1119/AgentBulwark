@@ -14,7 +14,7 @@ interface ApprovalReviewQueueProps {
   busyId: string;
   copiedApprovalId: string;
   onRefresh: () => void;
-  onDecision: (review: ApprovalReview, action: 'approve' | 'reject', executeInSandbox?: boolean) => void;
+  onDecision: (review: ApprovalReview, action: 'approve' | 'reject') => void;
   onCopy: (review: ApprovalReview) => void;
 }
 
@@ -191,19 +191,9 @@ export function ApprovalReviewQueue({
                   type="primary"
                   loading={busyId === review.id}
                   disabled={Boolean(busyId)}
-                  onClick={() => onDecision(review, 'approve', false)}
+                  onClick={() => onDecision(review, 'approve')}
                 >
                   批准恢复
-                </UiButton>
-              ) : null}
-              {review.status === '待复核' ? (
-                <UiButton
-                  size="small"
-                  loading={busyId === review.id}
-                  disabled={Boolean(busyId)}
-                  onClick={() => onDecision(review, 'approve', true)}
-                >
-                  沙箱重放
                 </UiButton>
               ) : null}
               {review.status === '待复核' ? (

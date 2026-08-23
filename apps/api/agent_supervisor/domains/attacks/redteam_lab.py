@@ -27,6 +27,7 @@ ALLOWED_AGENT_PATH_MARKERS = (
     "/api/agent/run",
     "/api/chat",
     "/api/runtime/evaluate",
+    "/api/runtime/execute",
     "/api/supervisor/evaluate",
     "/api/integrations/openclaw/events",
     "/api/attack_lab/run",
@@ -1015,7 +1016,10 @@ def _build_authorized_target_payload(path: str, attack_input: str, surface_id: s
             "temperature": 0.2,
             "stream": False,
         }
-    if any(marker in path for marker in ("/api/runtime/evaluate", "/api/supervisor/evaluate", "/api/integrations/openclaw/events")):
+    if any(
+        marker in path
+        for marker in ("/api/runtime/evaluate", "/api/runtime/execute", "/api/supervisor/evaluate", "/api/integrations/openclaw/events")
+    ):
         return {
             "conversation_id": f"authorized-target-{uuid4()}",
             "agent_id": "authorized-target-agent",
@@ -1145,7 +1149,10 @@ def _stringify_response_body(body: str) -> str:
 def _payload_kind(path: str) -> str:
     if path.endswith("/v1/chat/completions"):
         return "openai-compatible-chat"
-    if any(marker in path for marker in ("/api/runtime/evaluate", "/api/supervisor/evaluate", "/api/integrations/openclaw/events")):
+    if any(
+        marker in path
+        for marker in ("/api/runtime/evaluate", "/api/runtime/execute", "/api/supervisor/evaluate", "/api/integrations/openclaw/events")
+    ):
         return "supervisor-event"
     return "generic-agent-run"
 

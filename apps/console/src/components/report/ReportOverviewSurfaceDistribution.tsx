@@ -41,8 +41,7 @@ export function ReportOverviewSurfaceDistribution({ report, onOpenPage }: Report
           </UiButton>
           <UiButton
             size="small"
-            href="/api/attack_surfaces/evidence_packs.md"
-            target="_blank"
+            authenticatedHref="/api/attack_surfaces/evidence_packs.md"
             icon={<ExternalLink size={14} />}
           >
             打开证据索引

@@ -4,16 +4,7 @@ import { Col, Descriptions, Row, Space, Typography } from 'antd';
 import { runRefusalRewriteEvasion } from '../../api';
 import type { RefusalRewriteEvasionResult } from '../../types';
 import { AuditDeepLinkButton } from '../audit/AuditDeepLinkButton';
-import {
-  DecisionPill,
-  MetricCard,
-  PanelCard,
-  UiAlert,
-  UiButton,
-  UiInput,
-  UiSelect,
-  UiSwitch
-} from '../ui';
+import { DecisionPill, MetricCard, PanelCard, UiAlert, UiButton, UiInput, UiSelect, UiSwitch } from '../ui';
 import { refusalRewriteFlowSteps } from './labRuntimeFlowPresets';
 import { LabRuntimeFlow } from './LabRuntimeFlow';
 import { RefusalRoundPanel } from './RefusalRoundPanel';
@@ -71,7 +62,11 @@ export function RefusalRewriteEvasionLab({ refresh }: RefusalRewriteEvasionLabPr
       {notice && <UiAlert type="warning" showIcon title={notice} className="zh-mb-24" />}
       <Row gutter={[20, 20]} align="stretch">
         <Col xs={24} xl={9}>
-          <PanelCard title="拒答改写绕过复现" subtitle="主模型拒答 -> 副模型改写 -> 主模型复测" className="zh-full-height">
+          <PanelCard
+            title="拒答改写绕过复现"
+            subtitle="主模型拒答 -> 副模型改写 -> 主模型复测"
+            className="zh-full-height"
+          >
             <Space orientation="vertical" size={16} className="zh-full-width">
               <UiAlert
                 type="info"
@@ -103,7 +98,13 @@ export function RefusalRewriteEvasionLab({ refresh }: RefusalRewriteEvasionLabPr
               </Row>
               <div className="zh-attack-lab__field">
                 <Typography.Text strong>原始用户请求</Typography.Text>
-                <UiInput.TextArea value={task} onChange={(event) => setTask(event.target.value)} rows={6} showCount maxLength={4000} />
+                <UiInput.TextArea
+                  value={task}
+                  onChange={(event) => setTask(event.target.value)}
+                  rows={6}
+                  showCount
+                  maxLength={4000}
+                />
               </div>
               <div className="zh-attack-lab__field">
                 <Typography.Text strong>拒答观察词</Typography.Text>

@@ -24,12 +24,8 @@ export function DemoDrillPanel({ demoDrill, runningDemoDrill, handleRunDemoDrill
         按顺序执行正常放行、外发复核、批量导出审批和记忆隔离，自动生成 audit_hash、review_hash 与本地证据文件。
       </Typography.Paragraph>
       <Space className="zh-settings-action-row" wrap>
-        <UiButton href="/api/demo_drill" target="_blank">
-          查看最近 JSON
-        </UiButton>
-        <UiButton href="/api/demo_drill.md" target="_blank">
-          查看最近 Markdown
-        </UiButton>
+        <UiButton authenticatedHref="/api/demo_drill">查看最近 JSON</UiButton>
+        <UiButton authenticatedHref="/api/demo_drill.md">查看最近 Markdown</UiButton>
         <LabelTag variant="filled" className="zh-settings-code-tag">
           POST /api/demo_drill/run
         </LabelTag>
@@ -112,10 +108,10 @@ export function DemoDrillPanel({ demoDrill, runningDemoDrill, handleRunDemoDrill
             ))}
           </div>
           <Space className="zh-settings-path-list" wrap>
-            <UiButton size="small" href="/api/demo_drill.md" target="_blank">
+            <UiButton size="small" authenticatedHref="/api/demo_drill.md">
               打开证据报告
             </UiButton>
-            <UiButton size="small" href="/api/demo_drill" target="_blank">
+            <UiButton size="small" authenticatedHref="/api/demo_drill">
               打开证据 JSON
             </UiButton>
             <LabelTag variant="filled" icon={<ScrollText size={14} />} className="zh-settings-path-tag">

@@ -1,6 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from apps.api.agent_supervisor.auth import require_api_token, restrict_executor_scope
+from apps.api.agent_supervisor.auth import (
+    current_security_role,
+    require_any_role,
+    require_api_token,
+    restrict_executor_scope,
+)
 from apps.api.agent_supervisor.domains.attacks.agents import batch_compare_scenarios, compare_scenario, run_scenario
 from apps.api.agent_supervisor.domains.attacks.attack_chains import (
     compare_attack_chain,
@@ -10,14 +15,18 @@ from apps.api.agent_supervisor.domains.attacks.attack_chains import (
 )
 from apps.api.agent_supervisor.domains.governance.integrity import verify_audit_hashes
 from apps.api.agent_supervisor.schemas.main_models import AttackChainRunRequest, BatchCompareRequest, RunRequest
-from apps.api.agent_supervisor.storage.data import get_scenarios
+from apps.api.agent_supervisor.storage.data import get_product_scenarios
 from apps.api.agent_supervisor.storage.database import load_run
 
 router = APIRouter(dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)])
 
-@router.get("/api/scenarios")
+
+def _require_analyst_access(role: str = Depends(current_security_role)) -> None:
+    require_any_role({"analyst", "admin"}, role)
+
+@router.get("/api/scenarios", dependencies=[Depends(_require_analyst_access)])
 def scenarios() -> list[dict]:
-    return get_scenarios()
+    return get_product_scenarios()
 
 
 @router.get("/api/runs/{run_id}/audit_hash/verify")
@@ -57,7 +66,7 @@ def verify_run_audit_hash(run_id: str) -> dict:
     }
 
 
-@router.post("/api/run")
+@router.post("/api/run", dependencies=[Depends(_require_analyst_access)])
 def run(request: RunRequest) -> dict:
     try:
         return run_scenario(request.scenario_id, request.guard_enabled)
@@ -65,7 +74,7 @@ def run(request: RunRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"未知攻击脚本：{request.scenario_id}") from exc
 
 
-@router.post("/api/compare")
+@router.post("/api/compare", dependencies=[Depends(_require_analyst_access)])
 def compare(request: RunRequest) -> dict:
     try:
         return compare_scenario(request.scenario_id)
@@ -73,7 +82,7 @@ def compare(request: RunRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"未知攻击脚本：{request.scenario_id}") from exc
 
 
-@router.post("/api/batch_compare")
+@router.post("/api/batch_compare", dependencies=[Depends(_require_analyst_access)])
 def batch_compare(request: BatchCompareRequest) -> dict:
     try:
         return batch_compare_scenarios(request.scenario_ids)
@@ -81,12 +90,12 @@ def batch_compare(request: BatchCompareRequest) -> dict:
         raise HTTPException(status_code=404, detail=f"未知攻击脚本：{exc.args[0]}") from exc
 
 
-@router.get("/api/attack_chains")
+@router.get("/api/attack_chains", dependencies=[Depends(_require_analyst_access)])
 def attack_chains() -> list[dict]:
     return list_attack_chains()
 
 
-@router.post("/api/attack_chains/{chain_id}/run")
+@router.post("/api/attack_chains/{chain_id}/run", dependencies=[Depends(_require_analyst_access)])
 def run_attack_chain_endpoint(chain_id: str, request: AttackChainRunRequest) -> dict:
     try:
         return run_attack_chain(chain_id, guard_enabled=request.guard_enabled)
@@ -94,7 +103,7 @@ def run_attack_chain_endpoint(chain_id: str, request: AttackChainRunRequest) -> 
         raise HTTPException(status_code=404, detail=f"未知组合攻击链：{exc.args[0]}") from exc
 
 
-@router.post("/api/attack_chains/{chain_id}/compare")
+@router.post("/api/attack_chains/{chain_id}/compare", dependencies=[Depends(_require_analyst_access)])
 def compare_attack_chain_endpoint(chain_id: str) -> dict:
     try:
         return compare_attack_chain(chain_id)
@@ -102,7 +111,7 @@ def compare_attack_chain_endpoint(chain_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"未知组合攻击链：{exc.args[0]}") from exc
 
 
-@router.post("/api/attack_chains/write")
+@router.post("/api/attack_chains/write", dependencies=[Depends(_require_analyst_access)])
 def write_attack_chain_report_endpoint() -> dict:
     return write_attack_chain_report()
 

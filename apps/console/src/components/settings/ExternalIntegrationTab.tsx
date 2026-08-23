@@ -7,7 +7,6 @@ import type {
   OpenClawPluginPackageResult,
   OpenClawPluginValidationWriteResult
 } from '@/types';
-
 type ExternalIntegrationTabProps = {
   integrationBundle: OpenClawIntegrationBundle | null;
   agentIntegrationBundle: AgentIntegrationBundle | null;
@@ -19,7 +18,6 @@ type ExternalIntegrationTabProps = {
   handleValidateOpenClawPlugin: () => void | Promise<void>;
   ensureOpenClawIntegration: () => void | Promise<unknown>;
 };
-
 export function ExternalIntegrationTab({
   integrationBundle,
   agentIntegrationBundle,
@@ -39,21 +37,20 @@ export function ExternalIntegrationTab({
     },
     {
       label: '接入适配状态',
-      value: agentIntegrationBundle ? 'HTTP + 执行回执已实现' : '读取中',
+      value: agentIntegrationBundle ? 'LLM API + HTTP + 回执已实现' : '读取中',
       ready: Boolean(agentIntegrationBundle)
     },
     {
-      label: '执行前强制闸门',
-      value: 'AgentToolGuard 已实现',
+      label: '服务端强制执行',
+      value: '监督 + 隔离执行器已实现',
       ready: Boolean(agentIntegrationBundle)
     },
     {
-      label: '接入协议',
-      value: '判定 + 执行回执',
+      label: '安全阶段',
+      value: '输入预检 / 输出拦截 / 执行回执',
       ready: Boolean(agentIntegrationBundle)
     }
   ];
-
   return (
     <Space orientation="vertical" size="large" className="zh-tab-stack">
       <PanelCard title="Agent运行时安全接入" type="inner">
@@ -78,35 +75,53 @@ export function ExternalIntegrationTab({
             </Col>
           ))}
         </Row>
-
         <Row gutter={[16, 16]} className="zh-mb-24">
           <Col xs={24} sm={12} lg={6}>
             <PanelCard size="small" type="inner" className="zh-full-height">
               <Typography.Text type="secondary" className="zh-settings-info-label">
-                HTTP 接口
+                强制执行接口
               </Typography.Text>
               <Typography.Text code className="zh-settings-code-wrap">
-                POST /api/runtime/evaluate
+                POST /api/runtime/execute
+              </Typography.Text>
+              <Typography.Text type="secondary" className="zh-meta-block">
+                `/api/runtime/evaluate` 仅返回判定
               </Typography.Text>
             </PanelCard>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <PanelCard size="small" type="inner" className="zh-full-height">
               <Typography.Text type="secondary" className="zh-settings-info-label">
-                OpenClaw 兼容
+                LLM API / MCP 网关
               </Typography.Text>
               <Typography.Text code className="zh-settings-code-wrap">
-                POST /api/integrations/openclaw/events
+                POST /v1/chat/completions
+              </Typography.Text>
+              <Typography.Text type="secondary" className="zh-meta-block">
+                透明转发 + tool call 阻断
               </Typography.Text>
             </PanelCard>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <PanelCard size="small" type="inner" className="zh-full-height">
               <Typography.Text type="secondary" className="zh-settings-info-label">
-                适配器代码
+                MCP Gateway
               </Typography.Text>
               <Typography.Text code className="zh-settings-code-wrap">
-                GET /api/integrations/openclaw/adapter.py
+                POST /api/mcp
+              </Typography.Text>
+              <Typography.Text type="secondary" className="zh-meta-block">
+                强制代理 + 工具定义投毒扫描
+              </Typography.Text>
+            </PanelCard>
+          </Col>
+          <Col xs={24} sm={12} lg={6}>
+            <PanelCard size="small" type="inner" className="zh-full-height">
+              <Typography.Text type="secondary" className="zh-settings-info-label">
+                通用 Agent 接入包
+              </Typography.Text>
+              <Typography.Text code className="zh-settings-code-wrap">
+                GET /api/integrations/agents/bundle
               </Typography.Text>
             </PanelCard>
           </Col>
@@ -159,10 +174,10 @@ export function ExternalIntegrationTab({
                 POST /api/integrations/agents/model_driven_demo
               </Typography.Text>
               <Space wrap>
-                <UiButton size="small" href="/api/integrations/agents/bundle" target="_blank">
+                <UiButton size="small" authenticatedHref="/api/integrations/agents/bundle">
                   查看通用接入包
                 </UiButton>
-                <UiButton size="small" href="/api/integrations/agents/bundle.md" target="_blank">
+                <UiButton size="small" authenticatedHref="/api/integrations/agents/bundle.md">
                   查看 Markdown
                 </UiButton>
               </Space>
@@ -248,13 +263,13 @@ export function ExternalIntegrationTab({
                             {integrationBundle.validation.cli}
                           </Typography.Text>
                           <Space wrap>
-                            <UiButton size="small" href="/api/integrations/openclaw/bundle" target="_blank">
+                            <UiButton size="small" authenticatedHref="/api/integrations/openclaw/bundle">
                               查看接入包 JSON
                             </UiButton>
-                            <UiButton size="small" href="/api/integrations/openclaw/schema" target="_blank">
+                            <UiButton size="small" authenticatedHref="/api/integrations/openclaw/schema">
                               查看事件结构
                             </UiButton>
-                            <UiButton size="small" href="/api/integrations/openclaw/adapter.py" target="_blank">
+                            <UiButton size="small" authenticatedHref="/api/integrations/openclaw/adapter.py">
                               查看适配器代码
                             </UiButton>
                           </Space>

@@ -26,7 +26,7 @@ export function SettingsBasicsTab({
       .map((model) => [normalizeProviderId(model.provider), model] as const)
       .filter(([providerId]) => providerIds.includes(providerId))
   );
-  const configuredModelCount = overview.models.filter((model) => model.configured).length;
+  const configuredModelCount = overview.models.filter((model) => model.configured && model.mode === 'real-api').length;
   const profileRuntimeRows = modelProfileMeta.map((profile) => {
     const profileConfig = modelConfig?.profiles[profile.id] ?? {
       provider_priority: providerIds,
@@ -35,7 +35,9 @@ export function SettingsBasicsTab({
     const primaryProvider = profileConfig.provider_priority?.[0] ?? providerIds[0];
     const selectedProvider = providers.find((provider) => provider.id === primaryProvider) ?? providers[0];
     const runtimeModel = modelStatusByProvider.get(primaryProvider);
-    const configured = Boolean(modelConfig?.real_api_enabled && runtimeModel?.configured);
+    const configured = Boolean(
+      modelConfig?.real_api_enabled && runtimeModel?.configured && runtimeModel?.mode === 'real-api'
+    );
     const defaultModel = runtimeModel?.model ?? '';
     const orderLabels = (profileConfig.provider_priority?.length ? profileConfig.provider_priority : providerIds)
       .map((providerId) => providers.find((provider) => provider.id === providerId)?.label ?? providerId)
@@ -183,8 +185,11 @@ export function SettingsBasicsTab({
                 <Typography.Text className="zh-settings-provider-endpoint">
                   {model.endpoint ?? model.mode}
                 </Typography.Text>
-                <LabelTag variant="filled" color={model.configured ? 'success' : 'warning'}>
-                  {model.configured ? '已接入真实 API' : '使用本地兜底'}
+                <LabelTag
+                  variant="filled"
+                  color={model.configured && model.mode === 'real-api' ? 'success' : 'warning'}
+                >
+                  {model.configured && model.mode === 'real-api' ? '已接入真实 API' : '本地兜底/待配置'}
                 </LabelTag>
               </PanelCard>
             </Col>
@@ -266,7 +271,6 @@ export function SettingsBasicsTab({
           <Typography.Text type="secondary">正在读取模型运行配置...</Typography.Text>
         )}
       </PanelCard>
-
     </Space>
   );
 }

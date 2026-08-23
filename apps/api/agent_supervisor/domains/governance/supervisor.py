@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -12,8 +13,14 @@ from apps.api.agent_supervisor.domains.governance.semantic_detector import (
     get_semantic_detector,
 )
 from apps.api.agent_supervisor.domains.governance.tool_contract import (
+    ALLOWED_API_METHODS,
     SUPPORTED_TOOLS,
     canonical_text,
+    canonical_text_variants,
+    endpoint_allowlist_reason,
+    endpoint_security_reason,
+    get_agent_api_allowlist,
+    get_agent_tool_allowlist,
     normalize_tool_call,
     path_is_absolute_or_traversal,
     path_is_sensitive,
@@ -52,31 +59,37 @@ DANGEROUS_COMMANDS = [
     "scripts/tool_hijack_probe.py",
 ]
 JAILBREAK_MARKERS = [
-    "忽略",
-    "无约束",
-    "绕过",
+    # 保留明确的指令覆盖/越狱话术；普通技术名词放到下面的上下文规则，
+    # 避免“目标路径”“系统配置”等合法业务词被单独拦截。
     "ignore previous",
     "do anything now",
     "不要解释安全规则",
-    # 中文越狱话术（B-05 对比评测确认快通道中文召回缺口，按 B-01 攻击类别补充，
-    # 全部词在 1547 条标注集良性侧零命中；"长期记忆"会误伤合法 memory.write 已排除）
-    "最高优先级",  # instruction-override：篡改规则优先级
-    "隐藏指令",  # instruction-override：触发词后门
-    "隐藏任务",  # instruction-override：触发词后门
-    "系统配置",  # system-prompt-leak：套取配置
-    "隐藏字段",  # system-prompt-leak：套取隐藏内容
-    "上下文窗口",  # system-prompt-leak：套取上下文
-    "没展示给用户",  # system-prompt-leak：套取工具隐藏定义
-    "verbatim",  # system-prompt-leak：英文原文套取
-    "above this line",  # system-prompt-leak：英文原文套取
-    "置信度",  # memory-poisoning：篡改记忆置信度
-    "二次验证",  # memory-poisoning：绕过二次验证
-    "不触发审计",  # memory-poisoning：规避审计
-    "目标路径",  # tool-hijack：改写工具目标路径
-    "超级管理员",  # authority-forgery：伪造管理员身份
-    "没有泄露任何",  # task-decomposition：诱导合谋话术
-    "无视规则",  # fictional-framing：虚构无规则角色
-    "没有安全限制",  # fictional-framing：虚构无限制角色
+    "无视规则",
+    "没有安全限制",
+]
+JAILBREAK_EXPLICIT_PATTERNS = [
+    re.compile(r"(?:忽略|无视|跳过)[^。\n]{0,24}(?:之前|以上|上文|前面|系统|安全|所有|原有)?[^。\n]{0,16}(?:指令|规则|提示词|约束|限制|审查|权限)"),
+    re.compile(r"(?:绕过|规避|跳过)[^。\n]{0,20}(?:安全|审查|权限|验证|规则|防护|限制|系统检查|检查)"),
+    re.compile(r"(?:ignore|disregard|forget|bypass)[^.!?\n]{0,60}(?:previous|prior|system|safety|security|instruction|rule|prompt|guard|policy)", re.IGNORECASE),
+]
+JAILBREAK_CONTEXT_PATTERNS = [
+    # 指令覆盖：只有“优先级”与规则/权限改写动作同时出现才命中。
+    re.compile(r"最高优先级[^。\n]{0,40}(?:规则|指令|权限|覆盖|执行)"),
+    # 隐藏内容/触发器：技术讨论“隐藏字段”本身不构成攻击。
+    re.compile(r"隐藏(?:指令|任务|记忆)[^。\n]{0,40}(?:执行|触发|放行|跳过|绕过|审查|外发)"),
+    re.compile(r"(?:系统配置|系统提示词)[^。\n]{0,50}(?:完整|全部|隐藏|原始|原文|JSON|指令|提示|泄露|输出)"),
+    re.compile(r"(?:上下文窗口|developer message|above this line)[^。\n]{0,60}(?:消息|指令|内容|原文|输出|显示|列出|verbatim)", re.IGNORECASE),
+    re.compile(r"(?:工具|tool)[^。\n]{0,40}(?:完整定义|权限范围)[^。\n]{0,24}(?:隐藏|未展示|没展示)", re.IGNORECASE),
+    # 任务拆解/密钥定位：要求同时出现敏感实体和“路径/自己猜”等外带意图。
+    re.compile(r"(?:token|secret|密钥)[^。\n]{0,40}(?:路径|位置|存放|模式)[^。\n]{0,40}(?:自己猜|没有泄露|告诉我)", re.IGNORECASE),
+    re.compile(r"(?:没有泄露任何)[^。\n]{0,30}(?:token|secret|密钥|机密)", re.IGNORECASE),
+    # 权限伪造：管理员身份与敏感授权动作必须同时出现。
+    re.compile(r"(?:超级管理员|管理员ID\s*[=:：]?\s*1|root)[^。\n]{0,60}(?:授权|读取|访问|永久|全部|机密|执行)", re.IGNORECASE),
+    # 记忆投毒：置信度/二次验证在“记忆失效、永久放行”语境下才危险。
+    re.compile(r"(?:记忆|规则)[^。\n]{0,40}(?:置信度)[^。\n]{0,24}(?:0|失效|不生效|禁用)", re.IGNORECASE),
+    re.compile(r"(?:无需|不需要|跳过|豁免)[^。\n]{0,16}(?:二次验证|权限验证|审计)", re.IGNORECASE),
+    # 工具劫持：目标路径结合改写、越界或敏感内容转写才命中。
+    re.compile(r"目标路径[^。\n]{0,50}(?:改|调整|改为|\.\.|机密|摘要|file\.write)", re.IGNORECASE),
 ]
 MEMORY_POISON_MARKERS = [
     "不需要检查权限",
@@ -89,14 +102,32 @@ MEMORY_POISON_MARKERS = [
     "without checking permission",
     "always send",
 ]
+SENSITIVE_EGRESS_MARKERS = re.compile(
+    r"(?i)(?<![a-z0-9])(?:api[_-]?key|access[_-]?token|token|secret|password|credential|private[_-]?key|flag|authorization|cookie|set-cookie|x-api-key|bearer|session)(?![a-z0-9])"
+)
 
 
 def inspect_prompt(prompt: str) -> GuardDecision | None:
     if not is_policy_enabled("jailbreak-filter"):
         return None
 
-    lowered = prompt.lower()
-    if any(marker.lower() in lowered for marker in JAILBREAK_MARKERS):
+    lowered_variants = [variant.lower() for variant in canonical_text_variants(prompt)]
+    explicit_marker_hit = any(
+        marker.lower() in lowered
+        for lowered in lowered_variants
+        for marker in JAILBREAK_MARKERS
+    )
+    explicit_pattern_hit = any(
+        pattern.search(lowered)
+        for lowered in lowered_variants
+        for pattern in JAILBREAK_EXPLICIT_PATTERNS
+    )
+    contextual_hit = any(
+        pattern.search(lowered)
+        for lowered in lowered_variants
+        for pattern in JAILBREAK_CONTEXT_PATTERNS
+    )
+    if explicit_marker_hit or explicit_pattern_hit or contextual_hit:
         return GuardDecision(
             decision="拒绝",
             risk_level="high",
@@ -174,16 +205,25 @@ def decide(
             )
         )
 
-    agent_tool_allowlists = policy_settings.get("agent_tool_allowlists", {})
-    if isinstance(agent_tool_allowlists, dict) and agent_id:
-        allowed_tools = agent_tool_allowlists.get(agent_id, agent_tool_allowlists.get("*"))
-        if isinstance(allowed_tools, list) and original_tool not in allowed_tools:
+    allowed_tools = get_agent_tool_allowlist(policy_settings, agent_id)
+    # ``model.respond`` represents the Agent's primary model transaction, not
+    # a tool capability exposed to the model. Its authority is governed by the
+    # separate model allowlist at the API boundary; applying the tool allowlist
+    # here would block every authenticated Agent before its first Provider call
+    # unless operators redundantly registered ``model.respond`` as a tool.
+    if tool != "model.respond" and agent_id and allowed_tools is not None:
+        # Compare both the caller's framework-specific name and the resolved
+        # canonical capability.  A registered alias such as ``file_read`` must
+        # not be rejected merely because the policy is written in canonical
+        # form as ``file.read``.
+        normalized_allowed_tools = {canonical_text(item).lower() for item in allowed_tools if canonical_text(item)}
+        if normalized_allowed_tools is not None and tool not in normalized_allowed_tools and original_tool not in normalized_allowed_tools:
             return scored(
                 GuardDecision(
                     decision="拒绝",
                     risk_level="critical",
                     policy_id="tool-contract",
-                    reason=f"Agent `{agent_id}` 没有调用工具 `{original_tool}` 的能力授权。",
+                    reason=f"Agent `{agent_id}` 没有调用工具 `{original_tool or tool}` 的能力授权。",
                     recommendation="为该 Agent 配置最小工具能力集合，或改由具备相应权限的 Agent 执行。",
                 )
             )
@@ -221,6 +261,18 @@ def decide(
                     recommendation="仅允许写入沙箱公开报告目录，敏感目录写入必须走人工授权。",
                 )
             )
+        content = canonical_text(args.get("content"))
+        persisted_prompt_decision = inspect_prompt(content)
+        if persisted_prompt_decision:
+            return scored(
+                GuardDecision(
+                    decision="隔离",
+                    risk_level="high",
+                    policy_id="jailbreak-filter",
+                    reason="文件写入内容包含试图覆盖规则的指令，禁止把不可信指令持久化到 Agent 可读取的上下文。",
+                    recommendation="将内容保留在隔离区，清除指令化文本后再写入共享工作区。",
+                )
+            )
         if len(str(args.get("content", ""))) > 5000:
             return scored(
                 GuardDecision(
@@ -235,6 +287,26 @@ def decide(
     if tool == "mail.send":
         to = str(args.get("to", ""))
         body = str(args.get("body", ""))
+        # Recipient classification alone is not an egress decision. An Agent
+        # can place a credential-shaped value in an internal address and still
+        # cause a real data disclosure. Treat destination and data class as
+        # separate gates; the body remains redacted in audit output.
+        if (
+            is_policy_enabled("sensitive-egress")
+            and recipients_are_internal(to, internal_email_domains)
+            and _contains_sensitive_egress_value(
+            {"subject": args.get("subject", ""), "body": body}
+            )
+        ):
+            return scored(
+                GuardDecision(
+                    decision="询问",
+                    risk_level="high",
+                    policy_id="sensitive-egress",
+                    reason="邮件正文或主题包含疑似凭据/敏感数据，必须在外发前完成人工复核。",
+                    recommendation="确认数据分类、收件人范围、业务目的和审批记录；未经确认不得执行外发。",
+                )
+            )
         if is_policy_enabled("bulk-action-review") and risk_hint in {"bulk_mail", "indirect_prompt_injection"}:
             policy_id = "bulk-action-review"
             if risk_hint == "indirect_prompt_injection" and is_policy_enabled("external-mail"):
@@ -261,6 +333,28 @@ def decide(
 
     if tool == "api.call":
         endpoint = canonical_text(args.get("endpoint")).lower()
+        method = canonical_text(args.get("method") or "GET").upper()
+        if method not in ALLOWED_API_METHODS:
+            return scored(
+                GuardDecision(
+                    decision="拒绝",
+                    risk_level="high",
+                    policy_id="tool-contract",
+                    reason=f"API endpoint 使用未注册的 HTTP 方法 `{method}`。",
+                    recommendation="仅允许登记的 HTTP 方法，并为写操作配置独立权限和审计。",
+                )
+            )
+        endpoint_boundary_reason = endpoint_security_reason(endpoint, sensitive_api_markers)
+        if endpoint_boundary_reason:
+            return scored(
+                GuardDecision(
+                    decision="拒绝",
+                    risk_level="critical",
+                    policy_id="sensitive-api",
+                    reason=endpoint_boundary_reason,
+                    recommendation="仅允许已登记的 HTTPS 公网目标或本地相对路由；拒绝回环、私网、链路本地、元数据和高敏路径。",
+                )
+            )
         if is_policy_enabled("tool-return-trust") and (
             risk_hint == "untrusted_tool_return"
             or endpoint in {"/tool/metadata/untrusted", "/competition/challenges/attachment/readme"}
@@ -299,6 +393,40 @@ def decide(
                     recommendation="要求最小权限令牌，并记录调用理由、赛事角色和审批人。",
                 )
             )
+        # Public HTTP is a valid read-only integration, but a model-generated
+        # write request carrying credentials or flags is an egress boundary.
+        # The generic HTTP event contract cannot prove user intent, so pause it
+        # for review instead of letting a caller-owned executor exfiltrate data.
+        if (
+            is_policy_enabled("bulk-action-review")
+            and endpoint.startswith(("http://", "https://"))
+            and method in {"POST", "PUT", "PATCH", "DELETE"}
+            and _contains_sensitive_egress_value(args)
+        ):
+            return scored(
+                GuardDecision(
+                    decision="询问",
+                    risk_level="high",
+                    policy_id="bulk-action-review",
+                    reason="外部 API 写请求携带疑似凭据或敏感数据，存在 Agent 数据外带风险。",
+                    recommendation="人工确认目标主机、数据字段、授权范围和业务审批；未确认前不得执行。",
+                )
+            )
+        if is_policy_enabled("external-api-allowlist") and endpoint.startswith(("http://", "https://")):
+            allowlist_reason = endpoint_allowlist_reason(
+                endpoint,
+                get_agent_api_allowlist(policy_settings, agent_id),
+            )
+            if allowlist_reason:
+                return scored(
+                    GuardDecision(
+                        decision="询问",
+                        risk_level="high",
+                        policy_id="external-api-allowlist",
+                        reason=allowlist_reason,
+                        recommendation="为当前 Agent 登记精确的 HTTPS API 主机（可含端口或单级子域通配符）；未登记目标不得自动外联。",
+                    )
+                )
 
     if tool == "code.run":
         command = canonical_text(args.get("command")).lower()
@@ -374,21 +502,52 @@ def decide(
     if tool == "model.respond":
         topic = canonical_text(args.get("topic"))
         model_text = canonical_text(f"{prompt} {topic} {args.get('prompt', '')}").lower()
+        if risk_hint == "resource_governance":
+            return scored(
+                GuardDecision(
+                    decision="拒绝",
+                    risk_level="high",
+                    policy_id="resource-governance",
+                    reason="Agent 请求超过并发、Token 或成本预算，Provider 尚未被调用。",
+                    recommendation="降低单次生成上限、等待预算窗口刷新，或为该 Agent 配置明确的资源配额。",
+                )
+            )
+        if risk_hint == "untrusted_tool_return" and is_policy_enabled("tool-return-trust"):
+            return scored(
+                GuardDecision(
+                    decision="隔离",
+                    risk_level="critical",
+                    policy_id="tool-return-trust",
+                    reason="工具返回内容包含指令化或敏感外传语义，不能作为可信模型上下文继续转发。",
+                    recommendation="隔离原始工具结果，仅保留扫描信号和哈希；人工确认来源后再发布经过净化的内容。",
+                )
+            )
         training_risk = risk_hint == "training_data_extraction" or any(
             marker in model_text for marker in ["训练数据", "训练样例", "逐字复述", "training data", "memorized example"]
         )
+        leak_risk = any(marker in model_text for marker in ["system prompt", "系统提示词", "developer message"])
+        description_poison = risk_hint == "tool_description_poison"
         jailbreak_risk = risk_hint in {
             "jailbreak_output",
             "rewrite_evasion",
             "refusal_rewrite",
             "prompt_pollution",
+            "tool_description_poison",
         } or any(marker in model_text for marker in ["jailbreak", "policy-evasion", "绕过", "无约束", "ignore previous"])
-        if is_policy_enabled("model-output-filter") and (training_risk or jailbreak_risk):
+        output_policy_enabled = is_policy_enabled("tool-description-scan") if description_poison else is_policy_enabled("model-output-filter")
+        if output_policy_enabled and (training_risk or jailbreak_risk or leak_risk):
+            output_risk = risk_hint in {"jailbreak_output", "rewrite_evasion", "refusal_rewrite", "prompt_pollution"}
             return scored(
                 GuardDecision(
                     decision="拒绝",
                     risk_level="high",
-                    policy_id="model-output-filter" if training_risk else "jailbreak-filter",
+                    policy_id=(
+                        "tool-description-scan"
+                        if description_poison
+                        else "model-output-filter"
+                        if (training_risk or leak_risk or output_risk)
+                        else "jailbreak-filter"
+                    ),
                     reason=f"模型输出请求 `{topic}` 命中训练数据抽取、拒答改写绕过或高风险绕过输出策略。",
                     recommendation="拒绝逐字复述训练样例、拒答规避和绕过指导，仅允许输出安全解释、脱敏摘要或防护建议。",
                 )
@@ -471,3 +630,14 @@ def decide(
             recommendation="持续记录调用链，保留后续复盘证据。",
         )
     )
+
+
+def _contains_sensitive_egress_value(value: Any) -> bool:
+    """Find credential-shaped values nested in an outbound API payload."""
+    if isinstance(value, str):
+        return any(SENSITIVE_EGRESS_MARKERS.search(variant) for variant in canonical_text_variants(value))
+    if isinstance(value, dict):
+        return any(_contains_sensitive_egress_value(key) or _contains_sensitive_egress_value(item) for key, item in value.items())
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_sensitive_egress_value(item) for item in value)
+    return False

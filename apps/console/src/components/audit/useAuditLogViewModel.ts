@@ -4,11 +4,7 @@ import type { ApprovalReview, ApprovalReviewList, AuditLog } from '@/types';
 import { writeClipboardText } from '@/utils';
 import { compareApprovalReviews } from './approvalReviewSorting';
 import { auditDeepLinkEvent, getAuditIdFromHash } from './auditDeepLink';
-import {
-  buildApprovalEvidenceText,
-  buildAuditEvidenceText,
-  buildFilteredAuditEvidenceText
-} from './auditEvidenceText';
+import { buildApprovalEvidenceText, buildAuditEvidenceText, buildFilteredAuditEvidenceText } from './auditEvidenceText';
 
 type ApprovalAction = 'approve' | 'reject';
 
@@ -98,10 +94,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
   const receiptCount = logs.filter((log) => Boolean(log.execution_receipt)).length;
   const unconfirmedCount = logs.filter((log) => log.execution_receipt_expected && !log.execution_receipt).length;
 
-  const latestReviews = useMemo(
-    () => [...approvalQueue.reviews].sort(compareApprovalReviews),
-    [approvalQueue.reviews]
-  );
+  const latestReviews = useMemo(() => [...approvalQueue.reviews].sort(compareApprovalReviews), [approvalQueue.reviews]);
 
   const loadApprovalReviews = useCallback(async () => {
     setApprovalLoading(true);
@@ -116,7 +109,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
   }, []);
 
   const handleApprovalDecision = useCallback(
-    async (review: ApprovalReview, action: ApprovalAction, executeInSandbox = false) => {
+    async (review: ApprovalReview, action: ApprovalAction) => {
       setApprovalBusyId(review.id);
       setApprovalError('');
       try {
@@ -124,11 +117,8 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
           review.id,
           action,
           action === 'approve'
-            ? executeInSandbox
-              ? '实验复核：仅在隔离环境重放，不恢复真实外部执行。'
-              : '生产复核：确认可由原始 Agent 按最小权限恢复一次。'
-            : '复核驳回：外部收件人或敏感数据范围未满足授权条件。',
-          action === 'approve' && executeInSandbox
+            ? '生产复核：确认可由原始 Agent 按最小权限恢复一次。'
+            : '复核驳回：外部收件人或敏感数据范围未满足授权条件。'
         );
         await loadApprovalReviews();
         await refresh();

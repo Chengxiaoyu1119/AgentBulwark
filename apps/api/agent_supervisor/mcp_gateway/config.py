@@ -7,8 +7,17 @@ import os
 import shlex
 from pathlib import Path
 
+from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
+
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_SERVER_NAME = "zhiAn-sentinel-mcp-gateway"
+DEFAULT_MAX_MESSAGE_BYTES = 1 * 1024 * 1024
+DEFAULT_MAX_PENDING_RESPONSES = 256
+DEFAULT_RESOURCE_LIMITS_ENABLED = True
+DEFAULT_ALLOW_SIDE_EFFECT_NOTIFICATIONS = False
+DEFAULT_NETWORK_MODE = "reject-unpinned"
+DEFAULT_SESSION_ISOLATION = True
+DEFAULT_MAX_SESSIONS = 128
 
 
 def gateway_routes() -> dict[str, list[str]]:
@@ -33,7 +42,7 @@ def gateway_routes() -> dict[str, list[str]]:
             continue
         name = str(entry.get("name", "")).strip()
         command = entry.get("command", "")
-        argv = shlex.split(str(command)) if isinstance(command, str) else [str(item) for item in command]
+        argv = _split_command(command) if isinstance(command, str) else [str(item) for item in command]
         if name and argv and name != "default":
             routes[name] = argv
     return routes
@@ -61,7 +70,32 @@ def upstream_command() -> list[str]:
     raw = os.environ.get("MCP_GATEWAY_UPSTREAM_COMMAND", "").strip()
     if not raw:
         return []
-    return shlex.split(raw)
+    return _split_command(raw)
+
+
+def _split_command(raw: str) -> list[str]:
+    """Split a configured child command without corrupting Windows paths.
+
+    ``shlex.split`` defaults to POSIX escaping, where every backslash is an
+    escape character.  That silently turns a normal Windows command such as
+    ``D:\\Software\\Python\\python.exe`` into ``D:SoftwarePythonpython.exe``
+    and makes the MCP gateway fail before it can send its first JSON-RPC frame.
+    Preserve backslashes on Windows, while still accepting quoted executable
+    paths (including paths containing spaces).  POSIX deployments retain the
+    existing shell-like parsing rules.
+    """
+    if os.name != "nt":
+        return shlex.split(raw)
+    try:
+        tokens = shlex.split(raw, posix=False)
+    except ValueError:
+        return []
+    normalized: list[str] = []
+    for token in tokens:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}:
+            token = token[1:-1]
+        normalized.append(token)
+    return normalized
 
 
 def upstream_cwd() -> str:
@@ -77,7 +111,66 @@ def gateway_enabled() -> bool:
 
 def gateway_guard_enabled() -> bool:
     """监督开关：默认开启；显式关闭时 Gateway 退化为纯代理（不建议）。"""
+    if production_security_profile():
+        return True
     return os.environ.get("MCP_GATEWAY_GUARD_ENABLED", "true").strip().lower() != "false"
+
+
+def gateway_allow_side_effect_notifications() -> bool:
+    """Whether to opt into forwarding ``tools/call`` notifications.
+
+    JSON-RPC notifications have no response channel.  A forwarded notification
+    can therefore create a side effect without giving the caller an audit
+    reference or a way to observe a post-execution audit failure.  The secure
+    default rejects them; compatibility deployments must opt in explicitly.
+    """
+    if production_security_profile():
+        return False
+    raw = os.environ.get("MCP_GATEWAY_ALLOW_SIDE_EFFECT_NOTIFICATIONS")
+    if raw is None:
+        return DEFAULT_ALLOW_SIDE_EFFECT_NOTIFICATIONS
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def gateway_network_mode() -> str:
+    """Return how MCP tools that carry absolute HTTP targets are handled.
+
+    An opaque stdio MCP child owns its own socket connection.  The Gateway can
+    resolve and audit the URL, but cannot force that child to connect to the
+    address it resolved.  Until a Gateway-owned HTTP executor exists, the
+    default is therefore fail-closed.  ``allow-unpinned`` is an explicit
+    compatibility downgrade for legacy deployments and is surfaced in status.
+    """
+    if production_security_profile():
+        return DEFAULT_NETWORK_MODE
+    raw = os.environ.get("MCP_GATEWAY_NETWORK_MODE", DEFAULT_NETWORK_MODE).strip().lower()
+    if raw in {"allow-unpinned", "reject-unpinned"}:
+        return raw
+    return DEFAULT_NETWORK_MODE
+
+
+def gateway_session_isolation() -> bool:
+    """Whether the configured Gateway allocates one MCP child per Agent session."""
+
+    # A shared MCP child leaks initialize state, catalogs and response buffers
+    # across Agents. Production deployments keep this boundary even when a
+    # stale compatibility flag says ``false``.
+    if production_security_profile():
+        return True
+    raw = os.environ.get("MCP_GATEWAY_SESSION_ISOLATION")
+    if raw is None:
+        return DEFAULT_SESSION_ISOLATION
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def gateway_max_sessions() -> int:
+    """Bound the number of live Agent/session MCP child processes."""
+
+    try:
+        value = int(os.environ.get("MCP_GATEWAY_MAX_SESSIONS", DEFAULT_MAX_SESSIONS))
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_SESSIONS
+    return max(1, min(value, 1024))
 
 
 def gateway_timeout_seconds() -> float:
@@ -85,6 +178,67 @@ def gateway_timeout_seconds() -> float:
         return float(os.environ.get("MCP_GATEWAY_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
     except ValueError:
         return DEFAULT_TIMEOUT_SECONDS
+
+
+def gateway_max_message_bytes() -> int:
+    try:
+        value = int(os.environ.get("MCP_GATEWAY_MAX_MESSAGE_BYTES", DEFAULT_MAX_MESSAGE_BYTES))
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_MESSAGE_BYTES
+    return max(16 * 1024, min(value, 16 * 1024 * 1024))
+
+
+def gateway_max_pending_responses() -> int:
+    try:
+        value = int(os.environ.get("MCP_GATEWAY_MAX_PENDING_RESPONSES", DEFAULT_MAX_PENDING_RESPONSES))
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_PENDING_RESPONSES
+    return max(16, min(value, 4096))
+
+
+def gateway_resource_limits_enabled() -> bool:
+    if production_security_profile():
+        return True
+    raw = os.environ.get("MCP_GATEWAY_RESOURCE_LIMITS_ENABLED")
+    if raw is None:
+        return DEFAULT_RESOURCE_LIMITS_ENABLED
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def gateway_resource_limits() -> dict[str, int | bool | str]:
+    """Expose the effective child-process budget without exposing secrets."""
+    def bounded(name: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(os.environ.get(name, default))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(value, maximum))
+
+    os_enforced = os.name != "nt"
+    isolation_mode = "posix-rlimit" if os_enforced else "none"
+    if os.name == "nt":
+        # Import lazily to keep the configuration module independent from the
+        # stdio client during normal startup and to make the capability check
+        # visible in runtime status before an upstream is launched.
+        try:
+            from apps.api.agent_supervisor.mcp_gateway.upstream import windows_job_objects_available
+
+            os_enforced = windows_job_objects_available()
+        except (ImportError, OSError):
+            os_enforced = False
+        isolation_mode = "windows-job-object" if os_enforced else "none"
+    return {
+        "enabled": gateway_resource_limits_enabled(),
+        "os_enforced": os_enforced,
+        "isolation_mode": isolation_mode,
+        "max_message_bytes": gateway_max_message_bytes(),
+        "max_pending_responses": gateway_max_pending_responses(),
+        "max_cpu_seconds": bounded("MCP_GATEWAY_MAX_CPU_SECONDS", 30, 1, 300),
+        "max_memory_bytes": bounded("MCP_GATEWAY_MAX_MEMORY_BYTES", 512 * 1024 * 1024, 64 * 1024 * 1024, 4 * 1024 * 1024 * 1024),
+        "max_pids": bounded("MCP_GATEWAY_MAX_PIDS", 128, 16, 4096),
+        "max_open_files": bounded("MCP_GATEWAY_MAX_OPEN_FILES", 256, 32, 4096),
+        "max_file_bytes": bounded("MCP_GATEWAY_MAX_FILE_BYTES", 16 * 1024 * 1024, 1 * 1024 * 1024, 256 * 1024 * 1024),
+    }
 
 
 def gateway_server_name() -> str:

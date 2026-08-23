@@ -18,6 +18,8 @@ ToolCapability = Literal[
     "env.read",
     "model.respond",
 ]
+ModelProviderId = Literal["openai-compatible", "deepseek", "zhipu"]
+ModelProfileId = Literal["global", "optimizer", "target"]
 
 
 def _validate_tool_call(value: dict[str, Any]) -> dict[str, Any]:
@@ -75,10 +77,16 @@ class PolicySettingsUpdate(BaseModel):
     anomaly_reject_threshold: int | None = Field(default=None, ge=1, le=100)
     approval_sla_minutes: int | None = Field(default=None, ge=1, le=1440)
     high_risk_auto_escalation: bool | None = None
+    require_agent_capability_registration: bool | None = None
+    require_agent_model_registration: bool | None = None
+    require_agent_context_registration: bool | None = None
     internal_email_domains: list[str] | None = Field(default=None, max_length=50)
     sensitive_path_markers: list[str] | None = Field(default=None, max_length=100)
     sensitive_api_markers: list[str] | None = Field(default=None, max_length=100)
     agent_tool_allowlists: dict[str, list[str]] | None = None
+    agent_api_allowlists: dict[str, list[str]] | None = None
+    agent_model_allowlists: dict[str, list[str]] | None = None
+    agent_context_allowlists: dict[str, dict[str, list[str]]] | None = None
     agent_tool_mappings: dict[str, dict[str, AgentToolMappingConfig]] | None = None
     operator: str = Field(default="security-admin", max_length=80)
     comment: str = Field(default="", max_length=500)
@@ -118,6 +126,19 @@ class ExecutionReceiptRequest(BaseModel):
     error: str = Field(default="", max_length=2000)
 
     _tool_call_within_limits = field_validator("tool_call")(_validate_tool_call)
+
+
+class GatewayToolExecutionRequest(BaseModel):
+    """Execute one Provider-generated tool call in the supervisor-owned sandbox.
+
+    The request intentionally carries only the audit binding.  The tool name and
+    arguments are loaded from the immutable gateway audit record instead of being
+    accepted again from the browser or Agent.
+    """
+
+    agent_id: str = Field(default="openai-compatible-proxy", min_length=1, max_length=160)
+    session_id: str = Field(..., min_length=1, max_length=160)
+    provider_call_id: str = Field(default="", max_length=256)
 
 
 class ModelDrivenAgentRequest(BaseModel):
@@ -262,10 +283,10 @@ class RealModelEvaluationRequest(BaseModel):
 
 
 class ModelProfileRuntimeConfigUpdate(BaseModel):
-    provider_priority: list[str] | None = None
-    model_overrides: dict[str, str] | None = None
+    provider_priority: list[ModelProviderId] | None = Field(default=None, min_length=1, max_length=3)
+    model_overrides: dict[ModelProviderId, str] | None = None
 
 
 class ModelRuntimeConfigUpdate(BaseModel):
     real_api_enabled: bool | None = None
-    profiles: dict[str, ModelProfileRuntimeConfigUpdate] | None = None
+    profiles: dict[ModelProfileId, ModelProfileRuntimeConfigUpdate] | None = None

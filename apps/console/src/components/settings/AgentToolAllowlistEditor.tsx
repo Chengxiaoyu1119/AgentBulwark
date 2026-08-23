@@ -103,7 +103,11 @@ export function AgentToolAllowlistEditor({ policySettings, canEdit, onPatch }: A
           </PanelCard>
         ))}
         {!Object.keys(allowlists).length ? (
-          <UiAlert title="当前没有 Agent 工具白名单；新增一条规则后，未授权工具会被 tool-contract 拒绝。" type="warning" showIcon />
+          <UiAlert
+            title="当前没有 Agent 工具白名单；新增一条规则后，未授权工具会被 tool-contract 拒绝。"
+            type="warning"
+            showIcon
+          />
         ) : null}
       </Space>
     </>

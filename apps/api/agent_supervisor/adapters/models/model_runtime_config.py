@@ -140,7 +140,9 @@ def get_model_runtime_config() -> dict[str, Any]:
         "real_api_enabled_source": "runtime" if isinstance(real_api_override, bool) else "env",
         "allowed_providers": [{"id": key, "label": label} for key, label in PROVIDER_LABELS.items()],
         "profiles": profiles,
-        "config_path": str(MODEL_RUNTIME_CONFIG_PATH),
+        # The config endpoint is readable by observer credentials.  Expose a
+        # stable logical location rather than the host's absolute path.
+        "config_path": "runtime/model_runtime_config.json",
     }
 
 

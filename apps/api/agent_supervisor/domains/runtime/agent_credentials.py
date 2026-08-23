@@ -5,6 +5,8 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
+
 AGENT_TOKENS_ENV = "AGENT_SUPERVISOR_AGENT_TOKENS_JSON"
 ALLOW_SHARED_EXECUTOR_TOKEN_ENV = "AGENT_SUPERVISOR_ALLOW_SHARED_EXECUTOR_TOKEN"
 MAX_AGENT_TOKEN_BINDINGS = 1000
@@ -17,6 +19,19 @@ def env_bool(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def shared_executor_compatibility_enabled() -> bool:
+    """Return whether the legacy shared executor path may cross an execution boundary.
+
+    A shared executor token has no stable Agent identity, so it is useful only
+    for local SDK migration and fixture work.  The production profile must not
+    be weakened by copying the compatibility flag from a local ``.env`` file.
+    Keep this decision in one function so HTTP proxy, runtime events and MCP
+    apply the same identity invariant.
+    """
+
+    return env_bool(ALLOW_SHARED_EXECUTOR_TOKEN_ENV) and not production_security_profile()
 
 
 def supplied_token(authorization: str | None, header_token: str | None) -> str:
@@ -88,7 +103,7 @@ def require_agent_identity(agent_id: str, current_role: str, authenticated_agent
         if not compare_digest(agent_id, authenticated_agent_id):
             raise HTTPException(status_code=403, detail="请求中的 agent_id 与服务端凭证绑定身份不一致")
         return
-    if env_bool(ALLOW_SHARED_EXECUTOR_TOKEN_ENV):
+    if shared_executor_compatibility_enabled():
         return
     raise HTTPException(status_code=403, detail="生产 Agent 必须使用服务端绑定到 agent_id 的独立凭证")
 

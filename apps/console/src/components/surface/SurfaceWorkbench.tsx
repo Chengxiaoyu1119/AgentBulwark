@@ -87,7 +87,8 @@ export function SurfaceWorkbench({
             <div className="zh-surface-run-strip__copy">
               <Typography.Text strong>真实复现闭环</Typography.Text>
               <Typography.Text type="secondary" className="zh-text-block zh-mt-4">
-                运行脚本会触发本地受控环境工具调用、监督判定、审计 hash 和证据包刷新，页面可直接打开 JSON/Markdown 核对。
+                运行脚本会触发本地受控环境工具调用、监督判定、审计 hash 和证据包刷新，页面可直接打开 JSON/Markdown
+                核对。
               </Typography.Text>
             </div>
             <div className="zh-surface-run-strip__steps">
@@ -109,10 +110,10 @@ export function SurfaceWorkbench({
               >
                 {running ? '验证中...' : '运行本攻击面'}
               </UiButton>
-              <UiButton href={evidencePackUrl} target="_blank" icon={<ExternalLink size={15} />}>
+              <UiButton authenticatedHref={evidencePackUrl} icon={<ExternalLink size={15} />}>
                 JSON 证据
               </UiButton>
-              <UiButton href={evidencePackMarkdownUrl} target="_blank" icon={<ExternalLink size={15} />}>
+              <UiButton authenticatedHref={evidencePackMarkdownUrl} icon={<ExternalLink size={15} />}>
                 Markdown 证据
               </UiButton>
             </Space>

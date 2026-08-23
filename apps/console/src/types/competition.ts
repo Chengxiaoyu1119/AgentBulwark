@@ -21,6 +21,39 @@ export interface CompetitionReadiness {
   overall_status: string;
   status_label: string;
   verdict: string;
+  production_ready?: boolean;
+  production_claim_allowed?: boolean;
+  completion_claim_allowed?: boolean;
+  gateway_ready?: boolean;
+  evaluation_ready?: boolean;
+  production_verdict?: string;
+  readiness_domains?: Record<
+    string,
+    {
+      label?: string;
+      status?: string;
+      status_label?: string;
+      required_for_gateway_claim?: boolean;
+      check_count?: number;
+      passed_count?: number;
+      warning_count?: number;
+      blocked_count?: number;
+      configured?: boolean;
+      probe_passed?: boolean;
+      operator_evidence_requested?: boolean;
+      operator_evidence_passed?: boolean | null;
+      next_action?: string;
+      gaps?: Array<{ id: string; title: string; status: string; next_action: string }>;
+    }
+  >;
+  production_gaps?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    severity: string;
+    evidence: string;
+    next_action: string;
+  }>;
   readiness_score: number;
   summary: {
     check_count: number;

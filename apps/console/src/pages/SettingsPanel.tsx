@@ -54,7 +54,7 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
           },
           {
             key: 'advanced',
-            label: '高级工具',
+            label: '验证工具（非生产路径）',
             children: (
               <Collapse
                 activeKey={advancedKeys}
@@ -68,7 +68,7 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
                 items={[
                   {
                     key: 'debug',
-                    label: '接口调试',
+                    label: '通用事件接口（建议式）',
                     children: (
                       <SupervisorDebugTab
                         externalAgentDemo={state.externalAgentDemo}
@@ -93,7 +93,7 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
                   },
                   {
                     key: 'delivery',
-                    label: '可复现验证与交付核验',
+                    label: '网关证据核验（按需）',
                     children: (
                       <DemoReadinessTab
                         overview={overview}

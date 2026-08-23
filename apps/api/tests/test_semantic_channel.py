@@ -10,10 +10,17 @@
 
 from __future__ import annotations
 
+import time
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from apps.api.agent_supervisor.domains.governance import supervisor
-from apps.api.agent_supervisor.domains.governance.semantic_detector import SemanticDetector, SemanticResult
+from apps.api.agent_supervisor.domains.governance.semantic_detector import (
+    SemanticDetector,
+    SemanticResult,
+    semantic_detector_status,
+)
 
 BENIGN_PROMPT = "请读取 public/项目说明.md 并总结要点。"
 
@@ -46,6 +53,15 @@ def _decide(prompt: str):
 
 
 class SemanticChannelDegradeTest(unittest.TestCase):
+    def test_status_exposes_model_evidence_without_claiming_load(self) -> None:
+        status = semantic_detector_status()
+        self.assertIn("enabled", status)
+        self.assertIn("model_file_present", status)
+        self.assertIn("tokenizer_file_present", status)
+        self.assertIn("loaded", status)
+        self.assertFalse(Path(str(status["model_path"])).is_absolute())
+        self.assertFalse(Path(str(status["tokenizer_path"])).is_absolute())
+
     def tearDown(self) -> None:
         supervisor.get_semantic_detector = self._original
 
@@ -63,6 +79,36 @@ class SemanticChannelDegradeTest(unittest.TestCase):
         decision = _decide(BENIGN_PROMPT)
         self.assertIn(decision.decision, {"允许", "询问"})
         self.assertIsNone(decision.model_confidence)
+
+    def test_inference_timeout_does_not_wait_for_hung_worker(self) -> None:
+        detector = SemanticDetector()
+
+        def hung_inference(_: str) -> float:
+            time.sleep(0.5)
+            return 0.0
+
+        started = time.perf_counter()
+        with (
+            patch.object(detector, "_try_load", return_value=True),
+            patch.object(detector, "_infer", side_effect=hung_inference),
+        ):
+            result = detector.detect("这是一条应该触发语义通道的测试输入")
+            elapsed = time.perf_counter() - started
+
+            self.assertFalse(result.available)
+            self.assertEqual(result.degraded_reason, "timeout-or-error")
+            # The timeout budget is 45 ms. The caller must return promptly even if
+            # the worker thread itself cannot be interrupted by Python.
+            self.assertLess(elapsed, 0.25)
+
+            # The timed-out worker remains the single in-flight job until it
+            # finishes; a second request must not enqueue another unbounded worker.
+            second_started = time.perf_counter()
+            second = detector.detect("第二条输入不应再创建新的推理线程")
+            second_elapsed = time.perf_counter() - second_started
+        self.assertFalse(second.available)
+        self.assertEqual(second.degraded_reason, "inference-busy")
+        self.assertLess(second_elapsed, 0.05)
 
 
 class SemanticChannelThresholdTest(unittest.TestCase):

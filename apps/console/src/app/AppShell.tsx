@@ -1,7 +1,7 @@
-import { type ReactNode, Suspense, useEffect, useMemo } from 'react';
+import { type ReactNode, Suspense, useEffect, useMemo, useState } from 'react';
 import { ConfigProvider, Drawer, Layout, Menu, Space, Spin, Typography, theme as antdTheme } from 'antd';
-import { Activity, Menu as MenuIcon, Moon, Play, Sun } from 'lucide-react';
-import { UiAlert, UiButton } from '../components/ui';
+import { Activity, Menu as MenuIcon, Moon, ShieldCheck, Sun } from 'lucide-react';
+import { UiAlert, UiButton, UiInput } from '../components/ui';
 import { navGroups, pageLabel, type PageKey } from './navigation';
 
 const { Sider, Header, Content } = Layout;
@@ -21,6 +21,7 @@ type AppShellProps = {
   onOpenDrawer: () => void;
   onCloseDrawer: () => void;
   onOpenLab: () => void;
+  onOpenGateway?: () => void;
 };
 
 function PageFallback() {
@@ -59,11 +60,34 @@ export function AppShell({
   onRefresh,
   onOpenDrawer,
   onCloseDrawer,
-  onOpenLab
+  onOpenLab,
+  onOpenGateway
 }: AppShellProps) {
+  const [sessionToken, setSessionToken] = useState(() => {
+    try {
+      return window.sessionStorage.getItem('agent-supervisor-api-token') ?? '';
+    } catch {
+      return '';
+    }
+  });
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
+
+  const applySessionToken = () => {
+    try {
+      if (sessionToken.trim()) {
+        window.sessionStorage.setItem('agent-supervisor-api-token', sessionToken.trim());
+      } else {
+        window.sessionStorage.removeItem('agent-supervisor-api-token');
+      }
+    } catch {
+      // Private browsing policies may deny sessionStorage; the next request
+      // will simply continue with the configured build-time token, if any.
+    }
+    onRefresh();
+  };
 
   const menuItems = useMemo(
     () =>
@@ -141,6 +165,21 @@ export function AppShell({
               </Typography.Title>
             </Space>
             <Space>
+              <UiInput.Password
+                size="small"
+                value={sessionToken}
+                onChange={(event) => setSessionToken(event.target.value)}
+                onPressEnter={applySessionToken}
+                onClear={applySessionToken}
+                allowClear
+                placeholder="运行 Token"
+                aria-label="运行时 API Token"
+                className="zh-app-token-input"
+              />
+              <UiButton size="small" onClick={applySessionToken}>
+                <span className="hide-on-mobile">应用 Token</span>
+                <span className="mobile-only">应用</span>
+              </UiButton>
               <UiButton
                 type="text"
                 icon={theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
@@ -151,8 +190,8 @@ export function AppShell({
               <UiButton icon={<Activity size={16} />} onClick={onRefresh}>
                 <span className="hide-on-mobile">刷新数据</span>
               </UiButton>
-              <UiButton type="primary" icon={<Play size={16} />} onClick={onOpenLab}>
-                <span className="hide-on-mobile">攻防验证</span>
+              <UiButton type="primary" icon={<ShieldCheck size={16} />} onClick={onOpenGateway ?? onOpenLab}>
+                <span className="hide-on-mobile">打开 LLM API / MCP 网关</span>
               </UiButton>
             </Space>
           </Header>

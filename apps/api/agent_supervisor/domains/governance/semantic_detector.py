@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import os
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +49,12 @@ class SemanticDetector:
         self._tokenizer = None
         self._model_version = ""
         self._load_attempted = False
+        # Keep semantic inference single-flight.  A Python thread cannot be
+        # force-killed when an ONNX provider hangs; creating a fresh executor
+        # per request would therefore leak one worker for every timed-out
+        # request and turn the detector into a resource-exhaustion vector.
+        self._inference_executor: ThreadPoolExecutor | None = None
+        self._inference_future: Future[float] | None = None
 
     # -- 生命周期 -----------------------------------------------------------
 
@@ -96,25 +104,62 @@ class SemanticDetector:
             if not self._try_load():
                 return SemanticResult(available=False, degraded_reason="model-unavailable")
             import time
-            from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
 
-            started = time.perf_counter()
-            try:
-                with ThreadPoolExecutor(max_workers=1, thread_name_prefix="semantic") as pool:
-                    future = pool.submit(self._infer, text)
-                    probability = future.result(timeout=INFERENCE_TIMEOUT_SECONDS)
-            except Exception:  # noqa: BLE001 - 超时或推理异常都降级
-                return SemanticResult(
-                    available=False,
-                    latency_ms=round((time.perf_counter() - started) * 1000, 3),
-                    degraded_reason="timeout-or-error",
+            # A timed-out worker may still be running.  Do not enqueue another
+            # inference behind it: fail open to the rule channel for this call
+            # and let the single worker drain in the background.
+            if self._inference_future is not None:
+                if not self._inference_future.done():
+                    return SemanticResult(available=False, degraded_reason="inference-busy")
+                self._inference_future = None
+            if self._inference_executor is None:
+                self._inference_executor = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="semantic",
                 )
+            started = time.perf_counter()
+            future = self._inference_executor.submit(self._infer, text)
+            self._inference_future = future
+        try:
+            probability = future.result(timeout=INFERENCE_TIMEOUT_SECONDS)
+        except FutureTimeoutError:
+            # ``Future.cancel`` cannot stop a running ONNX call, but clearing
+            # the future here would allow unbounded queued work.  Keep it as
+            # the single in-flight marker until the worker actually finishes.
+            future.cancel()
+            return SemanticResult(
+                available=False,
+                latency_ms=round((time.perf_counter() - started) * 1000, 3),
+                degraded_reason="timeout-or-error",
+            )
+        except Exception:  # noqa: BLE001 - 推理异常降级
+            with self._lock:
+                if self._inference_future is future:
+                    self._inference_future = None
+            return SemanticResult(
+                available=False,
+                latency_ms=round((time.perf_counter() - started) * 1000, 3),
+                degraded_reason="timeout-or-error",
+            )
+        else:
+            with self._lock:
+                if self._inference_future is future:
+                    self._inference_future = None
             return SemanticResult(
                 available=True,
                 probability=probability,
                 latency_ms=round((time.perf_counter() - started) * 1000, 3),
                 model_version=self._model_version,
             )
+
+    def close(self) -> None:
+        """Stop the detector's worker when a process/test is being torn down."""
+        with self._lock:
+            executor = self._inference_executor
+            self._inference_executor = None
+            self._inference_future = None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _infer(self, text: str) -> float:
         assert self._tokenizer is not None and self._session is not None
@@ -161,4 +206,25 @@ def reset_semantic_detector() -> None:
     """测试辅助：强制下次重新加载模型。"""
     global _detector
     with _detector_lock:
+        if _detector is not None:
+            _detector.close()
         _detector = None
+
+
+def semantic_detector_status() -> dict[str, object]:
+    """Expose availability evidence without triggering model loading/inference."""
+    detector = get_semantic_detector()
+    return {
+        "enabled": detector.enabled_by_config(),
+        # Do not disclose the server's absolute filesystem path through a
+        # read-only status endpoint; the relative artifact names are enough
+        # to explain which evidence is missing.
+        "model_path": "training/model/jailbreak_bert.onnx",
+        "tokenizer_path": "training/model/tokenizer.json",
+        "model_file_present": MODEL_PATH.exists(),
+        "tokenizer_file_present": TOKENIZER_PATH.exists(),
+        "load_attempted": detector._load_attempted,
+        "loaded": detector._session is not None,
+        "model_version": detector.model_version,
+        "inference_timeout_ms": round(INFERENCE_TIMEOUT_SECONDS * 1000, 3),
+    }

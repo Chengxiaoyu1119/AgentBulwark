@@ -28,11 +28,25 @@
     "description": "向外部收件人发送邮件时要求人工确认，只写入本地沙箱 outbox。"
   },
   {
+    "id": "sensitive-egress",
+    "name": "敏感数据外发复核",
+    "decision": "询问",
+    "enabled": true,
+    "description": "内部收件人也要经过数据分类复核：主题或正文出现凭据/敏感数据特征时，外发前要求人工确认。"
+  },
+  {
     "id": "sensitive-api",
     "name": "高敏 API 审计",
     "decision": "拒绝",
     "enabled": true,
     "description": "禁止无授权访问参赛队伍明细、提交物、成绩榜、赛题种子和管理员接口。"
+  },
+  {
+    "id": "external-api-allowlist",
+    "name": "Agent 外部 API 主机白名单",
+    "decision": "询问",
+    "enabled": true,
+    "description": "绝对 HTTP(S) 目标必须绑定到当前 Agent 的已登记主机；未登记目标进入人工复核，避免模型驱动数据外带。"
   },
   {
     "id": "memory-write",

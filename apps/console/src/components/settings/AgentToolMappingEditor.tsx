@@ -51,7 +51,10 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
     Object.entries(mappings).map(([tool, config]) => ({ agentId, tool, config }))
   );
 
-  function patchRegistry(nextRegistry: PolicySettings['agent_tool_mappings'], nextAllowlists = policySettings?.agent_tool_allowlists) {
+  function patchRegistry(
+    nextRegistry: PolicySettings['agent_tool_mappings'],
+    nextAllowlists = policySettings?.agent_tool_allowlists
+  ) {
     onPatch({ agent_tool_mappings: nextRegistry ?? {}, agent_tool_allowlists: nextAllowlists ?? {} });
   }
 
@@ -96,7 +99,8 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
   }
 
   function addEntry() {
-    const agentId = Object.keys(registry)[0] ?? Object.keys(policySettings?.agent_tool_allowlists ?? {})[0] ?? 'agent-1';
+    const agentId =
+      Object.keys(registry)[0] ?? Object.keys(policySettings?.agent_tool_allowlists ?? {})[0] ?? 'agent-1';
     let index = entries.length + 1;
     let tool = entries.length ? `custom.tool_${index}` : 'browser.open';
     while (registry[agentId]?.[tool]) {
@@ -105,10 +109,7 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
     }
     const allowlists = { ...(policySettings?.agent_tool_allowlists ?? {}) };
     allowlists[agentId] = Array.from(new Set([...(allowlists[agentId] ?? []), tool]));
-    patchRegistry(
-      { ...registry, [agentId]: { ...registry[agentId], [tool]: defaultMapping } },
-      allowlists
-    );
+    patchRegistry({ ...registry, [agentId]: { ...registry[agentId], [tool]: defaultMapping } }, allowlists);
   }
 
   return (
@@ -117,7 +118,8 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
         <div>
           <Typography.Text strong>自定义工具能力映射</Typography.Text>
           <Typography.Text type="secondary" className="zh-meta-block">
-            把 browser.open、database.query 等真实工具映射为标准安全能力；策略仍由服务端执行，Agent 不能自行降低风险类型。
+            把 browser.open、database.query 等真实工具映射为标准安全能力；策略仍由服务端执行，Agent
+            不能自行降低风险类型。
           </Typography.Text>
         </div>
         <UiButton disabled={!canEdit} onClick={addEntry}>
@@ -129,7 +131,9 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
           <PanelCard key={`${agentId}:${tool}`} size="small" bodyPadding={12}>
             <Row gutter={[12, 12]} align="middle">
               <Col xs={24} lg={5}>
-                <Typography.Text type="secondary" className="zh-meta-block">Agent ID</Typography.Text>
+                <Typography.Text type="secondary" className="zh-meta-block">
+                  Agent ID
+                </Typography.Text>
                 <UiInput
                   defaultValue={agentId}
                   disabled={!canEdit}
@@ -137,7 +141,9 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
                 />
               </Col>
               <Col xs={24} lg={5}>
-                <Typography.Text type="secondary" className="zh-meta-block">原始工具名</Typography.Text>
+                <Typography.Text type="secondary" className="zh-meta-block">
+                  原始工具名
+                </Typography.Text>
                 <UiInput
                   defaultValue={tool}
                   disabled={!canEdit}
@@ -145,7 +151,9 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
                 />
               </Col>
               <Col xs={24} lg={5}>
-                <Typography.Text type="secondary" className="zh-meta-block">标准安全能力</Typography.Text>
+                <Typography.Text type="secondary" className="zh-meta-block">
+                  标准安全能力
+                </Typography.Text>
                 <UiSelect
                   value={config.capability}
                   options={capabilityOptions}
@@ -155,21 +163,29 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
                 />
               </Col>
               <Col xs={24} lg={7}>
-                <Typography.Text type="secondary" className="zh-meta-block">参数映射（原始:标准）</Typography.Text>
+                <Typography.Text type="secondary" className="zh-meta-block">
+                  参数映射（原始:标准）
+                </Typography.Text>
                 <UiSelect
                   mode="tags"
                   value={mappingTags(config.argument_mapping)}
                   disabled={!canEdit}
-                  onChange={(value) => updateConfig(agentId, tool, { argument_mapping: parseMappingTags(value.map(String)) })}
+                  onChange={(value) =>
+                    updateConfig(agentId, tool, { argument_mapping: parseMappingTags(value.map(String)) })
+                  }
                   className="zh-full-width"
                   placeholder="例如 url:endpoint"
                 />
               </Col>
               <Col xs={24} lg={2}>
-                <UiButton danger disabled={!canEdit} onClick={() => removeEntry(agentId, tool)}>删除</UiButton>
+                <UiButton danger disabled={!canEdit} onClick={() => removeEntry(agentId, tool)}>
+                  删除
+                </UiButton>
               </Col>
               <Col xs={24} lg={8}>
-                <Typography.Text type="secondary" className="zh-meta-block">必填原始参数</Typography.Text>
+                <Typography.Text type="secondary" className="zh-meta-block">
+                  必填原始参数
+                </Typography.Text>
                 <UiSelect
                   mode="tags"
                   value={config.required_arguments}
@@ -180,7 +196,9 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
                 />
               </Col>
               <Col xs={24} lg={8}>
-                <Typography.Text type="secondary" className="zh-meta-block">固定风险提示</Typography.Text>
+                <Typography.Text type="secondary" className="zh-meta-block">
+                  固定风险提示
+                </Typography.Text>
                 <UiInput
                   value={config.risk_hint}
                   disabled={!canEdit}
@@ -188,7 +206,9 @@ export function AgentToolMappingEditor({ policySettings, canEdit, onPatch }: Age
                 />
               </Col>
               <Col xs={24} lg={8}>
-                <Typography.Text type="secondary" className="zh-meta-block">用途说明</Typography.Text>
+                <Typography.Text type="secondary" className="zh-meta-block">
+                  用途说明
+                </Typography.Text>
                 <UiInput
                   value={config.description}
                   disabled={!canEdit}

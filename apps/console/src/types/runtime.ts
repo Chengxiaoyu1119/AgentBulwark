@@ -51,9 +51,19 @@ export interface AuditLog {
   previous_hash?: string;
   audit_hash?: string;
   tool_call_hash?: string;
-  execution_status?: 'completed' | 'failed' | 'not_executed' | 'awaiting_receipt' | 'server_sandbox_completed' | 'not_applicable' | string;
+  execution_status?:
+    | 'completed'
+    | 'failed'
+    | 'not_executed'
+    | 'awaiting_receipt'
+    | 'server_sandbox_completed'
+    | 'not_applicable'
+    | string;
   execution_target?: 'real' | 'sandbox' | 'none' | 'unknown' | string;
   execution_receipt?: ExecutionReceipt | null;
+  execution_evidence?: 'server-observed' | 'caller-declared-required' | 'not-executed-observed' | string;
+  execution_observed_by_server?: boolean;
+  stage_context?: Record<string, unknown>;
   tool_output: {
     executed: boolean;
     sandboxed: boolean;
@@ -86,11 +96,25 @@ export interface ExecutionReceipt {
   receipt_hash?: string;
   receipt_signature?: string;
   receipt_signature_key_id?: string;
+  execution_evidence?: 'caller-declared' | 'server-observed' | string;
+  execution_observed_by_server?: boolean;
   agent_followed_decision?: boolean;
   execution_confirmed?: boolean;
   control_verified?: boolean;
   created_at?: string;
   event_id?: number;
+}
+
+export interface GatewayToolExecutionResult {
+  audit_id: string;
+  idempotent: boolean;
+  provider_call_id?: string;
+  execution_evidence: string;
+  execution_observed_by_server: boolean;
+  execution_result: Record<string, unknown>;
+  tool_result: string;
+  tool_result_hash: string;
+  receipt?: ExecutionReceipt | null;
 }
 
 export interface AuditHashVerification {

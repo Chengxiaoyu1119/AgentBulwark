@@ -16,8 +16,11 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
   }
 
   const receipt = log.execution_receipt;
-  const executionStatus = log.execution_status ?? (receipt ? receipt.status : log.execution_receipt_expected ? 'awaiting_receipt' : 'not_applicable');
-  const executionTarget = log.execution_target ?? (receipt ? receipt.execution_target : log.execution_receipt_expected ? 'unknown' : 'none');
+  const executionStatus =
+    log.execution_status ??
+    (receipt ? receipt.status : log.execution_receipt_expected ? 'awaiting_receipt' : 'not_applicable');
+  const executionTarget =
+    log.execution_target ?? (receipt ? receipt.execution_target : log.execution_receipt_expected ? 'unknown' : 'none');
   const statusLabel =
     executionStatus === 'completed'
       ? '已完成'
@@ -29,7 +32,7 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
             ? '服务端沙箱已完成'
             : executionStatus === 'not_applicable'
               ? '无需外部回执'
-            : '等待外部回执';
+              : '等待外部回执';
 
   return (
     <PanelCard
@@ -67,13 +70,26 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
         <Descriptions.Item label="实际执行目标">
           <UiBadge
             status={executionTarget === 'real' ? 'warning' : executionTarget === 'sandbox' ? 'processing' : 'default'}
-            text={executionTarget === 'real' ? '真实执行器' : executionTarget === 'sandbox' ? '沙箱' : executionTarget === 'none' ? '无' : '未确认'}
+            text={
+              executionTarget === 'real'
+                ? '真实执行器'
+                : executionTarget === 'sandbox'
+                  ? '沙箱'
+                  : executionTarget === 'none'
+                    ? '无'
+                    : '未确认'
+            }
           />
         </Descriptions.Item>
         <Descriptions.Item label="工具本次执行">
-          <UiBadge status={log.tool_output.executed ? 'success' : 'default'} text={log.tool_output.executed ? '是' : '否'} />
+          <UiBadge
+            status={log.tool_output.executed ? 'success' : 'default'}
+            text={log.tool_output.executed ? '是' : '否'}
+          />
         </Descriptions.Item>
-        <Descriptions.Item label="执行耗时">{receipt?.duration_ms != null ? `${receipt.duration_ms} ms` : '未收到回执'}</Descriptions.Item>
+        <Descriptions.Item label="执行耗时">
+          {receipt?.duration_ms != null ? `${receipt.duration_ms} ms` : '未收到回执'}
+        </Descriptions.Item>
         <Descriptions.Item label="结果 Hash">{receipt?.result_hash || '未收到回执'}</Descriptions.Item>
         <Descriptions.Item label="回执 Hash">{receipt?.receipt_hash || '未收到回执'}</Descriptions.Item>
         <Descriptions.Item label="回执签名">
@@ -83,7 +99,8 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
 
       {!receipt && executionStatus === 'awaiting_receipt' ? (
         <Typography.Paragraph type="warning">
-          监督器判定已经完成，但外部 Agent 尚未回传执行回执；“允许”不等于工具已经成功，“拒绝/询问”也暂时不能证明调用方遵守。
+          监督器判定已经完成，但外部 Agent
+          尚未回传执行回执；“允许”不等于工具已经成功，“拒绝/询问”也暂时不能证明调用方遵守。
         </Typography.Paragraph>
       ) : null}
 

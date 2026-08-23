@@ -7,10 +7,7 @@ export function AdversarialHoldoutPanel({ report }: { report: AdversarialHoldout
   return (
     <PanelCard
       title={
-        <SectionTitle
-          title="独立对抗留出集"
-          meta={`${summary.sample_count} 条人工固定标签 / ${report.label_source}`}
-        />
+        <SectionTitle title="独立对抗留出集" meta={`${summary.sample_count} 条人工固定标签 / ${report.label_source}`} />
       }
       variant="borderless"
     >

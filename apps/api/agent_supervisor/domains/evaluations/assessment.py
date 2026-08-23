@@ -38,7 +38,7 @@ REQUIREMENT_ALIGNMENT = [
     {
         "id": "open-agent",
         "requirement": "开源智能化应用适配",
-        "expected": "至少提供 OpenClaw 或同类开源智能体应用的接入形态。",
+        "expected": "至少提供一个真实 Agent、OpenAI 兼容 API 或 MCP 的可验证接入形态；具体框架适配器可选。",
     },
     {
         "id": "model-filter",

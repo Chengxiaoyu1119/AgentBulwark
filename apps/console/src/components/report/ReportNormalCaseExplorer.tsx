@@ -86,10 +86,10 @@ export function ReportNormalCaseExplorer({ evaluation }: ReportNormalCaseExplore
           {filteredCases.filter((item) => item.is_false_positive).length} 个。
         </Typography.Text>
         <Space wrap>
-          <UiButton size="small" href="/api/datasets/benign_cases.md" target="_blank" icon={<ExternalLink size={14} />}>
+          <UiButton size="small" authenticatedHref="/api/datasets/benign_cases.md" icon={<ExternalLink size={14} />}>
             打开样本集
           </UiButton>
-          <UiButton size="small" href="/api/evaluations/benign" target="_blank" icon={<ExternalLink size={14} />}>
+          <UiButton size="small" authenticatedHref="/api/evaluations/benign" icon={<ExternalLink size={14} />}>
             打开评测 JSON
           </UiButton>
         </Space>

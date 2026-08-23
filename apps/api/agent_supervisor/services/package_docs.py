@@ -50,7 +50,7 @@ def _submission_readme(package: dict[str, Any]) -> str:
         [
             "# 智安哨初赛提交包",
             "",
-            "项目名称：智安哨：面向大模型智能体工具调用链的运行时行为防火墙与评测系统",
+            "项目名称：智安哨：面向 LLM Agent、OpenAI 兼容 API 与 MCP 的运行时安全网关",
             "",
             "## 项目定位",
             "",
@@ -207,6 +207,7 @@ def _api_inventory() -> str:
             "| `/api/compare` | POST | 单脚本无防护/有防护对比 |",
             "| `/api/batch_compare` | POST | 批量对比全部攻击脚本 |",
             "| `/api/runtime/evaluate` | POST | 强制开启防护的通用外部智能体工具调用事件评估，并写入审计证据 |",
+            "| `/api/runtime/execute` | POST | 服务端强制监督并在隔离执行器中处理单个 Agent 工具调用，返回执行结果与审计证据 |",
             "| `/api/runtime/batch_evaluate` | POST | 强制开启防护的批量外部智能体事件评估，返回控制率并写入审计证据 |",
             "| `/api/audit_logs` | GET | 行为监督审计日志 |",
             "| `/api/alerts` | GET | 告警与阻断记录 |",
@@ -231,9 +232,9 @@ def _api_inventory() -> str:
             "| `/api/project_roadmap` | GET | 项目成熟度、方向判断、缺口 Backlog 和下一轮建议 JSON |",
             "| `/api/project_roadmap.md` | GET | 项目成熟度与缺口路线图 Markdown |",
             "| `/api/project_roadmap/write` | POST | 在本地生成项目成熟度路线图 JSON 与 Markdown |",
-            "| `/api/readiness` | GET | 赛前一键体检 JSON，检查攻击面、误报、OpenClaw 和报告证据状态 |",
-            "| `/api/readiness.md` | GET | 赛前一键体检 Markdown 报告 |",
-            "| `/api/readiness/write` | POST | 在本地生成赛前一键体检 JSON 与 Markdown 报告 |",
+            "| `/api/readiness` | GET | AI Agent 安全网关就绪 JSON，检查 LLM API/MCP 边界、真实模型、误报和审计状态 |",
+            "| `/api/readiness.md` | GET | AI Agent 安全网关就绪 Markdown 报告 |",
+            "| `/api/readiness/write` | POST | 在本地生成 AI Agent 安全网关就绪 JSON 与 Markdown 报告 |",
             "| `/api/evaluations/anomaly_calibration` | GET | 异常检测阈值校准 JSON，含推荐阈值、召回率、误报率和复核样本 |",
             "| `/api/evaluations/anomaly_calibration.md` | GET | 异常检测阈值校准 Markdown 报告 |",
             "| `/api/evaluations/anomaly_calibration/write` | POST | 在本地生成异常检测阈值校准 JSON 与 Markdown |",
@@ -254,6 +255,11 @@ def _api_inventory() -> str:
             "| `/api/integrations/openclaw/plugin_package/validation` | GET | OpenClaw 插件包静态验收结果，含文件、Hook 和 JS 语法检查 |",
             "| `/api/integrations/openclaw/plugin_package/validation.md` | GET | OpenClaw 插件包验收 Markdown 报告 |",
             "| `/api/integrations/openclaw/plugin_package/validation/write` | POST | 在本地生成 OpenClaw 插件包验收 JSON 与 Markdown |",
+            "| `/api/mcp` | POST | MCP Streamable HTTP 子集入口，所有 `tools/call` 经过网关监督 |",
+            "| `/api/mcp/info` | GET | MCP Gateway 状态与会话隔离信息 |",
+            "| `/api/mcp/notifications` | POST | analyst/admin 消费限定 Agent 会话的上游通知队列 |",
+            "| `/api/mcp/tools/evidence` | GET | analyst/admin 查询 operator-only 工具路由、扫描、过滤与冲突证据 |",
+            "| `/api/mcp/context/evidence` | GET | analyst/admin 查询 operator-only resource/template/prompt 路由、Hash 与白名单证据 |",
             "| `/api/integrations/openclaw/events` | POST | 外部智能体工具调用事件判定 |",
             "| `/api/integrations/openclaw/minimal_agent_demo` | POST | 页面一键运行最小外部 Agent 真实工具调度验证，并生成证据文件 |",
         ]
@@ -291,7 +297,7 @@ def _source_tree() -> str:
             "| `apps/api/agent_supervisor/services/package_service.py` | 成果材料包和提交包生成 |",
             "| `apps/api/agent_supervisor/events.py` | 外部智能体工具调用事件评估和审计落库 |",
             "| `apps/api/agent_supervisor/openclaw_adapter.py` | OpenClaw 兼容接口、源码级 native plugin 包生成 |",
-            "| `apps/api/agent_supervisor/readiness.py` | 赛前一键体检、提交包完整性检查和 P0 补证项汇总 |",
+            "| `apps/api/agent_supervisor/domains/reports/readiness.py` | AI Agent 安全网关就绪检查、真实 Provider 证据和运行时缺口汇总 |",
             "| `apps/api/agent_supervisor/surface_pack.py` | 单个攻击面证据包生成、Markdown 导出和索引汇总 |",
             "| `apps/api/agent_supervisor/main.py` | FastAPI 后端接口 |",
             "| `apps/api/agent_supervisor/cli.py` | 命令行运行、导出和打包入口 |",
@@ -308,7 +314,7 @@ def _source_tree() -> str:
             "| `apps/console/src/components/policy/` | 防御策略中心组件，承载策略影响矩阵、覆盖工具、攻击面和关闭影响说明 |",
             "| `apps/console/src/styles.css` | 前端页面样式 |",
             "| `scripts/frontend-governance-check.mjs` | 前端规范检查脚本，统计超大文件和样式硬编码问题 |",
-            "| `scripts/project-self-review.mjs` | 多 Agent 自审报告脚本，汇总结构、截图、体检和提交包状态 |",
+            "| `scripts/project-self-review.mjs` | 确定性网关自审报告脚本，汇总代码路径、HTTP 探针、体检和提交包状态；不声称多 Agent 交叉结论 |",
             "| `docs/` | 项目立项、方案、报告大纲和交付说明 |",
         ]
     )
@@ -359,6 +365,7 @@ def _real_integration_guide() -> str:
             "# 真实接入与攻击面扩展说明",
             "",
             "外部智能体可以在工具执行前 POST 到 `/api/runtime/evaluate`，平台返回监督决策并写入审计日志。",
+            "若由平台托管工具执行，可 POST 到 `/api/runtime/execute`；该入口强制监督和隔离执行器，调用方的执行开关不改变服务端安全边界。",
         ]
     )
 
@@ -397,7 +404,7 @@ def _multi_agent_self_review_record() -> str:
         [
             "# 多 Agent 自审优化闭环报告",
             "",
-            "本轮通过代码结构、页面审美和成果交付三个子代理并行审查，再由主线程完成低风险修复和自动自审报告生成。",
+            "本记录由确定性检查脚本汇总代码结构、页面审美和成果交付轨道；它不是多个独立 Agent 的交叉审查结论。",
         ]
     )
 
@@ -518,7 +525,7 @@ def _readiness_record() -> str:
         return doc_path.read_text(encoding="utf-8")
     return "\n".join(
         [
-            "# 赛前一键体检完善记录",
+            "# AI Agent 安全网关就绪检查记录",
             "",
             "## 本轮新增",
             "",
@@ -529,7 +536,7 @@ def _readiness_record() -> str:
             "   - `POST /api/readiness/write`",
             "3. 新增 CLI：",
             "   - `node scripts/agent-supervisor-cli.mjs readiness --write --output apps/api/sandbox/reports`",
-            "4. 提交包新增 `16_赛前一键体检报告.md`，并在运行说明目录归档 JSON 与 Markdown 证据。",
+            "4. 交付包新增 `16_AI-Agent安全网关就绪检查.md`，并在运行说明目录归档 JSON 与 Markdown 证据。",
             "",
             "## 体检范围",
             "",
@@ -539,8 +546,8 @@ def _readiness_record() -> str:
             "- 正常业务任务单步误报评测",
             "- 连续正常业务任务流程误报评测",
             "- 异常检测阈值校准",
-            "- OpenClaw 插件静态、契约端到端和 runtime inspect 证据",
-            "- 200条冻结集、四组基线与性能证据",
+            "- LLM API / MCP 强制执行边界与审计回执",
+            "- 真实 Provider 结构化工具调用与正常任务证据",
             "- 初赛提交包、manifest 和复现截图完整性",
             "",
             "## 当前证据状态",

@@ -63,7 +63,25 @@ def reset_target_lab() -> dict[str, Any]:
 
 def target_lab_snapshot(state_path: Path | None = None) -> dict[str, Any]:
     resolved_path = state_path or TARGET_STATE_PATH
-    return _summarize_state(init_target_lab(state_path=resolved_path), resolved_path)
+    try:
+        state = json.loads(resolved_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        state = None
+    if not isinstance(state, dict) or not _is_valid_state(state):
+        return {
+            "version": "",
+            "initialized": False,
+            "state_path": _public_state_path(resolved_path),
+            "updated_at": "",
+            "team_count": 0,
+            "submission_count": 0,
+            "review_note_count": 0,
+            "api_call_count": 0,
+            "bulk_export_count": 0,
+            "sensitive_read_count": 0,
+            "latest_api_call": None,
+        }
+    return {**_summarize_state(state, resolved_path), "initialized": True}
 
 
 def handle_target_api_call(endpoint: str, args: dict[str, Any], state_path: Path | None = None) -> dict[str, Any]:
@@ -201,7 +219,7 @@ def _is_valid_state(state: dict[str, Any]) -> bool:
 def _summarize_state(state: dict[str, Any], state_path: Path = TARGET_STATE_PATH) -> dict[str, Any]:
     return {
         "version": state["version"],
-        "state_path": str(state_path),
+        "state_path": _public_state_path(state_path),
         "updated_at": state["updated_at"],
         "team_count": len(state["teams"]),
         "submission_count": len(state["submissions"]),
@@ -211,6 +229,10 @@ def _summarize_state(state: dict[str, Any], state_path: Path = TARGET_STATE_PATH
         "sensitive_read_count": state["sensitive_read_count"],
         "latest_api_call": state["api_audit"][-1] if state["api_audit"] else None,
     }
+
+
+def _public_state_path(state_path: Path) -> str:
+    return f"sandbox/runtime/target_lab/{state_path.name}"
 
 
 def _count_by_key(items: list[dict[str, Any]], key: str) -> dict[str, int]:

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { navItems, pageFromHash, pageLabel } from './navigation';
 
 describe('primary navigation', () => {
-  it('keeps the product surface focused on five daily tasks', () => {
-    expect(navItems.map((item) => item.key)).toEqual(['dashboard', 'audit', 'lab', 'policy', 'settings']);
+  it('keeps the product surface focused on the gateway and five daily tasks', () => {
+    expect(navItems.map((item) => item.key)).toEqual(['gateway', 'dashboard', 'audit', 'policy', 'settings']);
   });
 
   it('preserves old deep links for secondary tools', () => {

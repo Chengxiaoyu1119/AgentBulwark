@@ -43,6 +43,7 @@ export interface ReportSummary {
   real_model_causal_integrity_rate?: number;
   real_model_provider_evidence_coverage_rate?: number;
   real_model_report_integrity_valid?: boolean;
+  real_model_report_freshness_valid?: boolean;
   real_model_strict_ready?: boolean;
 }
 

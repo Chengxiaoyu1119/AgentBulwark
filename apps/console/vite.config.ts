@@ -56,7 +56,15 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
-    css: true
+    css: true,
+    // Ant Design's jsdom-heavy gateway and evidence views routinely need
+    // several seconds to mount when the full suite is loaded together.  The
+    // previous five-second default made the same tests pass in isolation but
+    // fail under the normal repository verification command.  Keep the
+    // timeout bounded while making the result independent of file scheduling.
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
+    fileParallelism: false
   },
   build: {
     rollupOptions: {

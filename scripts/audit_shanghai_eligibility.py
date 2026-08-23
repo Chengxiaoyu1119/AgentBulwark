@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_MARKERS = ("智安哨", "大模型智能体", "行为监督")
-CURRENT_TITLE = "智安哨：面向大模型智能体工具调用链的运行时行为防火墙与评测系统"
+CURRENT_TITLE = "智安哨：面向 LLM Agent、OpenAI 兼容 API 与 MCP 的运行时安全网关"
 HISTORICAL_TITLE = "智安哨：面向大模型智能体应用安全的攻击面研究与行为监督平台"
-RULE_SOURCE = "docs/上海信息安全/2026上海大学生网络安全大赛暨“磐石行动”攻防活动报名通知.pdf"
+RULE_SOURCE = "https://security.zone.ci/secarticles/wx/564281.html（转载自上海市大学生网络安全大赛公众号）"
 DEADLINE = "2026年8月17日24:00"
 
 

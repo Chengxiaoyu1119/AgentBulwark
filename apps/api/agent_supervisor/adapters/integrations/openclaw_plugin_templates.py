@@ -54,7 +54,7 @@ def _openclaw_plugin_manifest(supervisor_url: str) -> str:
                     "apiToken": {
                         "type": "string",
                         "default": "",
-                        "description": "智安哨 API Token；也可使用 AGENT_SUPERVISOR_API_TOKEN 环境变量。",
+                        "description": "智安哨执行 Token；优先使用 AGENT_SUPERVISOR_AGENT_TOKEN 或 AGENT_SUPERVISOR_API_TOKEN_EXECUTOR。",
                     },
                     "timeoutMs": {
                         "type": "integer",
@@ -144,7 +144,12 @@ function getConfig(event) {{
         process.env.AGENT_SUPERVISOR_URL ??
         DEFAULT_SUPERVISOR_URL,
     ),
-    apiToken: String(pluginConfig.apiToken ?? process.env.AGENT_SUPERVISOR_API_TOKEN ?? ""),
+    apiToken: String(
+      pluginConfig.apiToken ??
+      process.env.AGENT_SUPERVISOR_AGENT_TOKEN ??
+      process.env.AGENT_SUPERVISOR_API_TOKEN_EXECUTOR ??
+      ""
+    ),
     timeoutMs: Number(pluginConfig.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     failClosedDecision: String(pluginConfig.failClosedDecision ?? "询问"),
     inspectToolResults: pluginConfig.inspectToolResults !== false,

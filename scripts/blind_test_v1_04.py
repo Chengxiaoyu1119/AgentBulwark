@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -31,8 +32,15 @@ from apps.api.agent_supervisor.domains.evaluations.benign_cases_group2 import (
 )
 from apps.api.agent_supervisor.domains.runtime.events import evaluate_agent_event
 
-SUPERVISOR_URL = "http://127.0.0.1:8012/api/runtime/evaluate"
-API_TOKEN = "a9ed27e53b56898f529a4d0ddbfcd472419bd74216b9492d16f1b77308c61a0b"
+SUPERVISOR_URL = os.getenv(
+    "AGENT_SUPERVISOR_SUPERVISOR_URL",
+    "http://127.0.0.1:8012/api/runtime/evaluate",
+).strip()
+# This historical V1-04 script must never carry a reusable credential in the
+# repository.  The current CLI accepts an explicit token through the process
+# environment; keep the same contract here for anyone still replaying the
+# archived blind-test flow.
+API_TOKEN = os.getenv("AGENT_SUPERVISOR_API_TOKEN", "").strip()
 REPEAT_TIMES = 3
 REPORT_PATH = PROJECT_ROOT / "apps" / "api" / "sandbox" / "reports" / "blind_test_report_v1_04.json"
 
@@ -219,6 +227,10 @@ def evaluate_with_supervisor(sample: dict[str, Any], tool_call: dict[str, Any]) 
 
 def run_blind_test() -> dict[str, Any]:
     """执行完整盲测。"""
+    if not API_TOKEN:
+        raise RuntimeError(
+            "缺少 AGENT_SUPERVISOR_API_TOKEN；历史盲测脚本不再内置访问凭据。"
+        )
     print("=" * 60)
     print("V1-04 真实模型盲测开始")
     print("=" * 60)

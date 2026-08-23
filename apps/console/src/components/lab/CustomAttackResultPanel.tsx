@@ -40,8 +40,10 @@ export function CustomAttackResultPanel({
     result.summary.same_initial_state &&
     Boolean(
       result.receipts.without_guard?.execution_confirmed &&
+      result.receipts.without_guard?.execution_observed_by_server &&
       result.receipts.without_guard.agent_followed_decision &&
       result.receipts.with_guard?.control_verified &&
+      result.receipts.with_guard?.execution_observed_by_server &&
       result.receipts.with_guard.agent_followed_decision
     );
   async function continueAgentChain() {
@@ -198,11 +200,11 @@ function BranchResult({
     ? '攻击判据成立'
     : branch.effect_observed
       ? '工具副作用已落地，但未命中攻击判据'
-    : isolatedDecision && branch.executor_called
-      ? '已隔离执行，风险未落地'
-      : evaluation.decision === '允许'
-        ? '未观察到工具副作用'
-        : '已阻断';
+      : isolatedDecision && branch.executor_called
+        ? '已隔离执行，风险未落地'
+        : evaluation.decision === '允许'
+          ? '未观察到工具副作用'
+          : '已阻断';
   return (
     <div className="zh-custom-attack-branch">
       <div className="zh-custom-attack-branch__header">
@@ -259,17 +261,21 @@ function BranchResult({
 
 function receiptSummary(receipt: CustomAttackCompareResult['receipts']['without_guard']) {
   if (!receipt) return '待外部 Agent 提交';
-  return `${receipt.status} / ${receipt.execution_target} / ${receipt.receipt_hash?.slice(0, 16) ?? '-'}…`;
+  const evidence = receipt.execution_observed_by_server ? '服务端观察' : '调用方声明';
+  return `${receipt.status} / ${receipt.execution_target} / ${evidence} / ${receipt.receipt_hash?.slice(0, 16) ?? '-'}…`;
 }
 
 function externalBranchOutcome(receipt: ExecutionReceipt | null) {
   if (!receipt) return '等待外部回执';
-  if (receipt.status === 'completed') return '已确认执行';
+  if (receipt.status === 'completed')
+    return receipt.execution_observed_by_server ? '服务端观察执行' : '调用方声明已执行';
   if (receipt.status === 'failed') return '执行失败';
-  return '确认未执行';
+  return receipt.execution_observed_by_server ? '服务端观察未执行' : '调用方声明未执行';
 }
 
 function externalGuardOutcome(receipt: ExecutionReceipt | null) {
   if (!receipt) return '等待外部回执';
-  return receipt.control_verified ? '防护已验证' : receipt.status === 'failed' ? '执行失败' : '回执已确认';
+  if (receipt.control_verified && receipt.execution_observed_by_server) return '防护已验证';
+  if (receipt.status === 'failed') return '执行失败';
+  return receipt.execution_observed_by_server ? '服务端观察' : '调用方声明';
 }

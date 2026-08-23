@@ -142,7 +142,8 @@ describe('RealModelEvidencePanel', () => {
         expected_control_match_rate: 100,
         causal_integrity_rate: 100,
         provider_evidence_coverage_rate: 100,
-        report_integrity_valid: true
+        report_integrity_valid: true,
+        report_freshness_valid: true
       },
       results: evaluation.results.map((result) => ({
         ...result,

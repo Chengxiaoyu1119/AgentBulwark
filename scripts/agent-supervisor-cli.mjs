@@ -24,6 +24,9 @@ const commandNames = new Set([
   'roadmap',
   'anomaly-calibration',
   'real-model-eval',
+  'gateway-probe',
+  'mcp-probe',
+  'gateway-agent-run',
   'competition-benchmark',
   'repro-check',
   'http-e2e-benchmark',
@@ -57,13 +60,28 @@ const valueFlags = new Map([
   ['npm_config_surface', '--surface'],
   ['npm_config_supervisor_url', '--supervisor-url'],
   ['npm_config_api_token', '--api-token'],
+  ['npm_config_api_token_env', '--api-token-env'],
+  ['npm_config_operator_api_token', '--operator-api-token'],
+  ['npm_config_operator_api_token_env', '--operator-api-token-env'],
+  ['npm_config_operator_agent_id', '--operator-agent-id'],
   ['npm_config_max_false_alarm_rate', '--max-false-alarm-rate'],
   ['npm_config_repeats', '--repeats'],
   ['npm_config_concurrency', '--concurrency'],
   ['npm_config_calls', '--calls'],
   ['npm_config_trials', '--trials'],
   ['npm_config_operator', '--operator'],
-  ['npm_config_operator_role', '--operator-role']
+  ['npm_config_operator_role', '--operator-role'],
+  ['npm_config_payload_file', '--payload-file'],
+  ['npm_config_url', '--url'],
+  ['npm_config_session_id', '--session-id'],
+  ['npm_config_timeout', '--timeout'],
+  ['npm_config_tool', '--tool'],
+  ['npm_config_arguments', '--arguments'],
+  ['npm_config_expected_decision', '--expected-decision'],
+  ['npm_config_baseline_url', '--baseline-url'],
+  ['npm_config_baseline_api_token', '--baseline-api-token'],
+  ['npm_config_baseline_api_token_env', '--baseline-api-token-env'],
+  ['npm_config_causal_url', '--causal-url']
 ]);
 
 function envEnabled(name) {
@@ -126,9 +144,18 @@ if (process.env.AGENT_SUPERVISOR_CLI_DEBUG === '1') {
   );
   console.error(JSON.stringify({ rawArgs: process.argv.slice(2), recoveredArgs: args, npmConfig }, null, 2));
 }
-const result = spawnSync('python', ['-X', 'utf8', '-m', 'apps.api.agent_supervisor.commands.cli', ...args], {
+// PowerShell may resolve `python` to a different installation than the one
+// used to start the API (for example an Anaconda interpreter without FastAPI).
+// Evidence scripts can pin the exact interpreter through this environment
+// variable; ordinary CLI usage keeps the historical PATH fallback.
+const pythonCommand = process.env.AGENT_SUPERVISOR_PYTHON || 'python';
+const result = spawnSync(pythonCommand, ['-X', 'utf8', '-m', 'apps.api.agent_supervisor.commands.cli', ...args], {
   stdio: 'inherit',
-  shell: process.platform === 'win32'
+  // Pass each argument as an argv entry.  Going through cmd.exe on Windows
+  // strips JSON quotes from values such as --arguments '{"path":"x"}',
+  // turning a valid MCP/OpenAI payload into invalid JSON before Python sees it.
+  // Python is resolved directly through PATH on every supported platform.
+  shell: false
 });
 
 process.exit(result.status ?? 1);

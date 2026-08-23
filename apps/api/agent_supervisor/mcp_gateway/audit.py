@@ -23,9 +23,55 @@ from apps.api.agent_supervisor.domains.governance.integrity import attach_audit_
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision
 from apps.api.agent_supervisor.domains.runtime.execution_receipts import tool_call_hash
-from apps.api.agent_supervisor.storage.database import write_run
+from apps.api.agent_supervisor.storage.database import get_connection, write_run
 
 SOURCE_APP = "mcp-gateway"
+
+
+def _execution_outcome(
+    *,
+    decision: GuardDecision,
+    forwarded: bool,
+    upstream_error: str | None,
+    upstream_result: dict[str, Any] | None,
+    result_quarantined: bool,
+    execution_phase: str,
+) -> str:
+    """Return an explicit side-effect/context outcome.
+
+    ``attack_success=False`` is retained for the legacy run schema, but it is
+    not a meaningful MCP execution claim.  In particular, a tool may already
+    have run while its result is quarantined.  This field is the authoritative
+    transport-level distinction used by operators and the console.
+    """
+
+    if execution_phase == "intent":
+        return "intent-recorded"
+    if upstream_error and forwarded:
+        return "upstream-failed"
+    if result_quarantined and forwarded:
+        return "executed-result-contained"
+    if not forwarded or decision.decision in {"拒绝", "隔离", "询问"}:
+        return "blocked-before-execution"
+    if forwarded and upstream_result is not None:
+        return "forwarded-and-completed"
+    return "audit-uncertain"
+
+
+def audit_backend_available() -> bool:
+    """Return whether the local audit store can accept a gateway record.
+
+    MCP tool calls have side effects.  A successful policy decision without a
+    writable audit store would leave the operator unable to prove what ran.
+    The gateway uses this inexpensive preflight before forwarding an allowed
+    call; the actual write is still checked after the upstream response.
+    """
+    try:
+        with get_connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+        return True
+    except Exception:  # noqa: BLE001 - availability is a fail-closed predicate
+        return False
 
 
 def record_gateway_tool_call(
@@ -35,12 +81,25 @@ def record_gateway_tool_call(
     forwarded: bool,
     detection_latency_ms: float,
     agent_id: str = "mcp-gateway",
+    session_id: str = "",
     client_request_id: Any = None,
     upstream_route: str = "default",
     upstream_error: str | None = None,
     upstream_result: dict[str, Any] | None = None,
+    result_quarantined: bool = False,
+    result_scan: dict[str, Any] | None = None,
+    execution_phase: str = "result",
+    intent_audit_id: str = "",
 ) -> dict[str, Any]:
-    """把一次 tools/call 的决策与执行结果写入审计链，返回审计标识。"""
+    """把一次 tools/call 的意图或执行结果写入审计链，返回审计标识。
+
+    ``intent`` is persisted before an allowed call crosses the MCP upstream
+    boundary. The later ``result`` record is append-only evidence of what the
+    upstream returned. Keeping the two phases separate makes a post-execution
+    audit failure observable instead of silently turning it into a missing log.
+    """
+    if execution_phase not in {"intent", "result"}:
+        raise ValueError("execution_phase 必须是 intent 或 result")
     tool_name = str(params.get("name") or "")
     raw_arguments = params.get("arguments")
     arguments = raw_arguments if isinstance(raw_arguments, dict) else {"_raw_arguments": raw_arguments}
@@ -49,18 +108,51 @@ def record_gateway_tool_call(
     audit_id = str(uuid4())
     created_at = datetime.now(timezone.utc).isoformat()
     blocked = decision.decision in {"拒绝", "隔离", "询问"}
+    scan = result_scan if isinstance(result_scan, dict) else {}
 
+    is_intent = execution_phase == "intent"
+    execution_outcome = _execution_outcome(
+        decision=decision,
+        forwarded=forwarded,
+        upstream_error=upstream_error,
+        upstream_result=upstream_result,
+        result_quarantined=result_quarantined,
+        execution_phase=execution_phase,
+    )
     tool_output: dict[str, Any]
-    if blocked:
+    if is_intent:
         tool_output = {
             "executed": False,
+            "execution_phase": "intent",
+            "execution_outcome": execution_outcome,
+            "output": "MCP Gateway 已记录执行意图；上游结果尚未产生。",
+        }
+    elif result_quarantined:
+        tool_output = {
+            "executed": bool(forwarded and upstream_result is not None),
+            "execution_outcome": execution_outcome,
+            "is_error": bool((upstream_result or {}).get("isError")),
+            "result_quarantined": True,
+            "context_hash": str(scan.get("context_hash") or ""),
+            "signals": [str(item) for item in scan.get("signals", []) if item],
+            "output": "上游工具结果已执行，但其模型可见内容被网关隔离；原始内容未写入审计日志。",
+        }
+    elif blocked:
+        tool_output = {
+            "executed": False,
+            "execution_outcome": execution_outcome,
             "output": f"MCP Gateway 阻断（{decision.decision}）：{decision.reason}",
         }
     elif upstream_error:
-        tool_output = {"executed": False, "output": f"上游错误：{upstream_error}"}
+        tool_output = {
+            "executed": False,
+            "execution_outcome": execution_outcome,
+            "output": f"上游错误：{upstream_error}",
+        }
     else:
         tool_output = {
             "executed": True,
+            "execution_outcome": execution_outcome,
             "is_error": bool((upstream_result or {}).get("isError")),
             "output": redact_sensitive(upstream_result or {}),
         }
@@ -76,8 +168,19 @@ def record_gateway_tool_call(
         "standard_arguments": audit_arguments,
         "tool_mapping": None,
         "execution_receipt_expected": False,
-        "execution_status": "completed" if (forwarded and upstream_result is not None) else "not_executed",
-        "execution_target": "mcp-upstream" if forwarded else "none",
+        "execution_status": (
+            "pending"
+            if is_intent
+            else "failed"
+            if upstream_error and forwarded
+            else "completed"
+            if (forwarded and upstream_result is not None)
+            else "not_executed"
+        ),
+        "execution_outcome": execution_outcome,
+        "execution_target": "mcp-upstream" if (forwarded or is_intent) else "none",
+        "execution_phase": execution_phase,
+        "intent_audit_id": str(intent_audit_id or ""),
         "risk_hint": "",
         "decision": decision.decision,
         "risk_level": decision.risk_level,
@@ -92,13 +195,18 @@ def record_gateway_tool_call(
         "execution_duration_ms": 0.0,
         "stage_context": {
             "channel": "mcp-gateway",
+            "execution_phase": execution_phase,
+            "intent_audit_id": str(intent_audit_id or ""),
+            "session_id": session_id,
             "upstream_route": upstream_route,
             "client_request_id": str(client_request_id),
             "upstream_error": upstream_error or "",
+            "result_quarantined": result_quarantined,
+            "result_context_hash": str(scan.get("context_hash") or ""),
         },
         "timestamp": created_at,
         "source_app": SOURCE_APP,
-        "conversation_id": f"mcp:{client_request_id if client_request_id is not None else run_id}",
+        "conversation_id": session_id or f"mcp:{client_request_id if client_request_id is not None else run_id}",
         "agent_id": agent_id,
     }
     attach_audit_hashes([audit_log], seed=f"{run_id}:{created_at}")
@@ -133,7 +241,7 @@ def record_gateway_tool_call(
             "Agent 通过 MCP Gateway 发起 tools/call",
             "网关在转发前调用行为监督器决策",
             "放行则转发上游并回传结果；拒绝/隔离/询问则不转发",
-            "决策与执行结果写入统一审计链",
+            "先记录执行意图，再记录上游结果；异常时保留待核查状态",
         ],
         "attack_path": ["MCP 客户端", "MCP Gateway", "行为监督器", "上游 MCP Server" if forwarded else "（未转发）"],
         "detection_points": [f"网关拦截策略：{decision.policy_id}"],
@@ -175,7 +283,15 @@ def record_gateway_tool_call(
         "attack_success": False,
         "attack_outcome": {
             "attack_success": False,
-            "source": "mcp-gateway-enforced" if blocked else "mcp-gateway-forwarded",
+            "execution_outcome": execution_outcome,
+            "attack_success_semantics": "not_assessed_by_mcp_transport",
+            "source": "mcp-gateway-result-quarantined"
+            if result_quarantined
+            else "mcp-gateway-intent"
+            if is_intent
+            else "mcp-gateway-enforced"
+            if blocked
+            else "mcp-gateway-forwarded",
             "assertions": [],
         },
         "metrics": {
@@ -192,6 +308,8 @@ def record_gateway_tool_call(
     return {
         "run_id": run_id,
         "audit_id": audit_id,
+        "intent_audit_id": str(intent_audit_id or ""),
+        "execution_outcome": execution_outcome,
         "persisted": True,
         "source_app": SOURCE_APP,
     }

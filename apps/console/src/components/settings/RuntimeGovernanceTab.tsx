@@ -1,8 +1,7 @@
 import { Col, Flex, Row, Space, Switch, Typography } from 'antd';
 import type { AuthContext, MemoryGovernance, ObservabilityMetrics, PolicySettings } from '@/types';
-import { LabelTag, MetricCard, PanelCard, UiAlert, UiButton, UiInputNumber, UiSelect } from '../ui';
-import { AgentToolAllowlistEditor } from './AgentToolAllowlistEditor';
-import { AgentToolMappingEditor } from './AgentToolMappingEditor';
+import { LabelTag, MetricCard, PanelCard, UiAlert, UiButton, UiInputNumber } from '../ui';
+import { AgentBoundarySettingsPanel } from './AgentBoundarySettingsPanel';
 import { MemoryGovernancePanel } from './MemoryGovernancePanel';
 type RuntimeGovernanceTabProps = {
   authContext: AuthContext | null;
@@ -177,72 +176,13 @@ export function RuntimeGovernanceTab({
           </Col>
         </Row>
       </PanelCard>
-      <PanelCard title="业务安全边界" type="inner">
-        <Typography.Paragraph type="secondary">
-          配置内部邮箱域、敏感路径和高敏 API 边界。输入内容后按回车生成标签。
-        </Typography.Paragraph>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} lg={8}>
-            <Typography.Text type="secondary" className="zh-meta-block">
-              内部邮箱域
-            </Typography.Text>
-            <UiSelect
-              mode="tags"
-              value={policySettings?.internal_email_domains ?? []}
-              onChange={(value) => patchSettings({ internal_email_domains: value.map(String) })}
-              className="zh-full-width"
-              placeholder="例如 company.example"
-              disabled={!canEditPolicy}
-            />
-          </Col>
-          <Col xs={24} lg={8}>
-            <Typography.Text type="secondary" className="zh-meta-block">
-              敏感路径标记
-            </Typography.Text>
-            <UiSelect
-              mode="tags"
-              value={policySettings?.sensitive_path_markers ?? []}
-              onChange={(value) => patchSettings({ sensitive_path_markers: value.map(String) })}
-              className="zh-full-width"
-              placeholder="例如 vault、credentials"
-              disabled={!canEditPolicy}
-            />
-          </Col>
-          <Col xs={24} lg={8}>
-            <Typography.Text type="secondary" className="zh-meta-block">
-              高敏 API 标记
-            </Typography.Text>
-            <UiSelect
-              mode="tags"
-              value={policySettings?.sensitive_api_markers ?? []}
-              onChange={(value) => patchSettings({ sensitive_api_markers: value.map(String) })}
-              className="zh-full-width"
-              placeholder="例如 payroll、admin"
-              disabled={!canEditPolicy}
-            />
-          </Col>
-        </Row>
-        <AgentToolAllowlistEditor policySettings={policySettings} canEdit={canEditPolicy} onPatch={patchSettings} />
-        <AgentToolMappingEditor policySettings={policySettings} canEdit={canEditPolicy} onPatch={patchSettings} />
-        <Flex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16">
-          <Typography.Text type="secondary">
-            Agent 工具最小权限：{Object.keys(policySettings?.agent_tool_allowlists ?? {}).length} 个 Agent；自定义映射：
-            {Object.values(policySettings?.agent_tool_mappings ?? {}).reduce(
-              (total, mappings) => total + Object.keys(mappings).length,
-              0
-            )}{' '}
-            条
-          </Typography.Text>
-          <UiButton
-            type="primary"
-            loading={savingSettings}
-            disabled={!canEditPolicy}
-            onClick={() => void onSaveSettings()}
-          >
-            保存业务边界
-          </UiButton>
-        </Flex>
-      </PanelCard>
+      <AgentBoundarySettingsPanel
+        policySettings={policySettings}
+        canEdit={canEditPolicy}
+        saving={savingSettings}
+        onPatch={patchSettings}
+        onSave={onSaveSettings}
+      />
       <PanelCard title="运行指标" type="inner">
         <Row gutter={[16, 16]}>
           <Col xs={12} md={6}>

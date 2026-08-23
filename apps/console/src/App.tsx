@@ -5,6 +5,7 @@ import { useAppData } from './app/useAppData';
 import { isPageKey, pageFromHash, pageToHash, type PageKey } from './app/navigation';
 
 const Dashboard = lazy(() => import('./pages/Dashboard').then((module) => ({ default: module.Dashboard })));
+const GatewayPanel = lazy(() => import('./pages/GatewayPanel').then((module) => ({ default: module.GatewayPanel })));
 const ScenarioLibrary = lazy(() =>
   import('./components/scenarios/ScenarioLibrary').then((module) => ({ default: module.ScenarioLibrary }))
 );
@@ -127,22 +128,10 @@ export default function App() {
       onOpenDrawer={() => setDrawerVisible(true)}
       onCloseDrawer={() => setDrawerVisible(false)}
       onOpenLab={() => setPage('lab')}
+      onOpenGateway={() => setPage('gateway')}
     >
-      {page === 'dashboard' && (
-        <Dashboard
-          overview={overview}
-          apiAvailable={apiAvailable}
-          running={running}
-          onSelectScenario={(id) => {
-            setSelectedScenario(id);
-            setPage('lab');
-          }}
-          onOpenPage={setPage}
-          onBatchCompare={(ids, label) => {
-            void handleBatchCompare(ids, label);
-          }}
-        />
-      )}
+      {page === 'dashboard' && <Dashboard overview={overview} apiAvailable={apiAvailable} onOpenPage={setPage} />}
+      {page === 'gateway' && <GatewayPanel />}
       {page === 'scenarios' && (
         <ScenarioLibrary
           scenarios={scenarios}

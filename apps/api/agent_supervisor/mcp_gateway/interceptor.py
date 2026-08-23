@@ -2,13 +2,40 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision, decide
+from apps.api.agent_supervisor.domains.governance.tool_contract import validate_json_schema_instance
 
 # 允许之外的决策（拒绝/隔离/询问）一律不转发上游。询问在网关侧同样阻断，
 # 等待人工复核后由 Agent 重新发起。
 BLOCKED_DECISIONS = {"拒绝", "隔离", "询问"}
+
+
+def validate_tool_arguments(tool_definition: dict[str, Any] | None, arguments: Any) -> str | None:
+    """Validate an MCP ``tools/call`` payload against the advertised schema.
+
+    MCP tool descriptions are untrusted input, but once a tool is selected the
+    gateway must still enforce its contract before forwarding arguments to the
+    upstream.  This intentionally implements the security-relevant JSON Schema
+    subset (object shape, required fields, primitive types and enum values)
+    without pretending to be a complete schema validator.
+    """
+    if tool_definition is None:
+        return None
+    if not isinstance(arguments, dict):
+        return "MCP tools/call 的 arguments 必须是对象。"
+    schema = tool_definition.get("inputSchema")
+    if schema is None:
+        schema = tool_definition.get("parameters")
+    if schema is None:
+        return None
+    issue = validate_json_schema_instance(arguments, schema)
+    if issue:
+        return f"MCP 工具调用参数契约校验失败：{issue}。"
+    return None
 
 
 def evaluate_tools_call(
@@ -51,10 +78,21 @@ def inspect_tools_call(
 
 
 def build_blocked_result(decision: GuardDecision) -> dict[str, Any]:
-    """构造 MCP tools/call 阻断结果（isError=true，附带决策元数据）。"""
+    """构造 MCP tools/call 阻断结果（isError=true，附带决策元数据）。
+
+    ``GuardDecision.reason`` may contain the original tool name, path, endpoint
+    or other caller/provider-controlled text. Returning it verbatim to the
+    Agent creates a second prompt-injection channel exactly at the point where
+    the gateway is supposed to stop the call. Keep the model-visible response
+    fixed and leave the detailed reason in the signed audit record.
+    """
+    reason_text = str(decision.reason or "")
+    reason_hash = hashlib.sha256(
+        json.dumps(reason_text, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     text = (
-        f"[智安哨] 工具调用被{decision.decision}（策略 {decision.policy_id}）：{decision.reason} "
-        f"建议：{decision.recommendation}"
+        f"[智安哨] 工具调用已被{decision.decision}（策略 {decision.policy_id}）阻断。"
+        "详细原因仅保存在审计记录中，请通过 audit_id 复核。"
     )
     metadata = {
         "blocked": True,
@@ -63,8 +101,9 @@ def build_blocked_result(decision: GuardDecision) -> dict[str, Any]:
         "risk_level": decision.risk_level,
         "risk_score": decision.risk_score,
         "anomaly_score": decision.anomaly_score,
-        "reason": decision.reason,
-        "recommendation": decision.recommendation,
+        "reason": "详细原因已隐藏，避免把不可信输入回灌给 Agent。",
+        "recommendation": "使用审计记录中的 audit_id 进行人工复核。",
+        "reason_hash": reason_hash,
     }
     return {
         "content": [{"type": "text", "text": text}],

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
 from apps.api.agent_supervisor.domains.governance.tool_contract import (
     canonical_text,
+    canonical_text_variants,
     mail_recipient_addresses,
     normalize_tool_call,
     path_is_absolute_or_traversal,
@@ -53,6 +56,9 @@ RISK_HINT_SCORES = {
 PROMPT_MARKERS = ["忽略", "无约束", "绕过", "ignore previous", "do anything now", "不要解释安全规则"]
 DANGEROUS_COMMAND_MARKERS = ["rm ", "del ", "format", "curl ", "wget ", "powershell -enc", "chmod 777"]
 SENSITIVE_WORDS = ["secret", "token", "team", "flag", "submission", "judge", "session", "队伍", "赛题", "提交物", "密钥", "confidential"]
+SENSITIVE_EGRESS_MARKERS = re.compile(
+    r"(?i)(?<![a-z0-9])(?:api[_-]?key|access[_-]?token|token|secret|password|credential|private[_-]?key|flag|authorization|cookie|set-cookie|x-api-key|bearer|session)(?![a-z0-9])"
+)
 
 
 def calculate_risk_score(
@@ -85,6 +91,9 @@ def calculate_risk_score(
     if any(word in lowered_prompt for word in SENSITIVE_WORDS):
         score += 12
         factors.append("输入包含敏感数据访问语义")
+    if policy_id == "external-api-allowlist":
+        score += 24
+        factors.append("绝对外部 API 目标尚未完成 Agent 主机授权")
 
     return RiskScore(score=min(score, 100), factors=_dedupe(factors))
 
@@ -116,12 +125,20 @@ def _argument_score(tool: str, args: dict[str, Any], factors: list[str]) -> int:
 
     if tool == "api.call":
         endpoint = canonical_text(args.get("endpoint")).lower()
+        method = canonical_text(args.get("method") or "GET").upper()
         if any(marker in endpoint for marker in ["admin", "scoreboard", "challenge", "seed", "judge", "session", "campus-net", "submissions/export", "teams/export"]):
             score += 38
             factors.append("API endpoint 属于高敏接口")
         if any(marker in endpoint for marker in ["export", "all", "bulk"]):
             score += 24
             factors.append("API endpoint 涉及批量导出")
+        if endpoint.startswith(("http://", "https://")) and method in {"POST", "PUT", "PATCH", "DELETE"}:
+            score += 18
+            factors.append("API 调用会向绝对外部目标产生写副作用")
+            serialized = json.dumps(args, ensure_ascii=False, default=str, separators=(",", ":"))
+            if any(SENSITIVE_EGRESS_MARKERS.search(variant) for variant in canonical_text_variants(serialized)):
+                score += 38
+                factors.append("外部 API 写请求包含疑似凭据或敏感数据字段")
 
     if tool == "code.run":
         command = canonical_text(args.get("command")).lower()

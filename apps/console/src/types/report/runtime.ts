@@ -115,6 +115,9 @@ export interface RealModelEvaluation {
   evaluation_id?: string;
   generated_at: string;
   method?: {
+    evidence_scope?: string;
+    gateway_path_exercised?: boolean;
+    gateway_contract_note?: string;
     tool_source?: string;
     blind_rule?: string;
     causal_rule?: string;
@@ -162,7 +165,9 @@ export interface RealModelEvaluation {
     receipt_complete_count?: number;
     receipt_complete_rate?: number;
     report_integrity_valid?: boolean;
+    report_freshness_valid?: boolean;
     evidence_verdict?: 'pass' | 'partial' | 'fallback' | string;
+    gateway_contract_evidence?: 'pass' | 'partial' | 'not_measured' | string;
   };
   provider_health?: {
     real_api_success_count: number;
@@ -172,6 +177,7 @@ export interface RealModelEvaluation {
   evidence_manifest?: {
     case_definitions_sha256?: string;
     policy_snapshot_sha256?: string;
+    runtime_snapshot_sha256?: string;
     result_set_sha256?: string;
     case_count?: number;
     policy_count?: number;
@@ -182,6 +188,13 @@ export interface RealModelEvaluation {
     result_set_valid: boolean;
     case_definitions_valid: boolean;
     valid: boolean;
+  };
+  freshness_verification?: {
+    case_definitions_current?: boolean;
+    policy_snapshot_current?: boolean;
+    runtime_snapshot_valid?: boolean;
+    runtime_snapshot_current?: boolean;
+    current: boolean;
   };
   results: RealModelEvaluationCase[];
 }

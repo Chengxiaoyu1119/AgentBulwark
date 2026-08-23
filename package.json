@@ -27,12 +27,14 @@
     "api:lint": "python -m ruff check apps/api",
     "api:typecheck": "mypy --explicit-package-bases apps/api/agent_supervisor apps/api/tests",
     "api:check": "python -X utf8 -m compileall apps/api/agent_supervisor",
-    "api:test": "python -X utf8 -m unittest discover -s apps/api/tests -p \"test_*.py\"",
-    "api:coverage": "coverage run -m unittest discover -s apps/api/tests -p \"test_*.py\" && coverage report --fail-under=85",
+    "api:test": "python -X utf8 -m unittest discover -s apps/api/tests -t . -p \"test_*.py\"",
+    "api:coverage": "coverage run -m unittest discover -s apps/api/tests -t . -p \"test_*.py\" && coverage report --fail-under=85",
     "audit:security": "node scripts/dependency-security-audit.mjs",
     "audit:raw:console": "npm audit --prefix apps/console --audit-level=low --registry=https://registry.npmjs.org",
-    "self:review": "node scripts/project-self-review.mjs --output apps/api/sandbox/reports",
-    "verify": "npm run console:lint:strict && npm run ui:audit && npm run console:test && npm run api:lint && npm run api:typecheck && npm run api:check && npm run api:architecture && npm run api:test && npm run build",
+  "materials:refresh": "python -X utf8 scripts/refresh_shanghai_technical_report.py",
+  "self:review": "node scripts/project-self-review.mjs --output apps/api/sandbox/reports",
+  "self:review:test": "node --test scripts/project-self-review-identity.test.mjs",
+  "verify": "npm run self:review:test && npm run console:lint:strict && npm run ui:audit && npm run console:test && npm run api:lint && npm run api:typecheck && npm run api:check && npm run api:architecture && npm run api:test && npm run build",
     "api:architecture": "node scripts/backend-governance-check.mjs"
   }
 }

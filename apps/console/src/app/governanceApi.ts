@@ -37,7 +37,10 @@ export async function fetchMemoryGovernance(): Promise<MemoryGovernance> {
   return request<MemoryGovernance>('/api/memory_governance');
 }
 
-export async function updateMemoryStatus(memoryId: string, status: string): Promise<{ updated: boolean; event_id?: number }> {
+export async function updateMemoryStatus(
+  memoryId: string,
+  status: string
+): Promise<{ updated: boolean; event_id?: number }> {
   return request<{ updated: boolean; event_id?: number }>(`/api/memory_governance/${encodeURIComponent(memoryId)}`, {
     method: 'PATCH',
     body: JSON.stringify({ status, operator: 'security-analyst' })

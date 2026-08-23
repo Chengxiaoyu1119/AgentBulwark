@@ -32,11 +32,11 @@ export function DashboardFeatureMap({
   onOpenPage: (page: PageKey) => void;
 }) {
   const guardedControlRate = overview.summary.guarded_control_rate ?? overview.summary.block_rate;
-  const configuredModelCount = overview.models.filter((model) => model.configured).length;
+  const configuredModelCount = overview.models.filter((model) => model.configured && model.mode === 'real-api').length;
   const groups: FeatureMapGroup[] = [
     {
-      title: '红队攻击研究层',
-      desc: '把作品目标的攻击面、对抗样本、越狱用例和智能体脚本归到同一组。',
+      title: '攻击面研究层',
+      desc: '把 Agent/API 的攻击面、对抗样本、越狱用例和工具链验证归到同一组。',
       icon: <ClipboardList size={18} />,
       points: [
         {
@@ -44,13 +44,13 @@ export function DashboardFeatureMap({
           value: `${completeSurfaceCount}/${overview.summary.surface_count} 类`,
           page: 'dashboard'
         },
-        { label: '样本与脚本', value: `${totalSamples} 样本 / ${totalScripts} 脚本`, page: 'scenarios' },
+        { label: '验证样本与入口', value: `${totalSamples} 样本 / ${totalScripts} 入口`, page: 'scenarios' },
         { label: '多 Agent 链路', value: '规划-生成-执行', page: 'chain' }
       ]
     },
     {
       title: '真实运行验证层',
-      desc: '从页面选择脚本后，后端执行模拟业务工具调用、模型调用和监督器判定。',
+      desc: '从页面发起验证后，后端记录 Agent 请求、Provider 响应、工具调用和监督器判定。',
       icon: <BrainCircuit size={18} />,
       points: [
         { label: '本地受控环境复现', value: `${overview.summary.scenario_count} 个入口`, page: 'lab' },

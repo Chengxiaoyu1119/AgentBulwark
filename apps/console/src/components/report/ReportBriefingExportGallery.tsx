@@ -157,9 +157,7 @@ export function ReportBriefingExportGallery() {
           >
             刷新清单
           </UiButton>
-          <UiButton href="/api/attack_surfaces/briefing_sheets/export.md" target="_blank">
-            打开导出报告
-          </UiButton>
+          <UiButton authenticatedHref="/api/attack_surfaces/briefing_sheets/export.md">打开导出报告</UiButton>
         </Space>
       </div>
 
@@ -189,8 +187,7 @@ export function ReportBriefingExportGallery() {
                   <UiButton
                     size="small"
                     icon={<FileImage size={14} />}
-                    href={file.png_path ? fileUrl(file.surface_id, 'png', data?.generated_at) : undefined}
-                    target="_blank"
+                    authenticatedHref={file.png_path ? fileUrl(file.surface_id, 'png', data?.generated_at) : undefined}
                     disabled={!file.png_path}
                   >
                     预览 PNG
@@ -198,8 +195,7 @@ export function ReportBriefingExportGallery() {
                   <UiButton
                     size="small"
                     icon={<FileText size={14} />}
-                    href={file.pdf_path ? fileUrl(file.surface_id, 'pdf', data?.generated_at) : undefined}
-                    target="_blank"
+                    authenticatedHref={file.pdf_path ? fileUrl(file.surface_id, 'pdf', data?.generated_at) : undefined}
                     disabled={!file.pdf_path}
                   >
                     打开 PDF

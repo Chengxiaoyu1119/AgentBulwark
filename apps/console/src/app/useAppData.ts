@@ -24,8 +24,7 @@ import type {
   RunResult,
   Scenario
 } from '../types';
-import { fallbackOverview, fallbackPolicies } from '../fallback';
-import { createFallbackReport } from './fallbackReport';
+import { offlineOverview, offlinePolicies } from '../fallback';
 import type { PageKey } from './navigation';
 
 export function useAppData(page: PageKey) {
@@ -55,8 +54,8 @@ export function useAppData(page: PageKey) {
 
   const refresh = useCallback(async () => {
     const backendHealthy = await fetchHealth();
-    const data = backendHealthy ? await fetchOverview() : fallbackOverview;
-    const nextPolicies = backendHealthy ? await fetchPolicies() : fallbackPolicies;
+    const data = backendHealthy ? await fetchOverview() : offlineOverview;
+    const nextPolicies = backendHealthy ? await fetchPolicies() : offlinePolicies;
     setApiAvailable(backendHealthy);
     setOverview(data);
     setScenarios(data.scenarios);
@@ -65,7 +64,9 @@ export function useAppData(page: PageKey) {
     setPolicies(nextPolicies);
     if (!backendHealthy) {
       setRealtimeStatus('offline');
-      setApiNotice('当前后端未连接，页面会使用内置样本数据；启动 FastAPI 后可写入真实实验日志。');
+      setApiNotice(
+        '后端未连接：当前页面只显示空的离线状态，不展示样本、报告或运行数据。启动 FastAPI 后才会读取实时证据。'
+      );
     } else if (!data.recent_runs.length) {
       setApiNotice('后端已连接，目前暂无真实实验日志；运行脚本后这里会展示最新结果。');
     } else {
@@ -85,9 +86,9 @@ export function useAppData(page: PageKey) {
         setReport(data);
         setReportSource('backend');
       } catch {
-        setReport(createFallbackReport());
-        setReportSource('fallback');
-        setApiNotice('评测报告接口调用失败，当前报告页明确展示内置模拟数据，不作为参赛证据。');
+        setReport(null);
+        setReportSource(null);
+        setApiNotice('证据接口不可用：报告页保持空白，不生成或展示推测数据。');
       }
     })();
     reportRequestRef.current = requestPromise;

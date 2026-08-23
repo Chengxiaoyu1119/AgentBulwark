@@ -6,6 +6,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,6 +64,124 @@ def run_minimal_external_agent_demo(
     }
 
 
+def run_supervisor_managed_external_agent_demo(
+    supervisor_url: str = "http://127.0.0.1:8012/api/runtime/execute",
+    output_root: str | Path | None = None,
+    api_token: str = "",
+) -> dict[str, Any]:
+    """Run the same Agent tasks through the supervisor-owned executor.
+
+    This path deliberately does not instantiate ``AgentToolGuard`` around a
+    local executor.  The Agent submits an intent, while the authenticated
+    service performs the policy decision, sandbox execution, and signed receipt
+    in one process.  It is the local proof path for a real enforcement boundary.
+    """
+    init_sandbox()
+    root = Path(output_root) if output_root else REPORT_DIR
+    root.mkdir(parents=True, exist_ok=True)
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+    records = [_run_supervisor_managed_task(supervisor_url, task, api_token) for task in _demo_tasks()]
+    summary = _build_summary(records)
+    result = {
+        "schema_version": "agent-supervisor.external-agent-e2e.v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "supervisor_url": supervisor_url,
+        "adapter": "SupervisorManagedAgent",
+        "enforcement_mode": "supervisor-owned-executor",
+        "risk_hint_used": False,
+        "security": {
+            "token_authentication_used": bool(api_token),
+            "hmac_signature_expected": bool(os.getenv("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "")),
+        },
+        "summary": summary,
+        "records": records,
+        "runtime_dir": str(RUNTIME_DIR.resolve()),
+    }
+    json_path = root / "最小外部Agent接入运行证据.json"
+    md_path = root / "最小外部Agent接入运行证据.md"
+    json_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    md_path.write_text(_build_markdown(result), encoding="utf-8")
+    return {
+        **result,
+        "json_path": str(json_path.resolve()),
+        "markdown_path": str(md_path.resolve()),
+    }
+
+
+def _run_supervisor_managed_task(
+    supervisor_url: str,
+    task: dict[str, Any],
+    api_token: str,
+) -> dict[str, Any]:
+    payload = {
+        "conversation_id": task["conversation_id"],
+        "agent_id": task["agent_id"],
+        "agent_role": task["agent_role"],
+        "source_app": "SupervisorManagedExternalAgent",
+        "model_input": task["model_input"],
+        "model_output": task["model_output"],
+        "tool_call": task["tool_call"],
+        "context_sources": task["context_sources"],
+        # The route owns these values and overwrites them.  Keeping explicit
+        # false values here proves that the caller cannot disable enforcement.
+        "guard_enabled": False,
+        "execute_in_sandbox": False,
+    }
+    response = _post_json(supervisor_url, payload, api_token=api_token, timeout=12.0)
+    raw_audit_log = response.get("audit_log")
+    audit_log: dict[str, Any] = raw_audit_log if isinstance(raw_audit_log, dict) else {}
+    raw_receipt = response.get("execution_receipt")
+    receipt: dict[str, Any] | None = raw_receipt if isinstance(raw_receipt, dict) else None
+    execution_status = str(response.get("execution_status") or audit_log.get("execution_status") or "not_executed")
+    execution_target = str(response.get("execution_target") or audit_log.get("execution_target") or "none")
+    execution_observed = bool(response.get("execution_observed_by_server") is True)
+    return {
+        "task_id": task["task_id"],
+        "title": task["title"],
+        "tool": task["tool_call"]["tool"],
+        "arguments": task["tool_call"].get("arguments", {}),
+        "decision": response.get("decision"),
+        "policy_id": response.get("policy_id"),
+        "reason": response.get("reason"),
+        "executed": execution_status == "completed" and execution_target in {"real", "sandbox"},
+        "execution_target": execution_target,
+        "execution_status": execution_status,
+        "receipt_confirmed": bool(receipt and receipt.get("execution_observed_by_server") is True),
+        "receipt_error": "" if receipt else "服务端未返回执行回执",
+        "tool_result": audit_log.get("tool_output"),
+        "run_id": response.get("run_id"),
+        "audit_id": response.get("audit_id"),
+        "audit_hash": audit_log.get("audit_hash"),
+        "audit_signature": audit_log.get("audit_signature"),
+        "execution_receipt": receipt,
+        "execution_evidence": response.get("execution_evidence", ""),
+        "execution_observed_by_server": execution_observed,
+        "risk_level": response.get("risk_level"),
+        "risk_score": response.get("risk_score"),
+        "anomaly_score": response.get("anomaly_score"),
+    }
+
+
+def _post_json(url: str, payload: dict[str, Any], *, api_token: str, timeout: float) -> dict[str, Any]:
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if api_token:
+        headers["Authorization"] = f"Bearer {api_token}"
+    request = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            parsed = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:1200]
+        raise RuntimeError(f"服务端托管执行失败（HTTP {exc.code}）：{detail}") from exc
+    except (OSError, TimeoutError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"服务端托管执行请求失败：{exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError("服务端托管执行响应必须是 JSON 对象")
+    return parsed
+
+
 def _run_guarded_task(guard: AgentToolGuard, task: dict[str, Any]) -> dict[str, Any]:
     result = guard.guarded_execute(
         conversation_id=task["conversation_id"],
@@ -96,6 +215,15 @@ def _run_guarded_task(guard: AgentToolGuard, task: dict[str, Any]) -> dict[str, 
         "audit_hash": audit_log.get("audit_hash"),
         "audit_signature": audit_log.get("audit_signature"),
         "execution_receipt": supervisor_result.get("execution_receipt"),
+        "execution_evidence": (
+            supervisor_result.get("execution_receipt", {}).get("execution_evidence")
+            if isinstance(supervisor_result.get("execution_receipt"), dict)
+            else "caller-declared"
+        ),
+        "execution_observed_by_server": bool(
+            isinstance(supervisor_result.get("execution_receipt"), dict)
+            and supervisor_result["execution_receipt"].get("execution_observed_by_server") is True
+        ),
         "risk_level": supervisor_result.get("risk_level"),
         "risk_score": supervisor_result.get("risk_score"),
         "anomaly_score": supervisor_result.get("anomaly_score"),
@@ -200,6 +328,8 @@ def _build_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
         "receipt_count": sum(1 for record in records if record.get("execution_receipt")),
         "receipt_confirmed_count": sum(1 for record in records if record.get("receipt_confirmed")),
         "receipt_unconfirmed_count": sum(1 for record in records if not record.get("receipt_confirmed")),
+        "caller_attested_count": sum(1 for record in records if record.get("execution_evidence") == "caller-declared"),
+        "server_observed_count": sum(1 for record in records if record.get("execution_observed_by_server") is True),
         "control_verified_count": sum(
             1
             for record in records
@@ -211,10 +341,15 @@ def _build_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 def _build_markdown(result: dict[str, Any]) -> str:
     summary = result["summary"]
+    evidence_origin = (
+        "外部 Agent 通过 AgentToolGuard 调用建议式监督接口，并提交执行回执。"
+        if result.get("adapter") == "AgentToolGuard"
+        else "外部 Agent 仅提交工具意图；智安哨服务端强制完成监督、隔离执行与服务端观察回执。"
+    )
     lines = [
         "# 最小外部 Agent 接入运行证据",
         "",
-        "本证据由通用 `AgentToolGuard.guarded_execute()` 包住一个最小外部 Agent 工具调度器生成，用于证明监督器可以嵌入任意框架的真实工具执行入口。",
+        evidence_origin,
         "",
         "## 运行摘要",
         "",
@@ -226,7 +361,8 @@ def _build_markdown(result: dict[str, Any]) -> str:
         f"- HMAC 签名数量：{summary['audit_signature_count']}",
         f"- 外部执行回执：{summary['receipt_count']} / {summary['task_count']}",
         f"- 回执已确认：{summary['receipt_confirmed_count']}，未确认：{summary['receipt_unconfirmed_count']}",
-        f"- 防护效果已闭环验证：{summary['control_verified_count']} 条",
+        f"- 调用方合规回执：{summary.get('caller_attested_count', 0)} 条；服务端观察：{summary.get('server_observed_count', 0)} 条",
+        f"- 协议控制字段匹配：{summary['control_verified_count']} 条（不等于服务端观察）",
         "",
         "## 明细",
         "",
@@ -242,7 +378,9 @@ def _build_markdown(result: dict[str, Any]) -> str:
                 policy=record["policy_id"],
                 target=record.get("execution_target", "unknown"),
                 status=record.get("execution_status", "unknown"),
-                receipt="已确认" if record.get("receipt_confirmed") else "未确认",
+                receipt=("调用方声明" if record.get("execution_evidence") == "caller-declared" else "服务端观察")
+                if record.get("receipt_confirmed")
+                else "未确认",
                 risk=record.get("risk_score") or "-",
                 hash=(record.get("audit_hash") or "-")[:16],
             )
@@ -302,8 +440,8 @@ def run_managed_external_agent_demo(output_root: str | Path | None = None) -> di
             previous_hmac = os.environ.get("AGENT_SUPERVISOR_AUDIT_HMAC_KEY")
             os.environ["AGENT_SUPERVISOR_AUDIT_HMAC_KEY"] = hmac_key
             try:
-                return run_minimal_external_agent_demo(
-                    supervisor_url=f"http://127.0.0.1:{port}/api/runtime/evaluate",
+                return run_supervisor_managed_external_agent_demo(
+                    supervisor_url=f"http://127.0.0.1:{port}/api/runtime/execute",
                     output_root=output_root,
                     api_token=api_token,
                 )

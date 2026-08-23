@@ -5,12 +5,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...adapters.integrations.openclaw_adapter import build_openclaw_plugin_package_summary
 from ...paths import REPO_ROOT, SANDBOX_REPORTS_DIR
 from ...storage.data import get_attack_surfaces, get_scenarios
 from ..evaluations.assessment import build_attack_effectiveness, build_requirement_alignment
-from ..evaluations.benign_workflows import evaluate_benign_workflows
+from ..evaluations.benign_workflows import load_benign_workflow_report
 from ..evaluations.calibration import build_anomaly_calibration
+from ..runtime.runtime_evaluation import load_real_model_evaluation_report
 from .briefing_export import load_briefing_sheet_export_report
 from .surface_pack import build_surface_evidence_index
 
@@ -24,14 +24,13 @@ def build_project_roadmap(runs: list[dict[str, Any]] | None = None) -> dict[str,
     surface_index = build_surface_evidence_index(runs)
     effectiveness = build_attack_effectiveness(runs)
     calibration = build_anomaly_calibration()
-    openclaw_plugin = build_openclaw_plugin_package_summary()
-    openclaw_validation = _load_openclaw_validation()
     competition_benchmark = _load_competition_benchmark()
     real_model_evaluation = _load_real_model_evaluation()
+    external_agent_e2e = _load_external_agent_e2e()
     briefing_export = load_briefing_sheet_export_report()
     local_launch = _local_launch_status()
     engineering = _engineering_status()
-    benign_workflows = evaluate_benign_workflows()
+    benign_workflows = load_benign_workflow_report()
     requirements = build_requirement_alignment(effectiveness["cases"])
     dimensions = _maturity_dimensions(
         surface_index,
@@ -39,10 +38,9 @@ def build_project_roadmap(runs: list[dict[str, Any]] | None = None) -> dict[str,
         requirements,
         runs,
         calibration,
-        openclaw_plugin,
-        openclaw_validation,
         competition_benchmark,
         real_model_evaluation,
+        external_agent_e2e,
         briefing_export,
         benign_workflows,
         local_launch,
@@ -57,15 +55,14 @@ def build_project_roadmap(runs: list[dict[str, Any]] | None = None) -> dict[str,
         effectiveness,
         requirements,
         calibration,
-        openclaw_plugin,
-        openclaw_validation,
         competition_benchmark,
         real_model_evaluation,
+        external_agent_e2e,
         briefing_export,
         local_launch,
     )
     p0 = [item for item in backlog if item["priority"] == "P0" and item["status"] != "已完成"]
-    verdict = "方向正确，已具备可复现实验、行为监督、证据包和答辩材料闭环"
+    verdict = "方向正确，核心运行时安全链已成型；提交前仍需以当前 Provider、策略快照和正式材料补齐证据"
     if weak:
         verdict = "方向基本正确，但存在会影响真实性或答辩说服力的高优先级缺口"
     return {
@@ -73,7 +70,7 @@ def build_project_roadmap(runs: list[dict[str, Any]] | None = None) -> dict[str,
         "direction": {
             "verdict": verdict,
             "score": overall_score,
-            "reason": "项目已经覆盖方向目标的攻击场景、对抗样本、智能体脚本、监督器、审计、告警和提交材料；当前重点是保持真实接入、可部署复现和跨模型实测闭环。",
+            "reason": "源码已形成 LLM API、MCP、Agent 工具执行前后监督和审计回执主链；固定实验与历史报告不能替代当前真实 Provider、最新策略快照和正式报名材料。",
             "competition_fit": _competition_fit(requirements),
         },
         "summary": {
@@ -93,18 +90,6 @@ def build_project_roadmap(runs: list[dict[str, Any]] | None = None) -> dict[str,
         "next_sprint": _next_sprint(backlog),
         "risk_register": _risk_register(backlog, effectiveness),
     }
-
-
-def _load_openclaw_validation() -> dict[str, Any] | None:
-    path = REPORT_ROOT / "OpenClaw源码级插件包验收报告.json"
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    validation = data.get("validation") if isinstance(data.get("validation"), dict) else data
-    return validation if isinstance(validation, dict) else None
 
 
 def _load_competition_benchmark() -> dict[str, Any] | None:
@@ -212,14 +197,20 @@ def _engineering_status() -> dict[str, Any]:
 
 
 def _load_real_model_evaluation() -> dict[str, Any] | None:
-    path = REPORT_ROOT / "真实模型工具调用盲测报告.json"
+    # Reuse the runtime verifier so a self-consistent historical report cannot
+    # inflate the current maturity score after policies or providers change.
+    return load_real_model_evaluation_report(REPORT_ROOT)
+
+
+def _load_external_agent_e2e() -> dict[str, Any] | None:
+    path = REPORT_ROOT / "最小外部Agent接入运行证据.json"
     if not path.exists():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    return data if isinstance(data.get("summary"), dict) else None
+    return data if isinstance(data, dict) else None
 
 
 def build_project_roadmap_markdown(runs: list[dict[str, Any]] | None = None) -> str:
@@ -275,10 +266,9 @@ def _maturity_dimensions(
     requirements: list[dict[str, Any]],
     runs: list[dict[str, Any]],
     calibration: dict[str, Any],
-    openclaw_plugin: dict[str, Any],
-    openclaw_validation: dict[str, Any] | None,
     competition_benchmark: dict[str, Any] | None,
     real_model_evaluation: dict[str, Any] | None,
+    external_agent_e2e: dict[str, Any] | None,
     briefing_export: dict[str, Any] | None,
     benign_workflows: dict[str, Any],
     local_launch: dict[str, bool],
@@ -287,14 +277,6 @@ def _maturity_dimensions(
     summary = surface_index["summary"]
     effectiveness_summary = effectiveness["summary"]
     tool_surfaces = {tool for scenario in get_scenarios() for tool in [call["tool"] for call in scenario["tool_calls"]]}
-    openclaw_static_validated = bool(
-        openclaw_validation
-        and openclaw_validation.get("static_passed")
-        and openclaw_validation.get("files_passed")
-        and openclaw_validation.get("node_syntax_passed")
-        and openclaw_validation.get("contract_e2e_passed")
-    )
-    openclaw_runtime_validated = bool(openclaw_validation and openclaw_validation.get("runtime_inspect_passed"))
     benchmark_ready = _competition_benchmark_ready(competition_benchmark)
     benchmark_dataset = competition_benchmark.get("dataset", {}) if competition_benchmark else {}
     benchmark_performance = competition_benchmark.get("performance", {}) if competition_benchmark else {}
@@ -303,6 +285,22 @@ def _maturity_dimensions(
     real_api_case_count = int(real_model_summary.get("real_api_case_count") or 0)
     model_tool_call_success_count = int(real_model_summary.get("model_tool_call_success_count") or 0)
     real_model_strict_ready = bool(real_model_summary.get("strict_real_api_ready"))
+    external_summary = external_agent_e2e.get("summary", {}) if external_agent_e2e else {}
+    external_security = external_agent_e2e.get("security", {}) if external_agent_e2e else {}
+    external_task_count = int(external_summary.get("task_count") or 0)
+    external_agent_ready = bool(
+        external_agent_e2e
+        and external_agent_e2e.get("schema_version") == "agent-supervisor.external-agent-e2e.v1"
+        and external_agent_e2e.get("adapter") == "AgentToolGuard"
+        and external_agent_e2e.get("risk_hint_used") is False
+        and external_task_count >= 4
+        and int(external_summary.get("controlled_count") or 0) >= 3
+        and int(external_summary.get("executed_count") or 0) >= 1
+        and int(external_summary.get("audit_hash_count") or 0) == external_task_count
+        and int(external_summary.get("server_observed_count") or 0) == external_task_count
+        and external_security.get("token_authentication_used") is True
+        and external_security.get("hmac_signature_expected") is True
+    )
     briefing_export_summary = briefing_export.get("summary", {}) if briefing_export else {}
     briefing_png_count = int(briefing_export_summary.get("png_count") or 0)
     briefing_pdf_count = int(briefing_export_summary.get("pdf_count") or 0)
@@ -343,16 +341,17 @@ def _maturity_dimensions(
             ["继续补跨模型、跨赛道和跨角色的长流程样本，验证边界控制稳定性。"],
         ),
         _dimension(
-            "OpenClaw/外部 Agent 接入",
-            98 if openclaw_runtime_validated and openclaw_static_validated else 89 if openclaw_static_validated else 86 if openclaw_plugin["runtime_checks"]["has_before_tool_call"] else 72,
+            "LLM API / MCP / Agent 接入",
+            98 if external_agent_ready else 82 if external_task_count else 55,
             (
-                "OpenClaw native plugin 已通过文件、Hook、JS语法、Bearer鉴权、默认无risk_hint、攻击阻断与正常放行契约检查；真实runtime inspect确认before_tool_call/after_tool_call已加载。"
-                if openclaw_runtime_validated and openclaw_static_validated
-                else "已提供 OpenClaw 兼容事件入口和可安装 native plugin 包，当前验收证据尚未同时覆盖安全契约与真实 runtime inspect。"
+                f"通用 Agent 接入证据 {external_task_count} 条，Token/HMAC {'是' if external_security.get('token_authentication_used') and external_security.get('hmac_signature_expected') else '否'}；"
+                "OpenAI 兼容代理与 MCP Gateway 是主链，第三方框架适配器不计入核心证据。"
+                if external_agent_e2e
+                else "已实现 OpenAI 兼容代理、MCP Gateway 和通用 HTTP 事件契约，但尚未加载通用 Agent 端到端运行证据。"
             ),
-            ["保留真实 runtime inspect 输出、契约测试报告和端到端工具调用截图。"]
-            if openclaw_runtime_validated and openclaw_static_validated
-            else ["执行插件契约测试和真实 plugins inspect --runtime，保留鉴权、去自标注、阻断与放行证据。"],
+            ["保持同一 Agent 身份贯穿 OpenAI 请求、MCP tools/call、工具执行回执和审计查询；按需再验证第三方框架适配器。"]
+            if external_agent_ready
+            else ["运行带 Token/HMAC 的通用 Agent 端到端验证，并补一条真实 MCP 上游 tools/call 证据。"],
         ),
         _dimension(
             "冻结集、基线与性能证据",
@@ -443,10 +442,9 @@ def _feature_backlog(
     effectiveness: dict[str, Any],
     requirements: list[dict[str, Any]],
     calibration: dict[str, Any],
-    openclaw_plugin: dict[str, Any],
-    openclaw_validation: dict[str, Any] | None,
     competition_benchmark: dict[str, Any] | None,
     real_model_evaluation: dict[str, Any] | None,
+    external_agent_e2e: dict[str, Any] | None,
     briefing_export: dict[str, Any] | None,
     local_launch: dict[str, bool],
 ) -> list[dict[str, Any]]:
@@ -455,17 +453,25 @@ def _feature_backlog(
         and calibration["summary"]["benign_sample_count"] > 0
         and calibration["summary"]["benign_false_alarm_rate"] <= 10
     )
-    openclaw_static_validated = bool(
-        openclaw_validation
-        and openclaw_validation.get("static_passed")
-        and openclaw_validation.get("files_passed")
-        and openclaw_validation.get("node_syntax_passed")
-        and openclaw_validation.get("contract_e2e_passed")
-    )
-    openclaw_runtime_validated = bool(openclaw_validation and openclaw_validation.get("runtime_inspect_passed"))
     benchmark_ready = _competition_benchmark_ready(competition_benchmark)
     real_model_summary = real_model_evaluation.get("summary", {}) if real_model_evaluation else {}
     real_model_done = bool(real_model_summary.get("strict_real_api_ready"))
+    external_summary = external_agent_e2e.get("summary", {}) if external_agent_e2e else {}
+    external_security = external_agent_e2e.get("security", {}) if external_agent_e2e else {}
+    external_task_count = int(external_summary.get("task_count") or 0)
+    external_agent_done = bool(
+        external_agent_e2e
+        and external_agent_e2e.get("schema_version") == "agent-supervisor.external-agent-e2e.v1"
+        and external_agent_e2e.get("adapter") == "AgentToolGuard"
+        and external_agent_e2e.get("risk_hint_used") is False
+        and external_task_count >= 4
+        and int(external_summary.get("controlled_count") or 0) >= 3
+        and int(external_summary.get("executed_count") or 0) >= 1
+        and int(external_summary.get("audit_hash_count") or 0) == external_task_count
+        and int(external_summary.get("server_observed_count") or 0) == external_task_count
+        and external_security.get("token_authentication_used") is True
+        and external_security.get("hmac_signature_expected") is True
+    )
     briefing_export_summary = briefing_export.get("summary", {}) if briefing_export else {}
     briefing_export_done = bool(
         briefing_export
@@ -489,17 +495,13 @@ def _feature_backlog(
             "status": "已完成" if benchmark_ready else "未完成",
         },
         {
-            "id": "real-openclaw-hook",
+            "id": "real-agent-gateway-e2e",
             "priority": "P0",
-            "title": "真实 OpenClaw 源码级工具调用 Hook",
-            "why": "研究方向明确提到开源智能化应用，源码级接入比兼容样例更有说服力。",
-            "scope": "接入 OpenClaw 或同类 Agent 的工具调用前后置事件。",
-            "acceptance": "能从真实 OpenClaw Agent 操作触发监督 API、审计日志和告警记录。",
-            "status": "已完成"
-            if openclaw_runtime_validated and openclaw_static_validated
-            else "部分完成"
-            if openclaw_static_validated or openclaw_plugin["runtime_checks"]["has_before_tool_call"]
-            else "未完成",
+            "title": "真实 Agent → LLM API / MCP 网关端到端接入",
+            "why": "主产品价值在真实 Agent 请求经过网关、执行前监督、回执和审计闭环，而不是绑定某一个 Agent 框架。",
+            "scope": "验证通用 AgentToolGuard、OpenAI 兼容代理和 MCP tools/call 的身份、工具、模型和执行回执边界。",
+            "acceptance": "真实 Agent 任务带 Token/HMAC，攻击请求被控制、正常任务执行、每条记录有审计 Hash；第三方框架适配器不作为主链证据。",
+            "status": "已完成" if external_agent_done else "未完成",
         },
         {
             "id": "anomaly-calibration",
@@ -512,7 +514,7 @@ def _feature_backlog(
         },
         {
             "id": "multi-model-eval",
-            "priority": "P1",
+            "priority": "P0",
             "title": "真实模型工具调用盲测",
             "why": "大模型安全题需要证明监督器不依赖脚本预设 tool_calls，而能接住真实模型结构化工具调用。",
             "scope": "对真实模型与本地兜底规划器运行同一批攻击/正常样本，并保留供应商响应指纹和双分支回执。",
@@ -587,7 +589,7 @@ def _risk_register(backlog: list[dict[str, Any]], effectiveness: dict[str, Any])
         {
             "risk": "真实接入证据不足",
             "impact": "评委可能认为系统仍偏静态展示。",
-            "mitigation": "优先完成真实 OpenClaw 或同类 Agent 的工具调用 Hook。",
+            "mitigation": "优先完成真实 Agent → OpenAI 兼容 API / MCP Gateway 的端到端调用、执行回执和审计证据；框架适配器仅做兼容性回归。",
         },
         {
             "risk": "复现步骤偏多",

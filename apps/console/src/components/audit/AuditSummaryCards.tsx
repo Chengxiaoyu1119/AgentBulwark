@@ -10,7 +10,14 @@ interface AuditSummaryCardsProps {
   unconfirmedCount?: number;
 }
 
-export function AuditSummaryCards({ total, controlledCount, highRiskCount, executedCount, receiptCount = 0, unconfirmedCount = 0 }: AuditSummaryCardsProps) {
+export function AuditSummaryCards({
+  total,
+  controlledCount,
+  highRiskCount,
+  executedCount,
+  receiptCount = 0,
+  unconfirmedCount = 0
+}: AuditSummaryCardsProps) {
   return (
     <Row gutter={[16, 16]}>
       <Col xs={24} sm={12} md={6}>

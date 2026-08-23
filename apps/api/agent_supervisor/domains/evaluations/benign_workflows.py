@@ -329,8 +329,47 @@ def write_benign_workflow_report(output_root: str | Path | None = None) -> dict[
     }
 
 
+def load_benign_workflow_report(output_root: str | Path | None = None) -> dict[str, Any]:
+    """Load previously generated evidence without executing sandbox tools."""
+
+    root = Path(output_root) if output_root else REPORT_ROOT
+    json_path = root / "连续正常业务任务流程误报评测.json"
+    if json_path.exists():
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("summary"), dict) and isinstance(data.get("workflows"), list):
+            return data
+    return {
+        "generated_at": "",
+        "source": "not-generated",
+        "filter": {"guard_enabled": True, "isolated_execution": True},
+        "summary": {
+            "workflow_count": 0,
+            "passed_workflow_count": 0,
+            "workflow_pass_rate": 0,
+            "step_count": 0,
+            "expected_allow_step_count": 0,
+            "expected_control_step_count": 0,
+            "allowed_step_count": 0,
+            "controlled_step_count": 0,
+            "executed_step_count": 0,
+            "false_positive_count": 0,
+            "false_positive_rate": 0,
+            "expected_match_count": 0,
+            "expected_match_rate": 0,
+            "tool_count": 0,
+            "tool_distribution": {},
+            "decision_distribution": {},
+            "audit_chain_valid_count": 0,
+        },
+        "workflows": [],
+    }
+
+
 def build_benign_workflow_markdown(data: dict[str, Any] | None = None) -> str:
-    data = data or evaluate_benign_workflows()
+    data = data or load_benign_workflow_report()
     summary = data["summary"]
     lines = [
         "# 连续正常业务任务流程误报评测",

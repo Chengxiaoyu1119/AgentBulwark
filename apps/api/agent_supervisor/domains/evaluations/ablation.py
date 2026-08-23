@@ -9,6 +9,7 @@ from threading import RLock
 from typing import Any
 
 from apps.api.agent_supervisor.domains.attacks.agents import run_scenario
+from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
 from apps.api.agent_supervisor.paths import SANDBOX_REPORTS_DIR
 from apps.api.agent_supervisor.storage.data import get_policies, set_policy_enabled
 
@@ -66,6 +67,8 @@ ABLATION_GROUPS: list[dict[str, Any]] = [
 
 
 def build_policy_ablation() -> dict[str, Any]:
+    if production_security_profile():
+        raise RuntimeError("生产网关不允许运行会临时关闭实时策略的消融实验")
     experiments = [_run_group(group) for group in ABLATION_GROUPS]
     baseline_total = sum(item["baseline"]["scenario_count"] for item in experiments)
     ablated_total = sum(item["ablated"]["scenario_count"] for item in experiments)
@@ -340,6 +343,8 @@ def _policy_ablation_placeholder() -> dict[str, Any]:
 
 @contextmanager
 def _disabled_policies(policy_ids: list[str]):
+    if production_security_profile():
+        raise RuntimeError("生产网关不允许运行会临时关闭实时策略的消融实验")
     previous = {policy["id"]: bool(policy.get("enabled", True)) for policy in get_policies()}
     try:
         for policy_id in policy_ids:

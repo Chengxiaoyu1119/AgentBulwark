@@ -58,10 +58,16 @@ export interface PolicySettings {
   anomaly_reject_threshold: number;
   approval_sla_minutes: number;
   high_risk_auto_escalation: boolean;
+  require_agent_capability_registration?: boolean;
+  require_agent_model_registration?: boolean;
+  require_agent_context_registration?: boolean;
   internal_email_domains: string[];
   sensitive_path_markers: string[];
   sensitive_api_markers: string[];
   agent_tool_allowlists: Record<string, string[]>;
+  agent_api_allowlists?: Record<string, string[]>;
+  agent_model_allowlists?: Record<string, string[]>;
+  agent_context_allowlists?: Record<string, Record<string, string[]>>;
   agent_tool_mappings?: Record<string, Record<string, AgentToolMappingConfig>>;
 }
 

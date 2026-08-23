@@ -1,7 +1,7 @@
 import os
 from hmac import compare_digest
 
-from fastapi import Depends, Header, HTTPException, Request
+from fastapi import Header, HTTPException
 
 from apps.api.agent_supervisor.domains.runtime import agent_credentials
 from apps.api.agent_supervisor.domains.runtime.agent_credentials import (
@@ -14,14 +14,16 @@ from apps.api.agent_supervisor.domains.runtime.agent_credentials import (
     supplied_token,
 )
 
-EXECUTOR_ALLOWED_ROUTES = {
-    ("GET", "/api/auth/context"),
-    ("GET", "/api/health"),
-    ("POST", "/api/integrations/openclaw/events"),
-    ("POST", "/api/runtime/batch_evaluate"),
-    ("POST", "/api/runtime/evaluate"),
-    ("POST", "/api/supervisor/batch_evaluate"),
-    ("POST", "/api/supervisor/evaluate"),
+# Roles are capability peers, not a single numeric hierarchy: an analyst may
+# inspect and write research artifacts but must not inherit executor side
+# effects, while an executor must not inherit analyst-only operations.  Keep
+# the grant relation explicit so a read-only observer can never satisfy an
+# execution requirement merely because both roles share a legacy numeric rank.
+ROLE_GRANTS = {
+    "observer": frozenset({"observer", "executor", "analyst", "admin"}),
+    "executor": frozenset({"executor", "admin"}),
+    "analyst": frozenset({"analyst", "admin"}),
+    "admin": frozenset({"admin"}),
 }
 
 
@@ -82,9 +84,8 @@ def current_agent_identity(
 
 
 def require_role(role: str, current_role: str) -> None:
-    required = ROLE_ORDER.get(role, ROLE_ORDER["admin"])
-    actual = ROLE_ORDER.get(current_role, ROLE_ORDER["observer"])
-    if actual < required:
+    allowed_roles = ROLE_GRANTS.get(role, frozenset())
+    if current_role not in allowed_roles:
         raise HTTPException(status_code=403, detail=f"当前角色 {current_role} 无权执行该操作，需要 {role}")
 
 
@@ -98,20 +99,7 @@ def require_agent_identity(agent_id: str, current_role: str, authenticated_agent
     agent_credentials.require_agent_identity(agent_id, current_role, authenticated_agent_id)
 
 
-def restrict_executor_scope(
-    request: Request,
-    role: str = Depends(current_security_role),
-) -> None:
-    if role != "executor":
-        return
-    route = (request.method.upper(), request.url.path)
-    approval_action = request.method.upper() == "POST" and request.url.path.startswith("/api/approvals/") and request.url.path.endswith(
-        ("/claim", "/complete")
-    )
-    execution_receipt = (
-        request.method.upper() == "POST"
-        and request.url.path.startswith("/api/runtime/executions/")
-        and request.url.path.endswith("/complete")
-    )
-    if route not in EXECUTOR_ALLOWED_ROUTES and not approval_action and not execution_receipt:
-        raise HTTPException(status_code=403, detail="executor 角色仅允许调用生产监督和审批恢复接口")
+# Kept as a compatibility export for routers and integrations.  The route-scope
+# implementation lives under the runtime domain so the auth entrypoint remains
+# limited to identity and role resolution.
+from apps.api.agent_supervisor.domains.runtime.route_scope import restrict_executor_scope  # noqa: E402, F401

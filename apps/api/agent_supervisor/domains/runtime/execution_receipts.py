@@ -7,15 +7,23 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from apps.api.agent_supervisor.domains.governance.integrity import audit_hash, audit_signature
+from apps.api.agent_supervisor.domains.governance.integrity import (
+    audit_hash,
+    audit_signature,
+    audit_signature_required,
+    verify_audit_signature,
+)
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.tool_contract import normalize_tool_call
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
 from apps.api.agent_supervisor.storage.database import (
+    list_gateway_execution_claims,
     list_runtime_events,
     load_audit_log,
     load_execution_receipt,
+    load_gateway_execution_claim,
     persist_execution_receipt,
+    persist_execution_receipt_use,
 )
 
 EXECUTION_STATUSES = frozenset({"completed", "failed", "not_executed"})
@@ -34,11 +42,24 @@ def tool_call_hash(tool_call: dict[str, Any]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def tool_result_hash(content: Any) -> str:
+    """Hash the exact JSON value returned in an OpenAI ``tool`` message."""
+    encoded = json.dumps(content, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def complete_execution(
     audit_id: str,
     request: dict[str, Any],
+    *,
+    server_observed: bool = False,
 ) -> dict[str, Any]:
-    """Validate and append the external executor's result without rewriting the decision audit."""
+    """Validate and append an execution result without rewriting the decision audit.
+
+    External Agent callers use the default caller-declared evidence mode.  The
+    supervisor-owned gateway executor passes ``server_observed=True`` only after
+    it has executed the exact tool call reconstructed from the gateway audit.
+    """
     audit_log = load_audit_log(audit_id)
     if not audit_log:
         raise KeyError(audit_id)
@@ -69,6 +90,22 @@ def complete_execution(
     if result_hash and not SHA256_PATTERN.fullmatch(result_hash):
         raise ValueError("result_hash 必须是 64 位十六进制 SHA-256")
 
+    # The managed gateway must be able to retry the Provider follow-up without
+    # executing the tool a second time.  Store only the bounded, already
+    # redacted model-visible value, and only when the supervisor itself observed
+    # the execution.  Caller-declared receipts remain hash-only attestations.
+    result_content = ""
+    if server_observed and status in {"completed", "failed"}:
+        raw_result_content = request.get("result_content")
+        if not isinstance(raw_result_content, str):
+            raise ValueError("服务端观察回执必须包含字符串 result_content")
+        # ``execute_gateway_tool_call`` already applies the redaction boundary
+        # before hashing.  Redacting this string a second time would make
+        # content such as a redacted path hash differently on every retry.
+        result_content = raw_result_content[:12_000]
+        if result_hash != tool_result_hash(result_content):
+            raise ValueError("result_content 与 result_hash 不一致")
+
     duration_ms = round(float(request.get("duration_ms", 0)), 3)
     if duration_ms < 0 or duration_ms > 86_400_000:
         raise ValueError("duration_ms 必须在 0 到 86400000 之间")
@@ -86,6 +123,7 @@ def complete_execution(
         "status": status,
         "execution_target": execution_target,
         "result_hash": result_hash,
+        "result_content": result_content,
         "duration_ms": duration_ms,
         "error": sanitized_error,
     }
@@ -98,6 +136,11 @@ def complete_execution(
         "created_at": created_at,
         "request_hash": _sha256_payload(request_fingerprint),
         "agent_followed_decision": _agent_followed_decision(decision, status, execution_target),
+        # External callers submit an attestation; the supervisor-owned gateway
+        # executor can mark the same schema as observed because it owns the
+        # process that produced the result.
+        "execution_evidence": "server-observed" if server_observed else "caller-declared",
+        "execution_observed_by_server": bool(server_observed),
         "execution_confirmed": status == "completed",
         "control_verified": _control_verified(decision, status, execution_target),
     }
@@ -138,6 +181,7 @@ def complete_execution(
 def list_execution_receipts(limit: int = 200) -> dict[str, Any]:
     events = list_runtime_events(event_type="execution-receipt", limit=limit)
     receipts = [event["payload"] | {"event_id": event["event_id"]} for event in events if isinstance(event.get("payload"), dict)]
+    gateway_claims = list_gateway_execution_claims(limit)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {
@@ -147,9 +191,13 @@ def list_execution_receipts(limit: int = 200) -> dict[str, Any]:
             "not_executed": sum(1 for item in receipts if item.get("status") == "not_executed"),
             "decision_followed": sum(1 for item in receipts if item.get("agent_followed_decision")),
             "control_verified": sum(1 for item in receipts if item.get("control_verified")),
+            "caller_declared": sum(1 for item in receipts if item.get("execution_evidence") == "caller-declared"),
+            "server_observed": sum(1 for item in receipts if item.get("execution_observed_by_server") is True),
             "signed": sum(1 for item in receipts if item.get("receipt_signature")),
+            "gateway_unknown": sum(1 for item in gateway_claims if item.get("status") == "unknown"),
         },
         "receipts": receipts,
+        "gateway_execution_claims": gateway_claims,
     }
 
 
@@ -160,7 +208,51 @@ def get_execution_receipt(audit_id: str) -> dict[str, Any]:
     return {
         "audit_id": audit_id,
         "receipt": load_execution_receipt(audit_id),
+        "gateway_execution_claim": load_gateway_execution_claim(audit_id),
     }
+
+
+def verify_execution_receipt(receipt: dict[str, Any] | None) -> bool:
+    """Verify the append-only hash (and HMAC when configured) of a receipt."""
+    if not isinstance(receipt, dict):
+        return False
+    stored_hash = str(receipt.get("receipt_hash", ""))
+    if not stored_hash or stored_hash != _receipt_hash(receipt):
+        return False
+    stored_signature = str(receipt.get("receipt_signature", ""))
+    if audit_signature_required() and not stored_signature:
+        return False
+    if not stored_signature:
+        return True
+    return verify_audit_signature(stored_hash, stored_signature)
+
+
+def claim_execution_receipt_use(
+    audit_id: str,
+    *,
+    agent_id: str,
+    session_id: str,
+    request_hash: str,
+    receipt_hash: str,
+) -> dict[str, Any]:
+    """Bind a verified tool result to one proxy request.
+
+    The first claim is recorded in the runtime journal.  Repeating the exact
+    request is idempotent, while a different request cannot reuse the same
+    completed tool result as if it were a fresh execution.
+    """
+    payload = {
+        "audit_id": str(audit_id),
+        "agent_id": str(agent_id),
+        "session_id": str(session_id),
+        "request_hash": str(request_hash),
+        "receipt_hash": str(receipt_hash),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    persisted = persist_execution_receipt_use(payload)
+    if persisted.get("conflict"):
+        raise ExecutionReceiptConflictError("执行回执已经绑定到另一条代理请求，拒绝重复回放")
+    return persisted
 
 
 def _verify_original_audit(audit_log: dict[str, Any]) -> None:
@@ -220,7 +312,13 @@ def _receipt_hash(receipt: dict[str, Any]) -> str:
     payload = {
         key: value
         for key, value in receipt.items()
-        if key not in {"receipt_hash", "receipt_signature", "receipt_signature_key_id"}
+        if key not in {
+            "receipt_hash",
+            "receipt_signature",
+            "receipt_signature_key_id",
+            "event_id",
+            "journal_created_at",
+        }
     }
     return _sha256_payload(payload)
 

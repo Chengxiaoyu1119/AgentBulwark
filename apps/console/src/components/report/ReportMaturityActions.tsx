@@ -157,22 +157,20 @@ export function ReportMaturityActions({ onRefreshReport, onRefreshRuntime }: Rep
                   message: `攻击面评测单页导出完成：PNG ${result.summary.png_count} 个，PDF ${result.summary.pdf_count} 个。`,
                   description: (
                     <Space wrap className="zh-report-action-notice-links">
-                      <UiButton size="small" href="/api/attack_surfaces/briefing_sheets/export.md" target="_blank">
+                      <UiButton size="small" authenticatedHref="/api/attack_surfaces/briefing_sheets/export.md">
                         打开导出报告
                       </UiButton>
                       {firstFile && (
                         <>
                           <UiButton
                             size="small"
-                            href={`/api/attack_surfaces/briefing_sheets/export/files/${encodeURIComponent(firstFile.surface_id)}.png`}
-                            target="_blank"
+                            authenticatedHref={`/api/attack_surfaces/briefing_sheets/export/files/${encodeURIComponent(firstFile.surface_id)}.png`}
                           >
                             预览首张 PNG
                           </UiButton>
                           <UiButton
                             size="small"
-                            href={`/api/attack_surfaces/briefing_sheets/export/files/${encodeURIComponent(firstFile.surface_id)}.pdf`}
-                            target="_blank"
+                            authenticatedHref={`/api/attack_surfaces/briefing_sheets/export/files/${encodeURIComponent(firstFile.surface_id)}.pdf`}
                           >
                             打开首份 PDF
                           </UiButton>

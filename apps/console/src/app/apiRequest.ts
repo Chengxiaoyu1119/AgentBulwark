@@ -40,6 +40,46 @@ export function setAuthTokenProvider(provider: AuthTokenProvider | null) {
   authTokenProvider = provider;
 }
 
+export async function openAuthenticatedResource(path: string, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<void> {
+  const popup = window.open('', '_blank');
+  if (!popup) {
+    throw new ApiError('浏览器阻止了报告窗口，请允许当前页面打开新窗口。', {
+      code: 'network_error',
+      path
+    });
+  }
+
+  const controller = timeoutMs > 0 ? new AbortController() : undefined;
+  const timeoutId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : undefined;
+  try {
+    const response = await fetch(path, {
+      cache: 'no-store',
+      headers: await buildRequestHeaders(undefined, undefined, {}),
+      signal: controller?.signal
+    });
+    if (!response.ok) {
+      const body = await readErrorBody(response);
+      throw new ApiError(body || `HTTP ${response.status}`, {
+        code: 'http_error',
+        path,
+        status: response.status,
+        body
+      });
+    }
+    const blob = await response.blob();
+    const resourceUrl = URL.createObjectURL(blob);
+    popup!.location.href = resourceUrl;
+    window.setTimeout(() => URL.revokeObjectURL(resourceUrl), 60_000);
+  } catch (error) {
+    popup?.close();
+    throw normalizeRequestError(error, path);
+  } finally {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  }
+}
+
 export type RuntimeEvent = {
   id: string;
   type: string;

@@ -46,7 +46,7 @@ export function SupervisorDebugTab({
   return (
     <Space orientation="vertical" size="large" className="zh-tab-stack">
       <PanelCard
-        title="真实 Agent 工具调度验证"
+        title="本地回归夹具（非生产路径）"
         type="inner"
         extra={
           <UiButton
@@ -55,24 +55,21 @@ export function SupervisorDebugTab({
             loading={runningExternalAgentDemo}
             icon={<TerminalSquare size={16} />}
           >
-            运行真实 Agent 验证
+            运行本地回归
           </UiButton>
         }
         className="zh-mb-24"
       >
         <Typography.Paragraph type="secondary">
-          从页面直接运行最小外部 Agent，让监督器在工具执行前做允许、拒绝或询问决策，并生成可提交的证据文件。
+          使用固定的本地工具任务验证监督器、执行回执和审计链。它不调用真实 Provider，也不代表生产 Agent
+          已经接入；真实接入请使用上方 LLM API / MCP 网关。
         </Typography.Paragraph>
         <Space className="zh-settings-action-row" wrap>
           <LabelTag variant="filled" className="zh-settings-code-tag">
-            POST /api/integrations/openclaw/minimal_agent_demo
+            POST /api/integrations/agents/minimal_demo
           </LabelTag>
-          <UiButton href="/api/integrations/openclaw/bundle" target="_blank">
-            查看接入包
-          </UiButton>
-          <UiButton href="/api/integrations/openclaw/adapter.py" target="_blank">
-            查看适配器代码
-          </UiButton>
+          <UiButton authenticatedHref="/api/integrations/agents/bundle">查看接入包</UiButton>
+          <UiButton authenticatedHref="/api/integrations/agents/bundle.md">查看接入代码</UiButton>
         </Space>
 
         {externalAgentDemo ? (
@@ -85,7 +82,7 @@ export function SupervisorDebugTab({
                 <Metric label="被控制" value={`${externalAgentDemo.summary.controlled_count}`} tone="green" />
               </Col>
               <Col xs={12} sm={8} md={4}>
-                <Metric label="真实执行" value={`${externalAgentDemo.summary.executed_count}`} />
+                <Metric label="本地执行" value={`${externalAgentDemo.summary.executed_count}`} />
               </Col>
               <Col xs={12} sm={8} md={4}>
                 <Metric label="控制率" value={`${externalAgentDemo.summary.control_rate}%`} tone="amber" />
@@ -101,10 +98,25 @@ export function SupervisorDebugTab({
                 />
               </Col>
               <Col xs={12} sm={8} md={4}>
-                <Metric label="防护闭环" value={`${externalAgentDemo.summary.control_verified_count ?? 0}`} tone="green" />
+                <Metric
+                  label="服务端观察"
+                  value={`${externalAgentDemo.summary.server_observed_count ?? 0}/${externalAgentDemo.summary.task_count}`}
+                  tone={
+                    (externalAgentDemo.summary.server_observed_count ?? 0) === externalAgentDemo.summary.task_count
+                      ? 'green'
+                      : 'amber'
+                  }
+                />
               </Col>
             </Row>
             <Space orientation="vertical" className="zh-settings-stack zh-settings-stack--mb-24">
+              {(externalAgentDemo.summary.server_observed_count ?? 0) < externalAgentDemo.summary.task_count ? (
+                <UiAlert
+                  title="当前回执由外部 Agent 自报，Hash/HMAC 证明回执被网关接受，不等于服务端观察到了工具执行。严格执行证据请改用 MCP Gateway 或 /api/runtime/execute。"
+                  type="warning"
+                  showIcon
+                />
+              ) : null}
               <Space wrap>
                 <LabelTag variant="filled" color="success">
                   证据已写入本地
@@ -147,7 +159,11 @@ export function SupervisorDebugTab({
                           {record.executed ? '已执行' : '未执行'}
                         </LabelTag>
                         <LabelTag variant="filled" color={record.receipt_confirmed ? 'success' : 'warning'}>
-                          {record.receipt_confirmed ? `${record.execution_target ?? 'unknown'} / ${record.execution_status ?? 'unknown'}` : '回执未确认'}
+                          {record.receipt_confirmed
+                            ? record.execution_observed_by_server
+                              ? `服务端观察 / ${record.execution_status ?? 'unknown'}`
+                              : `调用方声明 / ${record.execution_status ?? 'unknown'}`
+                            : '回执未确认'}
                         </LabelTag>
                         <Typography.Text type="secondary" className="zh-settings-meta-sm">
                           {record.policy_id}
@@ -167,7 +183,7 @@ export function SupervisorDebugTab({
           </>
         ) : (
           <UiAlert
-            title="还没有运行真实 Agent 调度验证。点击按钮后，系统会自动跑 4 个工具调用并写入审计证据。"
+            title="还没有运行本地回归。点击按钮后，系统会自动跑 4 个固定工具任务并写入审计证据。"
             type="info"
             showIcon
           />

@@ -394,7 +394,7 @@ class CustomAttackCompareTests(unittest.TestCase):
         tool_output = result["without_guard"]["audit_log"]["tool_output"]
         self.assertFalse(tool_output["executed"])
         self.assertEqual(tool_output["executor"], "unavailable")
-        self.assertIn("Docker 与 WSL", tool_output["output"])
+        self.assertIn("WSL 降级执行默认关闭", tool_output["output"])
         self.assertFalse(result["summary"]["exposed_without_guard"])
 
     @patch("apps.api.agent_supervisor.domains.runtime.tools.shutil.which")
@@ -407,9 +407,17 @@ class CustomAttackCompareTests(unittest.TestCase):
             type("Result", (), {"returncode": 1, "stdout": "", "stderr": "daemon offline"})(),
             type("Result", (), {"returncode": 0, "stdout": "wsl-output", "stderr": ""})(),
         ]
-        result = run_custom_attack_compare(
-            {"payload": "run caller command", "tool": "code.run", "command": "printf wsl-output"}
-        )
+        with patch.dict(
+            "os.environ",
+            {
+                "AGENT_SUPERVISOR_COMMAND_ALLOW_WSL_FALLBACK": "true",
+                "AGENT_SUPERVISOR_SECURITY_PROFILE": "local",
+            },
+            clear=False,
+        ):
+            result = run_custom_attack_compare(
+                {"payload": "run caller command", "tool": "code.run", "command": "printf wsl-output"}
+            )
         output = result["without_guard"]["audit_log"]["tool_output"]
         self.assertTrue(output["executed"])
         self.assertEqual(output["executor"], "wsl2-unshare")
@@ -442,7 +450,17 @@ class CustomAttackCompareTests(unittest.TestCase):
         from apps.api.agent_supervisor.domains.runtime.tools import SandboxPaths, _run_wsl_isolated_command
 
         root = Path("C:/fixture-wsl-failure")
-        with patch("apps.api.agent_supervisor.domains.runtime.tools.shutil.which", return_value="wsl"):
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "AGENT_SUPERVISOR_COMMAND_ALLOW_WSL_FALLBACK": "true",
+                    "AGENT_SUPERVISOR_SECURITY_PROFILE": "local",
+                },
+                clear=False,
+            ),
+            patch("apps.api.agent_supervisor.domains.runtime.tools.shutil.which", return_value="wsl"),
+        ):
             output = _run_wsl_isolated_command(
                 "printf never-started",
                 SandboxPaths(root / "workspace", root / "outbox", root / "memory", root / "fixtures"),

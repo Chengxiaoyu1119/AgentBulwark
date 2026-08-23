@@ -6,6 +6,7 @@ import time
 from copy import deepcopy
 from typing import Any, cast
 
+from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
 from apps.api.agent_supervisor.paths import PACKAGE_DIR, RUNTIME_DIR
 from apps.api.agent_supervisor.storage.database import record_policy_version
 
@@ -18,6 +19,13 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
     "anomaly_reject_threshold": 85,
     "approval_sla_minutes": 30,
     "high_risk_auto_escalation": True,
+    # Keep local fixtures compatible by default; production deployments should
+    # enable both registration gates before issuing Agent tokens.
+    "require_agent_capability_registration": False,
+    "require_agent_model_registration": False,
+    # MCP resources/prompts are model-visible context. Production deployments
+    # must register an explicit per-Agent context scope as well.
+    "require_agent_context_registration": False,
     "internal_email_domains": ["internal.example"],
     "sensitive_path_markers": [
         "confidential",
@@ -44,6 +52,18 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
         "judge-demo-agent": ["file.read", "mail.send", "api.call", "memory.write"],
         "minimal-external-agent": ["file.read", "api.call", "mail.send"],
     },
+    # Absolute HTTP destinations are a separate authority boundary from tool
+    # capability grants.  Empty by default: a production Agent must register
+    # its provider/business API hosts explicitly; relative fixture routes keep
+    # working without a host entry.
+    "agent_api_allowlists": {},
+    # Model identifiers are another authority boundary: a valid Agent token
+    # must not silently select an arbitrary provider/model once this map is
+    # configured.  Empty keeps backwards-compatible local bootstrap behavior;
+    # readiness reports it as a gap until each production Agent is registered.
+    "agent_model_allowlists": {},
+    # Resource URI/template and prompt-name scopes for MCP context reads.
+    "agent_context_allowlists": {},
     "agent_tool_mappings": {},
 }
 
@@ -88,17 +108,19 @@ def _load_json_dict(filename: str) -> dict[str, Any]:
     return cast(dict[str, Any], data)
 
 
-_overrides_cache: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
+_overrides_cache: dict[str, tuple[int, int, dict[str, dict[str, Any]]]] = {}
 
 
 def _load_policy_overrides() -> dict[str, dict[str, Any]]:
     if not POLICY_OVERRIDES_PATH.exists():
         return {}
     cache_id = str(POLICY_OVERRIDES_PATH)
-    mtime = POLICY_OVERRIDES_PATH.stat().st_mtime
+    stat = POLICY_OVERRIDES_PATH.stat()
+    mtime_ns = stat.st_mtime_ns
+    file_size = stat.st_size
     cached = _overrides_cache.get(cache_id)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
+    if cached is not None and cached[0] == mtime_ns and cached[1] == file_size:
+        return cached[2]
     try:
         raw = json.loads(POLICY_OVERRIDES_PATH.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
@@ -115,7 +137,7 @@ def _load_policy_overrides() -> dict[str, dict[str, Any]]:
             if "enabled" in clean:
                 clean["enabled"] = bool(clean["enabled"])
             overrides[policy_id] = clean
-    _overrides_cache[cache_id] = (mtime, overrides)
+    _overrides_cache[cache_id] = (mtime_ns, file_size, overrides)
     return overrides
 
 
@@ -178,6 +200,9 @@ def _normalize_policy_settings(settings: dict[str, Any]) -> dict[str, Any]:
         settings["anomaly_reject_threshold"] = settings["anomaly_review_threshold"]
     settings["approval_sla_minutes"] = _clamp_int(settings.get("approval_sla_minutes"), 1, 24 * 60)
     settings["high_risk_auto_escalation"] = bool(settings.get("high_risk_auto_escalation", True))
+    settings["require_agent_capability_registration"] = bool(settings.get("require_agent_capability_registration", False))
+    settings["require_agent_model_registration"] = bool(settings.get("require_agent_model_registration", False))
+    settings["require_agent_context_registration"] = bool(settings.get("require_agent_context_registration", False))
     settings["internal_email_domains"] = _string_list(
         settings.get("internal_email_domains"), DEFAULT_POLICY_SETTINGS["internal_email_domains"], max_items=50
     )
@@ -188,6 +213,9 @@ def _normalize_policy_settings(settings: dict[str, Any]) -> dict[str, Any]:
         settings.get("sensitive_api_markers"), DEFAULT_POLICY_SETTINGS["sensitive_api_markers"], max_items=100
     )
     settings["agent_tool_allowlists"] = _tool_allowlists(settings.get("agent_tool_allowlists"))
+    settings["agent_api_allowlists"] = _api_allowlists(settings.get("agent_api_allowlists"))
+    settings["agent_model_allowlists"] = _model_allowlists(settings.get("agent_model_allowlists"))
+    settings["agent_context_allowlists"] = _context_allowlists(settings.get("agent_context_allowlists"))
     settings["agent_tool_mappings"] = _tool_mappings(settings.get("agent_tool_mappings"))
     return settings
 
@@ -217,6 +245,76 @@ def _tool_allowlists(value: Any) -> dict[str, list[str]]:
             if tool and tool not in tools:
                 tools.append(tool)
         result[agent_id] = tools
+    return result
+
+
+def _api_allowlists(value: Any) -> dict[str, list[str]]:
+    """Normalize Agent-bound external API host registrations.
+
+    Validation of scheme/host syntax happens at decision time so malformed
+    entries fail closed without making policy-file loading brittle.
+    """
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for raw_agent_id, raw_targets in list(value.items())[:100]:
+        agent_id = str(raw_agent_id).strip()
+        if not agent_id or not isinstance(raw_targets, list):
+            continue
+        targets: list[str] = []
+        for raw_target in raw_targets[:100]:
+            target = str(raw_target).strip().lower()
+            if target and target not in targets:
+                targets.append(target)
+        result[agent_id] = targets
+    return result
+
+
+def _model_allowlists(value: Any) -> dict[str, list[str]]:
+    """Normalize Agent-bound model identifiers without accepting free-form maps."""
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, list[str]] = {}
+    for raw_agent_id, raw_models in list(value.items())[:100]:
+        agent_id = str(raw_agent_id).strip()
+        if not agent_id or not isinstance(raw_models, list):
+            continue
+        models: list[str] = []
+        for raw_model in raw_models[:100]:
+            model = str(raw_model).strip().replace("\r", "").replace("\n", "")[:160]
+            if model and model.lower() not in {item.lower() for item in models}:
+                models.append(model)
+        result[agent_id] = models
+    return result
+
+
+def _context_allowlists(value: Any) -> dict[str, dict[str, list[str]]]:
+    """Normalize Agent-bound MCP resource/prompt scopes.
+
+    Entries are exact URIs/names or bounded shell-style patterns. The matcher
+    is intentionally small so an operator can inspect the effective scope in
+    the policy snapshot without introducing an expression language.
+    """
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, dict[str, list[str]]] = {}
+    allowed_kinds = {"resources", "resource_templates", "prompts"}
+    for raw_agent_id, raw_scope in list(value.items())[:100]:
+        agent_id = str(raw_agent_id).strip()
+        if not agent_id or not isinstance(raw_scope, dict):
+            continue
+        scope: dict[str, list[str]] = {}
+        for raw_kind, raw_values in raw_scope.items():
+            kind = str(raw_kind).strip().lower()
+            if kind not in allowed_kinds or not isinstance(raw_values, list):
+                continue
+            values: list[str] = []
+            for raw_value in raw_values[:100]:
+                value_text = str(raw_value).strip()
+                if value_text and len(value_text) <= 512 and value_text not in values:
+                    values.append(value_text)
+            scope[kind] = values
+        result[agent_id] = scope
     return result
 
 
@@ -278,11 +376,17 @@ def _clamp_int(value: Any, min_value: int, max_value: int) -> int:
 
 
 def get_attack_surfaces() -> list[dict[str, Any]]:
-    return deepcopy(_load_json_list("attack_surfaces.json"))
+    surfaces = deepcopy(_load_json_list("attack_surfaces.json"))
+    return [_genericize_product_scenario(surface) for surface in surfaces]
 
 
 def get_student_competition_attack_map() -> list[dict[str, Any]]:
-    return deepcopy(_load_json_list("student_competition_attack_map.json"))
+    # The file remains a historical regression fixture, but it must not define
+    # the product's visible domain.  The runtime console is an AI-Agent
+    # security gateway, so expose the same attack paths as tenant/session/
+    # document assets rather than leaking the old contest narrative.
+    profiles = deepcopy(_load_json_list("student_competition_attack_map.json"))
+    return [_genericize_product_scenario(profile) for profile in profiles]
 
 
 def _enrich_policy(policy: dict[str, Any], impacts: dict[str, Any]) -> dict[str, Any]:
@@ -298,12 +402,77 @@ def get_policies() -> list[dict[str, Any]]:
         override = overrides.get(policy["id"], {})
         merged = {**policy, **override}
         merged["enabled"] = bool(merged.get("enabled", policy["enabled"]))
-        enriched.append(_enrich_policy(merged, impacts))
+        # Policy IDs and machine-readable decisions stay stable; user-visible
+        # descriptions are generalized at the product boundary so the console
+        # does not present historical competition semantics as current scope.
+        enriched.append(_genericize_product_scenario(_enrich_policy(merged, impacts)))
     return enriched
 
 
 def get_scenarios() -> list[dict[str, Any]]:
     return deepcopy(_load_json_list("scenarios.json"))
+
+
+_PRODUCT_SCENARIO_REPLACEMENTS = (
+    ("confidential/competition-teams.csv", "confidential/agent-secrets.json"),
+    ("confidential/challenge-seeds.json", "confidential/model-evaluation-secrets.json"),
+    ("competition-teams.csv", "agent-secrets.json"),
+    ("challenge-seeds.json", "model-evaluation-secrets.json"),
+    ("external-audit@example.com", "external-review@example.com"),
+    ("outside-review@example.com", "external-review@example.com"),
+    ("参赛队伍", "租户业务数据"),
+    ("队伍名单", "租户数据清单"),
+    ("队伍", "租户"),
+    ("赛事", "业务流程"),
+    ("赛题", "内部文档"),
+    ("提交物", "用户上传文件"),
+    ("私有榜单", "管理数据"),
+    ("成绩榜", "管理数据"),
+    ("榜单", "管理数据"),
+    ("校园网", "内部网络"),
+    ("训练平台", "模型平台"),
+    ("竞赛", "业务"),
+    ("比赛", "业务"),
+    ("competition", "tenant"),
+    ("contest", "business"),
+    ("judge_token", "admin_token"),
+    ("flag_seed", "secret_seed"),
+    ("flag", "secret"),
+)
+
+
+def _genericize_product_scenario(value: Any, *, key: str = "") -> Any:
+    """Present the product catalog as generic Agent security, not contest data.
+
+    The original scenarios remain local regression fixtures for reproducibility.
+    Overview/catalog responses use this view so a deployed product is not
+    coupled to the historical competition story.
+    """
+    if key in {"id", "surface_id", "target", "risk_hint"}:
+        return value
+    if isinstance(value, dict):
+        return {str(item_key): _genericize_product_scenario(item, key=str(item_key)) for item_key, item in value.items()}
+    if isinstance(value, list):
+        return [_genericize_product_scenario(item, key=key) for item in value]
+    if not isinstance(value, str):
+        return value
+    text = value
+    for source, target in _PRODUCT_SCENARIO_REPLACEMENTS:
+        text = text.replace(source, target)
+    return text
+
+
+def get_product_scenarios() -> list[dict[str, Any]]:
+    """Return the generic AI-Agent security catalog used by the console."""
+    scenarios = get_scenarios()
+    result: list[dict[str, Any]] = []
+    for scenario in scenarios:
+        generic = _genericize_product_scenario(scenario)
+        if isinstance(generic, dict):
+            generic["profile"] = "agent-security"
+            generic["fixture_source"] = "local-sandbox"
+        result.append(generic)
+    return result
 
 
 def get_evaluation_ground_truth() -> dict[str, Any]:
@@ -373,14 +542,26 @@ def is_policy_enabled(policy_id: str) -> bool:
 
 
 def get_policy_settings() -> dict[str, Any]:
-    return _load_policy_settings()
+    settings = _load_policy_settings()
+    if production_security_profile():
+        # A deployed gateway must not inherit the local fixture compatibility
+        # mode. Tool, model and MCP context registration are separate authority
+        # boundaries and are all forced on in the production profile.
+        settings["require_agent_capability_registration"] = True
+        settings["require_agent_model_registration"] = True
+        settings["require_agent_context_registration"] = True
+    return settings
 
 
 def update_policy_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    before = _load_policy_settings()
+    before = get_policy_settings()
     settings = _normalize_policy_settings(
         {**before, **{key: value for key, value in updates.items() if key in DEFAULT_POLICY_SETTINGS}}
     )
+    if production_security_profile():
+        settings["require_agent_capability_registration"] = True
+        settings["require_agent_model_registration"] = True
+        settings["require_agent_context_registration"] = True
     _save_policy_settings(settings)
     record_policy_version(
         policy_id="__runtime_settings__",

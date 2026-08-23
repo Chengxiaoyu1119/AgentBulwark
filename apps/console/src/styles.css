@@ -3069,6 +3069,14 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   flex: 0 0 auto;
 }
 
+.mobile-only {
+  display: none;
+}
+
+.zh-app-token-input {
+  width: 180px;
+}
+
 .zh-app-header-title {
   margin: 0 !important;
   max-width: min(42vw, 360px);
@@ -3077,6 +3085,38 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   line-height: 1.2 !important;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.zh-gateway-trace-list {
+  overflow: hidden;
+  border: 1px solid var(--ant-color-border);
+  border-radius: 8px;
+}
+
+.zh-gateway-trace-item {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--ant-color-border-secondary);
+}
+
+.zh-gateway-trace-list > [role='listitem']:last-child .zh-gateway-trace-item {
+  border-bottom: 0;
+}
+
+.zh-gateway-trace-item:hover,
+.zh-gateway-trace-item--selected {
+  background: var(--ant-color-fill-quaternary);
+}
+
+.zh-gateway-trace-item:focus-visible {
+  outline: 2px solid var(--ant-color-primary);
+  outline-offset: -2px;
 }
 
 .zh-settings-switch-row {
@@ -3705,6 +3745,30 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
     display: none !important;
   }
 
+  .mobile-only {
+    display: inline;
+  }
+
+  .zh-app-root > .zh-app-layout > .ant-layout-header {
+    gap: 8px;
+    padding-inline: 12px;
+  }
+
+  .zh-app-header > .ant-space:first-child {
+    flex: 0 1 auto;
+  }
+
+  .zh-app-header > .ant-space:last-child {
+    min-width: 0;
+    flex: 1 1 auto;
+    justify-content: flex-end;
+    gap: 6px !important;
+  }
+
+  .zh-app-token-input {
+    width: 132px;
+  }
+
   .zh-lab-step-strip,
   .zh-target-asset-grid {
     grid-template-columns: 1fr;
@@ -3732,5 +3796,23 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   /* Allow Row/Col wrapping more easily */
   .ant-card-body {
     padding: 16px;
+  }
+}
+
+@media (max-width: 560px) {
+  .zh-app-header > .ant-space:first-child .zh-app-header-title {
+    display: none;
+  }
+
+  .zh-app-header > .ant-space:last-child {
+    gap: 4px !important;
+  }
+
+  .zh-app-token-input {
+    width: 96px;
+  }
+
+  .zh-app-header > .ant-space:last-child .ant-btn {
+    padding-inline: 8px;
   }
 }

@@ -47,10 +47,10 @@ export function AttackDatasetPanel({ overview, attackDataset }: AttackDatasetPan
         </Col>
       </Row>
       <Space className="zh-mb-24" wrap>
-        <UiButton href="/api/datasets/attack_cases" target="_blank" type="link" className="zh-settings-link-flush">
+        <UiButton authenticatedHref="/api/datasets/attack_cases" type="link" className="zh-settings-link-flush">
           查看 JSON
         </UiButton>
-        <UiButton href="/api/datasets/attack_cases.md" target="_blank" type="link">
+        <UiButton authenticatedHref="/api/datasets/attack_cases.md" type="link">
           查看 Markdown
         </UiButton>
         <LabelTag variant="filled" className="zh-settings-code-tag">
@@ -72,7 +72,7 @@ export function AttackDatasetPanel({ overview, attackDataset }: AttackDatasetPan
             className="zh-settings-dataset-surface-select"
             disabled={surfaceOptions.length === 0}
           />
-          <UiButton href={exportUrl} target="_blank" disabled={surfaceOptions.length === 0}>
+          <UiButton authenticatedHref={exportUrl} disabled={surfaceOptions.length === 0}>
             打开筛选数据
           </UiButton>
         </Space.Compact>

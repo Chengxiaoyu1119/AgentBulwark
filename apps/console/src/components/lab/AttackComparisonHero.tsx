@@ -17,10 +17,10 @@ function BranchEvidence({ branch, protectedMode }: { branch: AttackEnvironmentBr
   const exposed = !protectedMode && branch.attack_success && branch.executor_called;
   const positive = protectedMode ? successfulDefense : !exposed;
   const title = protectedMode
-      ? successfulDefense
-        ? isolatedInSandbox
-          ? '防护成功：危险动作已隔离'
-          : '防护成功：危险动作未执行'
+    ? successfulDefense
+      ? isolatedInSandbox
+        ? '防护成功：危险动作已隔离'
+        : '防护成功：危险动作未执行'
       : '防护仍有缺口'
     : exposed
       ? '攻击成功：危险动作已执行'

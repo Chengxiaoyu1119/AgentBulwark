@@ -383,6 +383,23 @@ class AgentToolGuard:
         receipt_confirmed, receipt_error = receipt_for(
             "completed", execution_target, result=tool_result, duration_ms=(perf_counter() - started) * 1000
         )
+        if supervisor_result.get("_protocol_validated") and not receipt_confirmed:
+            # The external tool has already run, so ``executed`` remains a
+            # factual signal.  Its result must not be fed into the next model
+            # turn until the supervisor has accepted the receipt; otherwise a
+            # transient audit outage becomes an unverified tool-result channel.
+            return GuardedToolResult(
+                decision=decision,
+                policy_id=str(supervisor_result.get("policy_id", "unknown")),
+                reason="工具已执行，但监督器未确认执行回执；结果已隔离，禁止回灌模型。",
+                executed=True,
+                execution_target=execution_target,
+                execution_status="receipt_unconfirmed",
+                receipt_confirmed=False,
+                receipt_error=receipt_error or "监督器未返回有效执行回执",
+                tool_result=None,
+                supervisor_result=supervisor_result,
+            )
         return GuardedToolResult(
             decision=decision,
             policy_id=str(supervisor_result.get("policy_id", "unknown")),

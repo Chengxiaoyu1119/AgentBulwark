@@ -13,7 +13,10 @@ setAuthTokenProvider(() => {
     return configuredApiToken;
   }
   try {
-    return window.localStorage.getItem('agent-supervisor-api-token');
+    return (
+      window.sessionStorage.getItem('agent-supervisor-api-token') ||
+      window.localStorage.getItem('agent-supervisor-api-token')
+    );
   } catch {
     return null;
   }

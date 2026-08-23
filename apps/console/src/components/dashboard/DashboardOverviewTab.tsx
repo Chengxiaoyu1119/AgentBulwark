@@ -1,16 +1,7 @@
 import { Col, Divider, Flex, Row, Space, Statistic, Typography } from 'antd';
-import {
-  Activity,
-  ArrowRight,
-  Bot,
-  CircleCheck,
-  CircleX,
-  Play,
-  ShieldCheck,
-  TerminalSquare
-} from 'lucide-react';
+import { Activity, ArrowRight, Bot, CircleCheck, CircleX, Play, ShieldCheck, TerminalSquare } from 'lucide-react';
 import { ActionRow, MetricCard as Metric, PanelCard, UiButton } from '../ui';
-import type { AlertItem, Overview, Scenario } from '@/types';
+import type { AlertItem, Overview } from '@/types';
 import { DashboardAgentNode } from './DashboardAgentNode';
 import type { PageKey } from '@/app/navigation';
 
@@ -22,41 +13,27 @@ type DashboardPipelineNode = {
 type DashboardOverviewTabProps = {
   overview: Overview;
   apiAvailable: boolean | null;
-  running: boolean;
-  priorityScenario?: Scenario;
   maxRiskScore: number;
   latestAlert?: AlertItem;
-  completeSurfaceCount: number;
-  totalSamples: number;
-  totalScripts: number;
-  highRiskSurfaceCount: number;
+  gatewayAuditCount: number;
+  gatewayControlRate: number | null;
+  gatewayPendingReceiptCount: number;
   pipelineNodes: DashboardPipelineNode[];
-  onSelectScenario: (id: string) => void;
   onOpenPage: (page: PageKey) => void;
 };
 
 export function DashboardOverviewTab({
   overview,
   apiAvailable,
-  running,
-  priorityScenario,
   maxRiskScore,
   latestAlert,
-  completeSurfaceCount,
-  totalSamples,
-  totalScripts,
-  highRiskSurfaceCount,
+  gatewayAuditCount,
+  gatewayControlRate,
+  gatewayPendingReceiptCount,
   pipelineNodes,
-  onSelectScenario,
   onOpenPage
 }: DashboardOverviewTabProps) {
-  const guardedControlRate = overview.summary.guarded_control_rate ?? overview.summary.block_rate;
-  const guardedRunCount = overview.summary.guarded_run_count ?? overview.summary.recent_run_count;
-  const auditControlRate = overview.summary.block_rate;
-  const pendingReceiptCount = overview.audit_logs.filter(
-    (log) => log.execution_receipt_expected && !log.execution_receipt
-  ).length;
-  const configuredModelCount = overview.models.filter((model) => model.configured).length;
+  const configuredModelCount = overview.models.filter((model) => model.configured && model.mode === 'real-api').length;
 
   return (
     <div className="zh-page-stack zh-mt-8">
@@ -76,11 +53,10 @@ export function DashboardOverviewTab({
                   <UiButton
                     type="primary"
                     size="large"
-                    icon={<Play size={16} />}
-                    onClick={() => onOpenPage('lab')}
-                    disabled={running}
+                    icon={<ShieldCheck size={16} />}
+                    onClick={() => onOpenPage('gateway')}
                   >
-                    {running ? '验证中...' : '运行防护前后对照'}
+                    打开 LLM API / MCP 网关
                   </UiButton>
                   <UiButton size="large" icon={<TerminalSquare size={16} />} onClick={() => onOpenPage('audit')}>
                     处理事件与复核
@@ -101,12 +77,12 @@ export function DashboardOverviewTab({
                   variant="borderless"
                   className="zh-dashboard-metric-panel zh-dashboard-metric-panel--control"
                 >
-                  <Typography.Text type="secondary">有防护运行控制率</Typography.Text>
+                  <Typography.Text type="secondary">网关受控比例</Typography.Text>
                   <Typography.Title level={2} className="zh-title-flush zh-color-success">
-                    {guardedControlRate}%
+                    {gatewayControlRate === null ? '—' : `${gatewayControlRate}%`}
                   </Typography.Title>
                   <Typography.Text type="secondary" className="zh-text-meta">
-                    {guardedRunCount} 次有防护运行 · 最近审计动作占比 {auditControlRate}%
+                    {gatewayAuditCount ? `${gatewayAuditCount} 条网关阶段证据` : '暂无真实网关阶段证据'}
                   </Typography.Text>
                 </PanelCard>
               </div>
@@ -135,16 +111,32 @@ export function DashboardOverviewTab({
 
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={6}>
-          <Metric label="服务状态" value={apiAvailable ? '在线' : apiAvailable === false ? '离线' : '检查中'} tone={apiAvailable ? 'green' : 'red'} />
+          <Metric
+            label="服务状态"
+            value={apiAvailable ? '在线' : apiAvailable === false ? '离线' : '检查中'}
+            tone={apiAvailable ? 'green' : 'red'}
+          />
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Metric label="待处理事件" value={`${overview.alerts.length}`} tone={overview.alerts.length ? 'red' : 'green'} />
+          <Metric
+            label="待处理事件"
+            value={`${overview.alerts.length}`}
+            tone={overview.alerts.length ? 'red' : 'green'}
+          />
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Metric label="待确认回执" value={`${pendingReceiptCount}`} tone={pendingReceiptCount ? 'amber' : 'green'} />
+          <Metric
+            label="待确认网关回执"
+            value={`${gatewayPendingReceiptCount}`}
+            tone={gatewayPendingReceiptCount ? 'amber' : 'green'}
+          />
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Metric label="真实模型连接" value={`${configuredModelCount}/${overview.models.length}`} tone={configuredModelCount ? 'cyan' : 'amber'} />
+          <Metric
+            label="真实模型连接"
+            value={`${configuredModelCount}/${overview.models.length}`}
+            tone={configuredModelCount ? 'cyan' : 'amber'}
+          />
         </Col>
       </Row>
 
@@ -160,8 +152,8 @@ export function DashboardOverviewTab({
             variant="borderless"
             className="zh-full-height"
             extra={
-              <UiButton type="link" onClick={() => onSelectScenario(priorityScenario?.id ?? '')}>
-                运行对照
+              <UiButton type="link" onClick={() => onOpenPage('gateway')}>
+                查看网关
               </UiButton>
             }
           >
@@ -170,11 +162,13 @@ export function DashboardOverviewTab({
                 业务 Agent 发起工具调用
               </Typography.Text>
               <div className="zh-dashboard-agent-flow">
-                <DashboardAgentNode icon={<Bot size={20} />} title="业务 Agent" desc="生成工具调用" />
+                <DashboardAgentNode icon={<Bot size={20} />} title="业务 Agent" desc="提交 OpenAI 请求" />
                 <ArrowRight size={16} color="var(--ant-color-text-tertiary)" />
-                <DashboardAgentNode icon={<ShieldCheck size={20} />} title="智安哨" desc="执行前判定" active />
+                <DashboardAgentNode icon={<ShieldCheck size={20} />} title="智安哨网关" desc="输入/输出检查" active />
                 <ArrowRight size={16} color="var(--ant-color-text-tertiary)" />
-                <DashboardAgentNode icon={<TerminalSquare size={20} />} title="执行路由" desc="真实、暂停或隔离" />
+                <DashboardAgentNode icon={<Activity size={20} />} title="Provider" desc="真实模型响应" />
+                <ArrowRight size={16} color="var(--ant-color-text-tertiary)" />
+                <DashboardAgentNode icon={<TerminalSquare size={20} />} title="工具闸门" desc="执行、暂停或隔离" />
               </div>
               <Divider dashed className="zh-attack-divider" titlePlacement="left" plain>
                 <Typography.Text type="danger" className="zh-text-meta">
@@ -215,11 +209,7 @@ export function DashboardOverviewTab({
           >
             <div className="zh-column-stack">
               {overview.alerts.slice(0, 5).map((alert) => (
-                <div
-                  key={alert.id}
-                  onClick={() => onOpenPage('audit')}
-                  className="zh-dashboard-scenario-item"
-                >
+                <div key={alert.id} onClick={() => onOpenPage('audit')} className="zh-dashboard-scenario-item">
                   <div>
                     <div>
                       <Typography.Text strong>{alert.title}</Typography.Text>
@@ -248,13 +238,13 @@ export function DashboardOverviewTab({
       <PanelCard variant="borderless" bodyPadding={20}>
         <Flex justify="space-between" align="center" wrap="wrap" gap={16}>
           <div>
-            <Typography.Text strong>验证与配置</Typography.Text>
+            <Typography.Text strong>网关运营与安全边界</Typography.Text>
             <Typography.Text type="secondary" className="zh-meta-block">
-              {completeSurfaceCount}/{overview.summary.surface_count} 类风险面 · {totalSamples} 个样本 · {totalScripts} 个脚本 · {highRiskSurfaceCount} 类高风险面
+              真实 Provider 前后检查 · tool call 执行前控制 · 回执与审计证据
             </Typography.Text>
           </div>
           <ActionRow>
-            <UiButton onClick={() => onOpenPage('scenarios')}>查看场景</UiButton>
+            <UiButton onClick={() => onOpenPage('gateway')}>打开网关</UiButton>
             <UiButton onClick={() => onOpenPage('policy')}>配置策略</UiButton>
             <UiButton onClick={() => onOpenPage('settings')}>接入 Agent</UiButton>
           </ActionRow>

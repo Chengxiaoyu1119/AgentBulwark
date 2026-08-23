@@ -6,11 +6,15 @@ import webbrowser
 
 import uvicorn
 
-from apps.api.agent_supervisor.domains.runtime.server_security import configure_server_security
+from apps.api.agent_supervisor.domains.runtime.server_security import (
+    configure_server_security,
+    load_environment_file,
+)
 from apps.api.agent_supervisor.main import app
 
 
 def main() -> None:
+    load_environment_file()
     host = os.getenv("AGENT_SUPERVISOR_API_HOST", "127.0.0.1")
     configure_server_security(host)
     port = int(os.getenv("AGENT_SUPERVISOR_API_PORT", "8012"))

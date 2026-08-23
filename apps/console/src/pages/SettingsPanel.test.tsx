@@ -85,7 +85,7 @@ describe('SettingsPanel', () => {
     expect(screen.getByText('Agent运行时安全接入')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Agent 运行时接入' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '模型连接' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '高级工具' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '验证工具（非生产路径）' })).toBeInTheDocument();
     expect(screen.queryByText('运行治理与记忆状态')).not.toBeInTheDocument();
     expect(apiMocks.fetchOpenClawIntegrationBundle).not.toHaveBeenCalled();
   });

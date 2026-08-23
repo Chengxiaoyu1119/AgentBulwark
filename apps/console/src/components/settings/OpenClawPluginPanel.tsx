@@ -51,18 +51,10 @@ export function OpenClawPluginPanel({
         这是通用 Agent 接入之外的可选适配，生成 native plugin 并在 before_tool_call 阶段接入智安哨监督器。
       </Typography.Paragraph>
       <Space className="zh-settings-action-row" wrap>
-        <UiButton href="/api/integrations/openclaw/plugin_package" target="_blank">
-          查看插件摘要
-        </UiButton>
-        <UiButton href="/api/integrations/openclaw/plugin_package.md" target="_blank">
-          查看插件说明
-        </UiButton>
-        <UiButton href="/api/integrations/openclaw/plugin_package/validation" target="_blank">
-          查看验收 JSON
-        </UiButton>
-        <UiButton href="/api/integrations/openclaw/plugin_package/validation.md" target="_blank">
-          查看验收报告
-        </UiButton>
+        <UiButton authenticatedHref="/api/integrations/openclaw/plugin_package">查看插件摘要</UiButton>
+        <UiButton authenticatedHref="/api/integrations/openclaw/plugin_package.md">查看插件说明</UiButton>
+        <UiButton authenticatedHref="/api/integrations/openclaw/plugin_package/validation">查看验收 JSON</UiButton>
+        <UiButton authenticatedHref="/api/integrations/openclaw/plugin_package/validation.md">查看验收报告</UiButton>
       </Space>
 
       {openClawPluginPackage ? (
@@ -101,10 +93,10 @@ export function OpenClawPluginPanel({
           </Row>
           <Space orientation="vertical" className="zh-settings-stack zh-settings-stack--mb-16">
             <Space wrap>
-              <UiButton size="small" href="/api/integrations/openclaw/plugin_package.md" target="_blank">
+              <UiButton size="small" authenticatedHref="/api/integrations/openclaw/plugin_package.md">
                 打开插件说明
               </UiButton>
-              <UiButton size="small" href="/api/integrations/openclaw/plugin_package" target="_blank">
+              <UiButton size="small" authenticatedHref="/api/integrations/openclaw/plugin_package">
                 打开插件摘要
               </UiButton>
             </Space>
@@ -196,10 +188,10 @@ export function OpenClawPluginPanel({
           </Descriptions>
           <Space orientation="vertical" className="zh-settings-stack zh-settings-stack--mb-16">
             <Space wrap>
-              <UiButton size="small" href="/api/integrations/openclaw/plugin_package/validation.md" target="_blank">
+              <UiButton size="small" authenticatedHref="/api/integrations/openclaw/plugin_package/validation.md">
                 打开验收报告
               </UiButton>
-              <UiButton size="small" href="/api/integrations/openclaw/plugin_package/validation" target="_blank">
+              <UiButton size="small" authenticatedHref="/api/integrations/openclaw/plugin_package/validation">
                 打开验收 JSON
               </UiButton>
             </Space>

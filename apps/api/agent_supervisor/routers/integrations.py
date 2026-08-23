@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 from typing import Any
 
@@ -16,7 +18,7 @@ from apps.api.agent_supervisor.adapters.integrations.openclaw_plugin_package imp
     build_openclaw_plugin_package_markdown,
     build_openclaw_plugin_package_summary,
     build_openclaw_plugin_validation_markdown,
-    validate_openclaw_plugin_package,
+    load_openclaw_plugin_validation_report,
     write_openclaw_plugin_package,
     write_openclaw_plugin_validation_report,
 )
@@ -47,12 +49,19 @@ from apps.api.agent_supervisor.domains.attacks.redteam_lab import (
 )
 from apps.api.agent_supervisor.domains.attacks.target_lab import reset_target_lab, target_lab_snapshot
 from apps.api.agent_supervisor.domains.runtime.event_stream import stream_runtime_events
-from apps.api.agent_supervisor.domains.runtime.events import evaluate_agent_event
+from apps.api.agent_supervisor.domains.runtime.events import (
+    ServerExecutionUncertainError,
+    evaluate_agent_event,
+)
 from apps.api.agent_supervisor.domains.runtime.execution_receipts import (
     ExecutionReceiptConflictError,
     complete_execution,
     get_execution_receipt,
     list_execution_receipts,
+)
+from apps.api.agent_supervisor.domains.runtime.gateway_execution import (
+    GatewayExecutionUncertainError,
+    execute_gateway_tool_call,
 )
 from apps.api.agent_supervisor.schemas.main_models import (
     AgentToolEvent,
@@ -64,6 +73,7 @@ from apps.api.agent_supervisor.schemas.main_models import (
     CustomAttackCompareRequest,
     DualModelJailbreakRequest,
     ExecutionReceiptRequest,
+    GatewayToolExecutionRequest,
     JailbreakRedteamRequest,
     LearningLabRunRequest,
     ModelDrivenAgentRequest,
@@ -88,9 +98,9 @@ def _require_admin_access(role: str = Depends(current_security_role)) -> None:
 
 
 @router.get("/api/events/stream")
-def runtime_event_stream() -> StreamingResponse:
+def runtime_event_stream(role: str = Depends(current_security_role)) -> StreamingResponse:
     return StreamingResponse(
-        stream_runtime_events(),
+        stream_runtime_events(role=role),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -142,12 +152,18 @@ def write_openclaw_plugin_package_endpoint() -> dict:
 
 @router.get("/api/integrations/openclaw/plugin_package/validation")
 def openclaw_plugin_package_validation() -> dict:
-    return validate_openclaw_plugin_package()
+    validation = load_openclaw_plugin_validation_report()
+    if validation is None:
+        raise HTTPException(status_code=404, detail="OpenClaw 插件验收证据尚未生成；请由 admin 显式运行验收写入接口。")
+    return validation
 
 
 @router.get("/api/integrations/openclaw/plugin_package/validation.md")
 def openclaw_plugin_package_validation_markdown() -> Response:
-    return Response(build_openclaw_plugin_validation_markdown(), media_type="text/markdown; charset=utf-8")
+    validation = load_openclaw_plugin_validation_report()
+    if validation is None:
+        raise HTTPException(status_code=404, detail="OpenClaw 插件验收证据尚未生成；请由 admin 显式运行验收写入接口。")
+    return Response(build_openclaw_plugin_validation_markdown(validation), media_type="text/markdown; charset=utf-8")
 
 
 @router.post("/api/integrations/openclaw/plugin_package/validation/write", dependencies=[Depends(_require_admin_access)])
@@ -182,13 +198,14 @@ def _run_external_agent_demo() -> dict:
     return run_minimal_external_agent_demo(
         api_token=(
             agent_tokens.get("minimal-external-agent", "")
+            or os.getenv("AGENT_SUPERVISOR_AGENT_TOKEN", "")
             or os.getenv("AGENT_SUPERVISOR_API_TOKEN_EXECUTOR", "")
             or os.getenv("AGENT_SUPERVISOR_API_TOKEN", "")
         )
     )
 
 
-@router.get("/api/attack_lab/modules")
+@router.get("/api/attack_lab/modules", dependencies=[Depends(_require_analyst_access)])
 def attack_lab_modules() -> dict:
     return list_attack_lab_modules()
 
@@ -201,7 +218,7 @@ def attack_lab_run(request: AttackLabRunRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/api/attack_lab/testsets")
+@router.get("/api/attack_lab/testsets", dependencies=[Depends(_require_analyst_access)])
 def attack_lab_testsets() -> dict:
     return list_attack_testsets()
 
@@ -219,7 +236,7 @@ def capability_replay_run() -> dict:
     return run_capability_replay()
 
 
-@router.get("/api/learning_lab/scenarios")
+@router.get("/api/learning_lab/scenarios", dependencies=[Depends(_require_analyst_access)])
 def learning_lab_scenarios() -> dict:
     return list_learning_scenarios()
 
@@ -303,7 +320,7 @@ def redteam_authorized_target_run(request: AuthorizedTargetRunRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/api/target_lab/state")
+@router.get("/api/target_lab/state", dependencies=[Depends(_require_analyst_access)])
 def target_lab_state() -> dict:
     return target_lab_snapshot()
 
@@ -324,7 +341,7 @@ def openclaw_event(
         result = evaluate_agent_event(
             _runtime_event_payload(event, role, authenticated_agent_id),
             guard_enabled=True,
-            execute_in_sandbox=event.execute_in_sandbox,
+            execute_in_sandbox=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -344,15 +361,60 @@ def supervisor_evaluate(
     role: str = Depends(current_security_role),
     authenticated_agent_id: str | None = Depends(current_agent_identity),
 ) -> dict:
+    """Evaluate and persist an intent; only /api/runtime/execute owns execution."""
+
     require_agent_identity(event.agent_id, role, authenticated_agent_id)
     try:
         return evaluate_agent_event(
             _runtime_event_payload(event, role, authenticated_agent_id),
             guard_enabled=True,
-            execute_in_sandbox=event.execute_in_sandbox,
+            execute_in_sandbox=False,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/api/runtime/execute", dependencies=[Depends(_require_executor_access)])
+def supervisor_execute(
+    event: AgentToolEvent,
+    role: str = Depends(current_security_role),
+    authenticated_agent_id: str | None = Depends(current_agent_identity),
+) -> dict:
+    """强制执行入口：监督器决定并在本地隔离执行器中完成工具调用。
+
+    ``/api/runtime/evaluate`` 只返回决策；该入口把执行权收回服务端，
+    调用方提交的 ``execute_in_sandbox`` 与 ``guard_enabled`` 不参与放行判断。
+    """
+    require_agent_identity(event.agent_id, role, authenticated_agent_id)
+    payload = _runtime_event_payload(event, role, authenticated_agent_id)
+    payload["execute_in_sandbox"] = True
+    # This is an internal fact established by this authenticated route, not a
+    # caller-provided request flag.  It lets the runtime write a
+    # server-observed receipt for both executed and blocked calls.
+    payload["server_owned_execution"] = True
+    payload["_server_execution_key"] = _server_execution_key(payload)
+    try:
+        result = evaluate_agent_event(payload, guard_enabled=True, execute_in_sandbox=True)
+    except ServerExecutionUncertainError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "execution_status": "unknown",
+                "retry": "reconciliation-required",
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        **result,
+        "enforcement": {
+            "mode": "supervisor-owned-executor",
+            "guard_forced": True,
+            "sandbox_forced": True,
+            "external_tool_execution": "not_used",
+        },
+    }
 
 
 @router.post("/api/runtime/executions/{audit_id}/complete", dependencies=[Depends(_require_executor_access)])
@@ -373,8 +435,51 @@ def runtime_execution_complete(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.get("/api/runtime/executions")
+@router.post("/api/gateway/tool_calls/{audit_id}/execute", dependencies=[Depends(_require_executor_access)])
+def gateway_tool_call_execute(
+    audit_id: str,
+    request: GatewayToolExecutionRequest,
+    role: str = Depends(current_security_role),
+    authenticated_agent_id: str | None = Depends(current_agent_identity),
+) -> dict:
+    """Execute a Provider tool call from its gateway audit in the local sandbox.
+
+    The body binds identity/session only; the server reloads the recorded tool
+    call so the browser or Agent cannot replace the audited arguments at execute
+    time.
+    """
+
+    require_agent_identity(request.agent_id, role, authenticated_agent_id)
+    try:
+        return execute_gateway_tool_call(
+            audit_id,
+            agent_id=request.agent_id,
+            session_id=request.session_id,
+            provider_call_id=request.provider_call_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"未知网关审计记录：{audit_id}") from exc
+    except GatewayExecutionUncertainError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "execution_status": "unknown",
+                "retry": "reconciliation-required",
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/api/runtime/executions", dependencies=[Depends(_require_analyst_access)])
 def runtime_executions(limit: int = 200) -> dict:
+    """List execution evidence only for operators who can inspect receipts.
+
+    A receipt contains tool-call hashes, execution targets and caller-reported
+    result state.  It is operational evidence, not a public health metric;
+    observer credentials must not receive the full cross-Agent collection.
+    """
     if limit < 1 or limit > 1000:
         raise HTTPException(status_code=400, detail="limit 必须在 1 到 1000 之间")
     return list_execution_receipts(limit=limit)
@@ -451,7 +556,7 @@ def _batch_evaluate(
                         else _runtime_event_payload(event, role, authenticated_agent_id)
                     ),
                     guard_enabled=(batch.guard_enabled and event.guard_enabled) if allow_guard_toggle else True,
-                    execute_in_sandbox=batch.execute_in_sandbox or event.execute_in_sandbox,
+                    execute_in_sandbox=(batch.execute_in_sandbox or event.execute_in_sandbox) if allow_guard_toggle else False,
                     review_scope="experiment" if allow_guard_toggle else "operational",
                 )
             )
@@ -478,4 +583,26 @@ def _runtime_event_payload(event: AgentToolEvent, role: str, authenticated_agent
         }
     )
     return payload
+
+
+def _server_execution_key(payload: dict[str, Any]) -> str:
+    """Derive a retry key from the immutable tool intent, not caller flags."""
+
+    canonical = json.dumps(
+        {
+            "conversation_id": payload.get("conversation_id", ""),
+            "agent_id": payload.get("agent_id", ""),
+            "agent_role": payload.get("agent_role", ""),
+            "source_app": payload.get("source_app", ""),
+            "model_input": payload.get("model_input", ""),
+            "model_output": payload.get("model_output", ""),
+            "tool_call": payload.get("tool_call", {}),
+            "context_sources": payload.get("context_sources", []),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 

@@ -178,7 +178,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setCompetitionReadinessOutput(result);
       setCompetitionReadiness(result.readiness);
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : '赛前一键体检运行失败');
+      setEvaluateError(error instanceof Error ? error.message : 'AI Agent 安全就绪检查运行失败');
     } finally {
       setCheckingReadiness(false);
     }

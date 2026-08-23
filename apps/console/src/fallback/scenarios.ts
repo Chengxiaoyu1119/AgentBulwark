@@ -10,3 +10,10 @@ export const fallbackScenarios: Scenario[] = [
   ...fallbackScenarioGroup3,
   ...fallbackScenarioGroup4
 ];
+
+/**
+ * Live UI fallback: an unavailable API has no current scenario evidence.
+ * Keep the historical fixture catalog export for offline development tooling,
+ * but never use it as a substitute for a failed production request.
+ */
+export const offlineScenarios: Scenario[] = [];

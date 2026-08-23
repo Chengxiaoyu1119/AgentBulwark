@@ -93,3 +93,6 @@ export const fallbackPolicies: Policy[] = [
     description: '对未命中固定规则但工具、参数、上下文组合异常的调用触发人工确认。'
   }
 ];
+
+/** Offline UI state; policy configuration is live data and must not be guessed. */
+export const offlinePolicies: Policy[] = [];

@@ -6,7 +6,7 @@ import type { PageKey } from '@/app/navigation';
 import type { ProjectRoadmap } from '@/types';
 
 function roadmapAction(id: string): { label: string; page: PageKey } {
-  if (id === 'real-openclaw-hook' || id === 'one-command-run') {
+  if (id === 'real-agent-gateway-e2e' || id === 'one-command-run') {
     return { label: '进入设置验收', page: 'settings' };
   }
   if (id === 'multi-model-eval') {
@@ -96,10 +96,10 @@ export function ProjectRoadmapBlock({
           </Typography.Text>
         </div>
         <Space wrap className="zh-roadmap-evidence-actions">
-          <UiButton href="/api/project_roadmap.md" target="_blank" icon={<ExternalLink size={15} />}>
+          <UiButton authenticatedHref="/api/project_roadmap.md" icon={<ExternalLink size={15} />}>
             打开 Markdown
           </UiButton>
-          <UiButton href="/api/project_roadmap" target="_blank" icon={<ExternalLink size={15} />}>
+          <UiButton authenticatedHref="/api/project_roadmap" icon={<ExternalLink size={15} />}>
             打开 JSON
           </UiButton>
         </Space>

@@ -1,7 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = process.cwd();
+// npm's `--prefix apps/console` changes dependency resolution, not the
+// process working directory. Resolve the audited frontend from this script's
+// location so `npm run ui:audit` and direct invocation inspect the same files.
+const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = path.join(repositoryRoot, 'apps', 'console');
 const srcRoot = path.join(root, 'src');
 const allowedSrcDirectories = new Set(['app', 'components', 'design', 'fallback', 'pages', 'test', 'types']);
 const allowedSrcFiles = new Set([
