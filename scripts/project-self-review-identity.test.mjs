@@ -4,7 +4,8 @@ import test from 'node:test';
 import {
   compareGatewayIdentity,
   identityNeedsWarning,
-  isFingerprint
+  isFingerprint,
+  usesCurrentProductNavigation
 } from './project-self-review-identity.mjs';
 
 const CURRENT_CODE = 'a'.repeat(64);
@@ -66,4 +67,14 @@ test('legacy source-only evidence stays strict', () => {
 test('fingerprint validation rejects malformed values', () => {
   assert.equal(isFingerprint(CURRENT_CODE), true);
   assert.equal(isFingerprint('not-a-fingerprint'), false);
+});
+
+test('current product navigation is accepted as the runtime entry contract', () => {
+  assert.equal(
+    usesCurrentProductNavigation(
+      "export const navigation = { defaultPage: ProductPageKey = 'protection', items: [{ key: 'protection' }, { key: 'events' }, { key: 'settings' }] };"
+    ),
+    true
+  );
+  assert.equal(usesCurrentProductNavigation("defaultPage: PageKey = 'gateway'"), false);
 });

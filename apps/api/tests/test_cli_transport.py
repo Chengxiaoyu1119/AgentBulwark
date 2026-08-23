@@ -66,6 +66,60 @@ class CliTransportTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, combined)
         self.assertIn('"evidence_verdict": "partial"', result.stdout)
 
+    def test_readiness_keeps_operational_runtime_when_lab_runtime_is_also_configured(self) -> None:
+        """The Node launcher must not redirect readiness into the lab database."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node.js is required for the CLI transport regression")
+
+        repo_root = Path(__file__).resolve().parents[3]
+        with tempfile.TemporaryDirectory(prefix="agent-supervisor-readiness-runtime-") as temp_dir:
+            root = Path(temp_dir)
+            operational = root / "operational"
+            lab = root / "lab"
+            operational.mkdir()
+            lab.mkdir()
+            (operational / "policy_settings.json").write_text(
+                json.dumps({"agent_tool_allowlists": {"operational-agent": ["file.read"]}}),
+                encoding="utf-8",
+            )
+            (lab / "policy_settings.json").write_text(
+                json.dumps(
+                    {
+                        "agent_tool_allowlists": {
+                            "lab-agent-a": ["file.read"],
+                            "lab-agent-b": ["api.call"],
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            output = root / "readiness.json"
+            environment = {
+                **os.environ,
+                "AGENT_SUPERVISOR_PYTHON": sys.executable,
+                "AGENT_SUPERVISOR_RUNTIME_DIR": str(operational),
+                "AGENT_SUPERVISOR_LAB_RUNTIME_DIR": str(lab),
+                "AGENT_SUPERVISOR_SECURITY_PROFILE": "local",
+            }
+            result = subprocess.run(
+                [node, "scripts/agent-supervisor-cli.mjs", "readiness", "--output", str(output)],
+                cwd=repo_root,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=environment,
+                timeout=60,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, f"{result.stdout}\n{result.stderr}")
+            readiness = json.loads(output.read_text(encoding="utf-8"))
+            least_privilege = next(
+                item for item in readiness["checks"] if item["id"] == "agent-tool-least-privilege"
+            )
+            self.assertEqual(least_privilege["details"]["agent_ids"], ["operational-agent"])
+
 
 if __name__ == "__main__":
     unittest.main()
