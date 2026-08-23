@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "npm run console:dev",
+    "proof:production": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/production-proof-smoke.ps1",
     "install:all": "npm --prefix apps/console ci && python -m pip install -r apps/api/requirements-dev.txt",
     "build": "npm run console:build",
     "console:dev": "npm --prefix apps/console run dev",
