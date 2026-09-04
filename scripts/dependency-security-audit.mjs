@@ -26,15 +26,8 @@ function runAudit(project) {
   const lockfileRelativePath = `${project.path}/package-lock.json`;
   const lockfilePath = resolve(lockfileRelativePath);
   const lockfileSha256 = hashFile(lockfilePath);
-  const result = spawnSync(
-    process.execPath,
-    [npmCli, "audit", "--json", "--prefix", project.path, "--audit-level=low", "--registry=https://registry.npmjs.org"],
-    {
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024 * 20,
-    },
-  );
-  const parsed = parseAuditOutput(result.stdout, result.stderr);
+  const audit = runAuditCommand(npmCli, project.path);
+  const { result, parsed } = audit;
   const counts = normalizeCounts(parsed?.metadata?.vulnerabilities);
   const commandError = result.error ? String(result.error) : "";
   const auditOutputValid = Boolean(parsed?.metadata?.vulnerabilities);
@@ -51,6 +44,8 @@ function runAudit(project) {
     accepted_threshold: project.accepted,
     vulnerability_counts: counts,
     npm_audit_exit_code: result.status,
+    npm_audit_attempt_count: audit.attempts.length,
+    npm_audit_attempts: audit.attempts,
     command_error: commandError,
     audit_output_valid: auditOutputValid,
     lockfile_path: lockfileRelativePath,
@@ -59,6 +54,36 @@ function runAudit(project) {
     advisories,
     fix_preview: fixPreview,
   };
+}
+
+function runAuditCommand(npmCli, projectPath) {
+  const attempts = [];
+  let result;
+  let parsed;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    result = spawnSync(
+      process.execPath,
+      [npmCli, "audit", "--json", "--prefix", projectPath, "--audit-level=low", "--registry=https://registry.npmjs.org"],
+      {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024 * 20,
+      },
+    );
+    parsed = parseAuditOutput(result.stdout, result.stderr);
+    const outputValid = Boolean(parsed?.metadata?.vulnerabilities);
+    attempts.push({
+      attempt,
+      exit_code: result.status,
+      command_error: result.error ? String(result.error) : "",
+      output_valid: outputValid,
+      parse_error: String(parsed?.parse_error || ""),
+    });
+    // A valid npm audit document is authoritative even when vulnerabilities
+    // make npm exit non-zero. Retry only transport/process/parse failures so a
+    // real advisory can never be converted into a transient success.
+    if (outputValid) break;
+  }
+  return { result, parsed, attempts };
 }
 
 function runFixPreview(project, packageNames, lockfileSha256Before) {

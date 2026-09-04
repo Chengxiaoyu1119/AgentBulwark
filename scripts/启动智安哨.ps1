@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+﻿$ErrorActionPreference = "Stop"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $RepoRoot
@@ -7,43 +7,79 @@ $env:PYTHONUTF8 = "1"
 $env:AGENT_SUPERVISOR_API_HOST = "127.0.0.1"
 $env:AGENT_SUPERVISOR_API_PORT = "8012"
 
-# Keep an explicit .env security choice authoritative.  The previous launcher
-# unconditionally forced local authentication off, which made a repository
-# configured with AGENT_SUPERVISOR_AUTH_DISABLED=false silently run in a
-# different security mode.  A clean local checkout without .env still gets the
-# convenient loopback default; adding .env=false enables the real Token path.
-$authConfigured = $false
-$existingAuth = Get-Item Env:AGENT_SUPERVISOR_AUTH_DISABLED -ErrorAction SilentlyContinue
-if ($existingAuth -and $existingAuth.Value) {
-  $authConfigured = $true
-}
-$envPath = Join-Path $RepoRoot ".env"
-if (-not $authConfigured -and (Test-Path $envPath)) {
-  $authLine = Get-Content $envPath | Where-Object { $_ -match '^\s*AGENT_SUPERVISOR_AUTH_DISABLED\s*=' } | Select-Object -First 1
-  if ($authLine) {
-    $authValue = ($authLine -split "=", 2)[1].Trim().Trim('"').Trim("'")
-    if ($authValue) {
-      $env:AGENT_SUPERVISOR_AUTH_DISABLED = $authValue
-      $authConfigured = $true
-    }
-  }
-}
-if (-not $authConfigured -and -not (Get-Item Env:AGENT_SUPERVISOR_AUTH_DISABLED -ErrorAction SilentlyContinue)) {
-  $env:AGENT_SUPERVISOR_AUTH_DISABLED = "true"
-}
+# This is the single-machine launcher. Keep the local console login-free even
+# when an older ignored .env still contains AUTH_DISABLED=false. Protected
+# authentication remains available through an explicit direct server launch.
+$env:AGENT_SUPERVISOR_AUTH_DISABLED = "true"
 
 Write-Host "智安哨本地运行环境启动中..."
 
-if (-not (Test-Path "apps\console\dist\index.html")) {
-  Write-Host "未检测到前端构建产物，正在构建控制台页面..."
-  npm run console:build
+function Test-LocalPortAvailable {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$HostAddress,
+    [Parameter(Mandatory = $true)]
+    [int]$Port
+  )
+
+  $listener = [System.Net.Sockets.TcpListener]::new(
+    [System.Net.IPAddress]::Parse($HostAddress),
+    $Port
+  )
+  try {
+    $listener.Start()
+    return $true
+  } catch [System.Net.Sockets.SocketException] {
+    return $false
+  } finally {
+    $listener.Stop()
+  }
 }
 
-Start-Job -ScriptBlock {
-  Start-Sleep -Seconds 3
-  Start-Process "http://127.0.0.1:8012"
-} | Out-Null
+if (-not (Test-LocalPortAvailable -HostAddress $env:AGENT_SUPERVISOR_API_HOST -Port ([int]$env:AGENT_SUPERVISOR_API_PORT))) {
+  throw "本地端口 $($env:AGENT_SUPERVISOR_API_PORT) 已被占用，智安哨未启动。请先关闭占用该端口的程序后重试。"
+}
 
-Write-Host "浏览器将打开 http://127.0.0.1:8012"
-Write-Host "关闭本窗口即可停止本地服务。"
-python -X utf8 -m apps.api.dev_server
+# The API serves the production console bundle. Always rebuild it before a
+# local start so source edits, deleted modules and authentication changes can
+# never be hidden by an older dist directory.
+Write-Host "正在构建最新控制台页面..."
+npm run console:build
+if ($LASTEXITCODE -ne 0) {
+  throw "控制台构建失败，已停止启动；请先修复上方构建错误。"
+}
+
+$consoleUrl = "http://127.0.0.1:8012"
+$statusUrl = "$consoleUrl/api/public/status"
+$browserJob = $null
+try {
+  $browserJob = Start-Job -ArgumentList $consoleUrl, $statusUrl -ScriptBlock {
+    param($url, $healthUrl)
+    for ($attempt = 0; $attempt -lt 120; $attempt += 1) {
+      try {
+        $response = Invoke-WebRequest -Uri $healthUrl -TimeoutSec 2 -UseBasicParsing
+        $payload = $response.Content | ConvertFrom-Json
+        if ($response.StatusCode -eq 200 -and $payload.ok -eq $true -and $payload.service -eq "agent-security-supervisor") {
+          Start-Process $url
+          return
+        }
+      } catch {
+        Start-Sleep -Milliseconds 500
+      }
+    }
+  }
+
+  Write-Host "服务就绪后浏览器将打开 $consoleUrl"
+  Write-Host "关闭本窗口即可停止本地服务。"
+  python -X utf8 -m apps.api.dev_server
+  $serverExitCode = $LASTEXITCODE
+} finally {
+  if ($browserJob) {
+    Stop-Job -Job $browserJob -ErrorAction SilentlyContinue
+    Remove-Job -Job $browserJob -Force -ErrorAction SilentlyContinue
+  }
+}
+
+if ($serverExitCode -ne 0) {
+  exit $serverExitCode
+}

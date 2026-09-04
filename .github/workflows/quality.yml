@@ -1,0 +1,72 @@
+name: 质量与部署门禁
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: 源码、测试与浏览器验收
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+
+      - name: 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: apps/api/requirements-dev.txt
+
+      - name: 安装项目依赖
+        run: |
+          npm --prefix apps/console ci
+          python -m pip install -r apps/api/requirements-dev.txt
+
+      - name: 安装 Chromium
+        working-directory: apps/console
+        run: npx playwright install --with-deps chromium
+
+      - name: 运行源码质量门禁
+        run: |
+          npm run verify:local
+
+  deployment:
+    name: 真实容器部署验收
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@v4
+
+      - name: 显示 Docker 运行时
+        run: |
+          docker version
+          docker compose version
+
+      - name: 验证容器配置
+        shell: pwsh
+        run: ./scripts/deployment-acceptance.ps1 -ConfigOnly
+
+      - name: 构建、冷启动并验证容器替换持久化
+        shell: pwsh
+        run: ./scripts/deployment-acceptance.ps1
