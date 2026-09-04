@@ -58,16 +58,16 @@ The default process is the operational gateway and stores data under `apps/api/r
 
 ## Key Capabilities
 
-| Module | Capability | Entry |
-|---|---|---|
-| Protection | Live request flow, onboarding, provider pre/post checks, and tool-call execution receipts | `apps/console/src/pages/GatewayPanel.tsx` |
-| Events | Operational risk traces, human approve/reject actions, Agent resume status, and execution audit | `apps/console/src/pages/SecurityEventsPanel.tsx` |
-| Settings | Application endpoints, provider/model selection, and Agent tool/data permissions | `apps/console/src/pages/SettingsPanel.tsx` |
-| Research & regression (development assets) | Fixed samples, historical reports, and comparison experiments validate the gateway but stay out of production navigation and live metrics | `apps/api/agent_supervisor/domains/evaluations/` |
-| Behavior Supervisor | allow / deny / ask / quarantine decisions per tool call | `apps/api/agent_supervisor/domains/governance/supervisor.py` |
-| Audit & Alerts | Tool params, policy hits, risk/anomaly scores, audit hash | `apps/api/agent_supervisor/domains/governance/integrity.py` |
-| Evaluation & Evidence | Validate the gateway and supervisor with fixed data; not part of the production request path | `apps/api/agent_supervisor/domains/evaluations/` |
-| Agent Integration | HTTP event contract, AgentToolGuard, OpenAI Agents/LangChain/LangGraph examples | `apps/api/agent_supervisor/adapters/integrations/agent_integrations.py` |
+| Module                                     | Capability                                                                                                                                           | Entry                                                                   |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Protection                                 | Live request flow, onboarding, provider pre/post checks, tool-call receipts, and interactive MCP tool/context verification plus change subscriptions | `apps/console/src/pages/GatewayPanel.tsx`                               |
+| Events                                     | Operational risk traces, human approve/reject actions, Agent resume status, and execution audit                                                      | `apps/console/src/pages/SecurityEventsPanel.tsx`                        |
+| Settings                                   | Application endpoints, provider/model selection, and Agent tool/data permissions                                                                     | `apps/console/src/pages/SettingsPanel.tsx`                              |
+| Research & regression (development assets) | Fixed samples, historical reports, and comparison experiments validate the gateway but stay out of production navigation and live metrics            | `apps/api/agent_supervisor/domains/evaluations/`                        |
+| Behavior Supervisor                        | allow / deny / ask / quarantine decisions per tool call                                                                                              | `apps/api/agent_supervisor/domains/governance/supervisor.py`            |
+| Audit & Alerts                             | Tool params, policy hits, risk/anomaly scores, audit hash                                                                                            | `apps/api/agent_supervisor/domains/governance/integrity.py`             |
+| Evaluation & Evidence                      | Validate the gateway and supervisor with fixed data; not part of the production request path                                                         | `apps/api/agent_supervisor/domains/evaluations/`                        |
+| Agent Integration                          | HTTP event contract, AgentToolGuard, OpenAI Agents/LangChain/LangGraph examples                                                                      | `apps/api/agent_supervisor/adapters/integrations/agent_integrations.py` |
 
 ## Architecture
 
@@ -90,13 +90,13 @@ flowchart LR
 
 ## Integration Modes
 
-| Mode | Enforcement | Description |
-|---|---|---|
-| MCP Gateway | **Enforced** | Agent connects to the Gateway (`POST /api/mcp`), which proxies the real MCP server (stdio); every `tools/call` must pass the supervisor — deny/quarantine/ask requests are never forwarded upstream |
-| OpenAI-compatible proxy | **Two-stage enforcement** | `POST /v1/chat/completions` and the text/function subset of `POST /v1/responses` use the same gateway boundary; unsupported Responses fields, built-in tools, and stateless continuation are rejected explicitly. Caller messages and tool/function results are inspected before the provider, then ordinary model text, reasoning, and tool calls are checked before return; indirect-instruction output is withheld and provider failure returns 502 rather than a local simulation |
-| Server-owned execution | **Enforced** | `POST /api/runtime/execute` forces supervision and a sandbox executor; the caller cannot disable either flag |
-| OpenClaw plugin (optional adapter) | **Enforced** | A compatibility hook that returns `block:true`; it is not the current product focus |
-| Generic HTTP | **Advisory** | The supervisor returns a decision and audit ID; compliance is up to the caller |
+| Mode                               | Enforcement               | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP Gateway                        | **Enforced**              | Agent connects to the Gateway (`POST /api/mcp`), which proxies the real MCP server (stdio); every `tools/call` must pass the supervisor — deny/quarantine/ask requests are never forwarded upstream                                                                                                                                                                                                                                                                                   |
+| OpenAI-compatible proxy            | **Two-stage enforcement** | `POST /v1/chat/completions` and the text/function subset of `POST /v1/responses` use the same gateway boundary; unsupported Responses fields, built-in tools, and stateless continuation are rejected explicitly. Caller messages and tool/function results are inspected before the provider, then ordinary model text, reasoning, and tool calls are checked before return; indirect-instruction output is withheld and provider failure returns 502 rather than a local simulation |
+| Server-owned execution             | **Enforced**              | `POST /api/runtime/execute` forces supervision and a sandbox executor; the caller cannot disable either flag                                                                                                                                                                                                                                                                                                                                                                          |
+| OpenClaw plugin (optional adapter) | **Enforced**              | A compatibility hook that returns `block:true`; it is not the current product focus                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Generic HTTP                       | **Advisory**              | The supervisor returns a decision and audit ID; compliance is up to the caller                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 > [!IMPORTANT]
 > The generic HTTP API (`POST /api/runtime/evaluate`) is **advisory**: ZhiAn Sentinel does not execute tools on your behalf and cannot force blocking over the caller. The production single/batch evaluation endpoints always ignore caller-supplied `execute_in_sandbox`. Use MCP Gateway, the OpenAI proxy with receipt enforcement, or server-owned execution for a hard boundary; OpenClaw remains an optional compatibility adapter.
@@ -127,7 +127,13 @@ flowchart LR
 
 > The OpenAI-compatible proxy also stores per-client rate windows in shared SQLite. Token keys use a full SHA-256 bucket key, preventing short-prefix collisions from throttling another Agent or bypassing a window. Runtime status reports `rate_limit_scope=sqlite-shared`.
 >
+> `POST /v1/chat/completions` now uses a real upstream SSE connection for `stream=true`. Ordinary text is released incrementally after cumulative inspection and a trailing safety window of 256 characters by default (`AGENT_SUPERVISOR_PROXY_STREAM_SAFETY_WINDOW_CHARS`, range 64–4096). Fragmented tool-call arguments, reasoning channels, and Provider extensions remain buffered until the complete response passes the existing policy and audit boundary. Cross-chunk findings terminate with `content_filter`; an interrupted or inconsistent final stream emits a bounded error carrying a durable audit ID and distinguishes Provider invocation, incomplete completion, and non-exposure of output. `stream_options` is accepted only with `stream=true`; `include_usage` and `include_obfuscation` must be booleans, and `include_usage=true` produces the standard empty-`choices` usage chunk before `[DONE]`. Managed/research mode remains non-streaming, and Responses API streaming is not exposed yet.
+>
 > Enable the MCP Gateway via environment variables: point `MCP_GATEWAY_UPSTREAM_COMMAND` at the upstream MCP server launch command (e.g. `npx -y @modelcontextprotocol/server-filesystem /sandbox`). Custom MCP tool names must be mapped to standard capabilities in the `agent_tool_mappings` policy settings, otherwise the tool-contract policy rejects them.
+>
+> The MCP HTTP endpoint is dual-era: it keeps the `2025-06-18` initialize compatibility path while supporting [MCP `2026-07-28` Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) per-request metadata, mirrored-header validation, `server/discover`, and bounded `subscriptions/listen` SSE streams. Modern requests reject JSON-RPC batches, notification-shaped side effects, invalid Origins, and header/body mismatches before upstream execution. `X-Agent-Session-ID` remains an application-level Agent isolation and audit key; it is not presented as a protocol session removed by the modern revision.
+
+> Legacy upstream `sampling/createMessage`, `elicitation/create`, and `roots/list` requests are bridged into MCP 2026 `input_required` for `tools/call`, `prompts/get`, and `resources/read`. The opaque `requestState` is HMAC-integrity protected, bound to Agent, session, original request hash, generation, and a short TTL, and consumed once per round. `inputResponses` and `requestState` must be submitted together or the gateway returns `-32602` before upstream I/O. The production Protection page displays `inputRequests`, validates one JSON response per request, and resumes the immutable original method, parameters, Agent session, and mirrored headers. Input requests are returned only when the current request declares the matching `sampling`, `elicitation`, or `roots` client capability; otherwise the gateway returns `-32021`. A modern request carrying `_meta.progressToken` or `io.modelcontextprotocol/logLevel` uses request-scoped SSE: progress is correlated by token, logging is explicit opt-in with all eight standard levels from `debug` through `emergency`, and only messages at or above the selected threshold are forwarded. MRTR retries rebind notifications to the active request stream before the final JSON-RPC response terminates it. The console can also open and explicitly stop a filtered `subscriptions/listen` stream for tool, prompt, resource-list, and selected resource changes while retaining only the latest 100 messages. Set the same high-entropy, at-least-32-byte `MCP_GATEWAY_REQUEST_STATE_SECRET` on every API worker and keep a given `X-Agent-Session-ID` sticky to the worker (or provide a shared pending store); a shared key without pending state still causes fail-closed recovery rejection. When omitted, process restarts intentionally invalidate pending rounds.
 
 > MCP state is isolated by `Agent identity + X-Agent-Session-ID`: production defaults to one stdio upstream process, initialize state, tool/resource catalog, and response buffer per session, preventing a stateful MCP server from carrying state across Agents. The bounded pool keeps up to 128 active sessions and evicts the least-recently-used child process when full. The effective posture is exposed as `mcp.session_isolation` in `GET /api/runtime_status`. Requests without a session ID use a one-shot session and therefore do not retain MCP state across requests.
 
@@ -177,90 +183,60 @@ Minimal event example:
 
 ## Attack Surface Matrix
 
-| Surface | Risk | Samples | Typical risk |
-|---|---|---:|---|
-| Prompt injection | high | 18 | External content overrides system rules |
-| Model jailbreak | high | 9 | Inducing the model to bypass safety constraints |
-| Data leakage | critical | 18 | Reading sensitive data and exfiltrating it |
-| Abuse risk | medium | 13 | Bulk sending, spam, unauthorized export |
-| Tool-call hijacking | critical | 17 | Hijacking execution chains via tool returns or params |
-| Memory poisoning | high | 9 | Writing malicious long-term memory |
-| Environment pollution | medium | 12 | Faking environment variables or runtime context |
+| Surface               | Risk     | Samples | Typical risk                                          |
+| --------------------- | -------- | ------: | ----------------------------------------------------- |
+| Prompt injection      | high     |      18 | External content overrides system rules               |
+| Model jailbreak       | high     |       9 | Inducing the model to bypass safety constraints       |
+| Data leakage          | critical |      18 | Reading sensitive data and exfiltrating it            |
+| Abuse risk            | medium   |      13 | Bulk sending, spam, unauthorized export               |
+| Tool-call hijacking   | critical |      17 | Hijacking execution chains via tool returns or params |
+| Memory poisoning      | high     |       9 | Writing malicious long-term memory                    |
+| Environment pollution | medium   |      12 | Faking environment variables or runtime context       |
 
 ## Defense Policy Matrix
 
-| Policy ID | Name | Default | Primary action |
-|---|---|---|---|
-| `path-boundary` | File sandbox boundary | on | Deny out-of-boundary read/write |
-| `dangerous-command` | Dangerous command interception | on | Deny high-risk commands |
-| `code-sandbox` | Code execution sandbox | on | Quarantine code runs |
-| `external-mail` | Outbound mail review | on | Ask before external mail |
-| `sensitive-egress` | Sensitive data egress review | on | Ask before sending credential-shaped or sensitive data to any recipient |
-| `sensitive-api` | Sensitive API audit | on | Deny unauthorized sensitive endpoints |
-| `external-api-allowlist` | Agent external API host allowlist | on | Hold unregistered absolute HTTP(S) targets for review |
-| `memory-write` | Memory write quarantine | on | Quarantine poisoning-style writes |
-| `memory-read-sensitive` | Sensitive memory read blocking | on | Deny sensitive retrieval |
-| `jailbreak-filter` | Jailbreak prompt filtering | on | Deny jailbreak prompts |
-| `jailbreak-semantic` | Semantic jailbreak detection | on | BERT fallback verdict when rules pass (auto-degrades without model) |
-| `model-output-filter` | Model output filtering | on | Deny high-risk outputs |
-| `bulk-action-review` | Bulk action review | on | Ask before bulk export/send |
-| `tool-description-scan` | Tool description poisoning scan | on | Quarantine tools whose description contains suspicious instructions (OWASP A04) |
-| `tool-return-trust` | Low-trust tool return quarantine | on | Quarantine untrusted tool returns |
-| `environment-trust` | Low-trust environment signals | on | Quarantine polluted environment signals |
-| `anomaly-detection` | Lightweight anomaly detection | on | Ask or deny by anomaly score |
+| Policy ID                | Name                              | Default | Primary action                                                                  |
+| ------------------------ | --------------------------------- | ------- | ------------------------------------------------------------------------------- |
+| `path-boundary`          | File sandbox boundary             | on      | Deny out-of-boundary read/write                                                 |
+| `dangerous-command`      | Dangerous command interception    | on      | Deny high-risk commands                                                         |
+| `code-sandbox`           | Code execution sandbox            | on      | Quarantine code runs                                                            |
+| `external-mail`          | Outbound mail review              | on      | Ask before external mail                                                        |
+| `sensitive-egress`       | Sensitive data egress review      | on      | Ask before sending credential-shaped or sensitive data to any recipient         |
+| `sensitive-api`          | Sensitive API audit               | on      | Deny unauthorized sensitive endpoints                                           |
+| `external-api-allowlist` | Agent external API host allowlist | on      | Hold unregistered absolute HTTP(S) targets for review                           |
+| `memory-write`           | Memory write quarantine           | on      | Quarantine poisoning-style writes                                               |
+| `memory-read-sensitive`  | Sensitive memory read blocking    | on      | Deny sensitive retrieval                                                        |
+| `jailbreak-filter`       | Jailbreak prompt filtering        | on      | Deny jailbreak prompts                                                          |
+| `jailbreak-semantic`     | Semantic jailbreak detection      | on      | BERT fallback verdict when rules pass (auto-degrades without model)             |
+| `model-output-filter`    | Model output filtering            | on      | Deny high-risk outputs                                                          |
+| `bulk-action-review`     | Bulk action review                | on      | Ask before bulk export/send                                                     |
+| `tool-description-scan`  | Tool description poisoning scan   | on      | Quarantine tools whose description contains suspicious instructions (OWASP A04) |
+| `tool-return-trust`      | Low-trust tool return quarantine  | on      | Quarantine untrusted tool returns                                               |
+| `environment-trust`      | Low-trust environment signals     | on      | Quarantine polluted environment signals                                         |
+| `anomaly-detection`      | Lightweight anomaly detection     | on      | Ask or deny by anomaly score                                                    |
 
 ## OWASP Agentic Top 10 Coverage
 
 Aligned with the [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/) (published Dec 2025), annotated item by item:
 
-| ID | Risk | Coverage | ZhiAn Sentinel defense |
-|---|---|---|---|
-| ASI01 | Agent Goal Hijack | 🟡 Partial | Rule channel (historical held-out recall 54.5%, zero FP, <5ms) + semantic channel wired but not shipped with a verified model + `model-output-filter` output-layer fallback |
-| ASI02 | Tool Misuse & Exploitation | 🟢 Covered | Tool-contract allowlist, path boundary, dangerous command interception, sensitive APIs, bulk action review, external mail confirmation |
-| ASI03 | Identity & Privilege Abuse | 🟡 Partial | `agent_tool_allowlists` and `agent_api_allowlists` per-identity tool/host authorization, production tokens bound to `agent_id`, identity verification fields in the audit chain |
-| ASI04 | Agentic Supply Chain | 🟡 Partial | MCP tool description poisoning scan (`tool-description-scan`: instruction override / exfiltration channel / credential access; quarantined tools are blocked); SBOM and dependency signing on the roadmap |
-| ASI05 | Unexpected Code Execution | 🟢 Covered | Dangerous commands denied outright; other commands run in a disposable no-network, read-only, resource-limited sandbox container |
-| ASI06 | Memory & Context Poisoning | 🟢 Covered | Memory write quarantine, sensitive memory read blocking, low-trust environment isolation, untrusted tool return quarantine |
-| ASI07 | Insecure Inter-Agent Communication | 🟡 Partial | Cross-agent correlation chain detection (blocks "sensitive read → bulk export → send-out" stepwise exfiltration chains); transport encryption and message signing on the roadmap |
-| ASI08 | Cascading Failures | 🟡 Partial | Lightweight anomaly detection blocks suspicious call chains by score; cross-agent chain detection pauses execution before cascades occur |
-| ASI09 | Human-Agent Trust Exploitation | 🟡 Partial | Bulk/send actions trigger a human review loop; execution receipts verify caller compliance with decisions |
-| ASI10 | Rogue Agents | 🟡 Partial | Tool authorization allowlist + anomaly detection + cross-agent suspicious collaboration correlation |
+| ID    | Risk                               | Coverage   | ZhiAn Sentinel defense                                                                                                                                                                                    |
+| ----- | ---------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ASI01 | Agent Goal Hijack                  | 🟡 Partial | Rule channel (historical held-out recall 54.5%, zero FP, <5ms) + semantic channel wired but not shipped with a verified model + `model-output-filter` output-layer fallback                               |
+| ASI02 | Tool Misuse & Exploitation         | 🟢 Covered | Tool-contract allowlist, path boundary, dangerous command interception, sensitive APIs, bulk action review, external mail confirmation                                                                    |
+| ASI03 | Identity & Privilege Abuse         | 🟡 Partial | `agent_tool_allowlists` and `agent_api_allowlists` per-identity tool/host authorization, production tokens bound to `agent_id`, identity verification fields in the audit chain                           |
+| ASI04 | Agentic Supply Chain               | 🟡 Partial | MCP tool description poisoning scan (`tool-description-scan`: instruction override / exfiltration channel / credential access; quarantined tools are blocked); SBOM and dependency signing on the roadmap |
+| ASI05 | Unexpected Code Execution          | 🟢 Covered | Dangerous commands denied outright; other commands run in a disposable no-network, read-only, resource-limited sandbox container                                                                          |
+| ASI06 | Memory & Context Poisoning         | 🟢 Covered | Memory write quarantine, sensitive memory read blocking, low-trust environment isolation, untrusted tool return quarantine                                                                                |
+| ASI07 | Insecure Inter-Agent Communication | 🟡 Partial | Cross-agent correlation chain detection (blocks "sensitive read → bulk export → send-out" stepwise exfiltration chains); transport encryption and message signing on the roadmap                          |
+| ASI08 | Cascading Failures                 | 🟡 Partial | Lightweight anomaly detection blocks suspicious call chains by score; cross-agent chain detection pauses execution before cascades occur                                                                  |
+| ASI09 | Human-Agent Trust Exploitation     | 🟡 Partial | Bulk/send actions trigger a human review loop; execution receipts verify caller compliance with decisions                                                                                                 |
+| ASI10 | Rogue Agents                       | 🟡 Partial | Tool authorization allowlist + anomaly detection + cross-agent suspicious collaboration correlation                                                                                                       |
 
 Coverage summary: fully covered 3/10 (ASI02/05/06), partially covered 7/10, **risk touch rate 100%**; the MCP Gateway is the current protocol-level enforcement path, while the OpenClaw plugin remains optional and is excluded from core maturity evidence.
 
 ## Quick Start
 
-### Option 1: Docker one-click startup (recommended)
-
-Prerequisites: Docker 20.10+ and Docker Compose v2.
-
-```bash
-# 1. Prepare environment variables (both are required; the container refuses to start without them)
-cp .env.example .env
-# Edit .env and fill in at least:
-#   AGENT_SUPERVISOR_API_TOKEN=<bearer token for read-only API calls>
-#   AGENT_SUPERVISOR_AGENT_TOKENS_JSON={"agent-1":"<token bound to agent-1>"}
-#   AGENT_SUPERVISOR_AUDIT_HMAC_KEY=<random HMAC key for the audit chain>
-#   AGENT_SUPERVISOR_SECURITY_PROFILE=production
-
-# 2. Build and start (multi-stage build: frontend compilation + Python runtime image)
-docker compose up -d --build
-
-# 3. Verify
-curl http://127.0.0.1:8012/api/health \
-  -H "Authorization: Bearer $AGENT_SUPERVISOR_API_TOKEN"
-```
-
-Open `http://127.0.0.1:8012` in a browser to use the console (the API and the frontend static assets are served by the same container). Runtime data such as the audit database persists in the `zhi-an-data` volume.
-
-For a protected deployment, the console opens at an authentication gate before any operational API is loaded. Paste a configured operator Bearer Token and click “Validate and enter”. The token is kept only in the current browser session's `sessionStorage`; it is not placed in URLs, audit records, or the build output. A 401 clears the session and returns to the gate, while a 403 keeps the identity and reports the missing permission.
-
-> [!IMPORTANT]
-> The container listens on `0.0.0.0` (a non-loopback address), so the security policy enforces API token authentication and an audit HMAC key — the service refuses to start when either is missing (fail-closed). For production deployments, add HTTPS via a reverse proxy.
-
-`AGENT_SUPERVISOR_SECURITY_PROFILE=production` also forces both Agent tool registration and model registration. Unknown Agents and unregistered models cannot inherit local fixture compatibility. Loopback source launches default to `local`; public or container deployments should keep `production`.
-
-### Option 2: Run from source
+### Option 1: Run from source (recommended for a single machine)
 
 Prerequisites:
 
@@ -280,7 +256,13 @@ For development (tests and type-checking tools):
 python -m pip install -r apps/api/requirements-dev.txt
 ```
 
-On Windows, the repository launcher builds the console and starts the same-origin application at `http://127.0.0.1:8012`. Close the window or press `Ctrl+C` to stop it.
+On Windows, the repository launcher rebuilds the latest console before starting the same-origin application at `http://127.0.0.1:8012`. This prevents source edits or deleted modules from being hidden by a stale `dist` bundle. Close the window or press `Ctrl+C` to stop it.
+
+```powershell
+npm run dev
+```
+
+The equivalent direct command is:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\启动智安哨.ps1
@@ -292,33 +274,40 @@ To run the Shanghai information-security materials utility, also install the doc
 python -m pip install python-docx openpyxl
 ```
 
-### 2. Start the backend API
+`npm run dev` is the single-machine product entry point and does not require Docker. It serves the built same-origin application. For Vite hot reload, run `npm run api` and `npm run dev:console` in two terminals, then open `http://127.0.0.1:5178`.
 
-```bash
-npm run api
-```
+The single-machine `npm run dev` launcher binds to loopback and deliberately disables console authentication, so it opens the operational console without a login page or Token prompt. To test the authentication boundary, set `AGENT_SUPERVISOR_AUTH_DISABLED=false` explicitly and run `python -X utf8 -m apps.api.dev_server` instead.
 
-The source launcher loads the repository `.env` before applying bind-address security defaults. Explicit settings such as `AGENT_SUPERVISOR_AUTH_DISABLED=false` therefore remain effective; the Windows one-click launcher follows the same order.
-
-Default address and health check:
+Default address and public liveness check:
 
 ```text
 http://127.0.0.1:8012
-http://127.0.0.1:8012/api/health
+http://127.0.0.1:8012/api/public/status
 ```
 
-### 3. Start the console
+`/api/health` returns 200 in the local no-auth mode. Only an explicitly authenticated run requires a Bearer Token and returns 401 for anonymous access. The launcher uses the public `/api/public/status` endpoint, which contains no runtime details, to determine readiness.
+
+### Option 2: Optional Docker deployment acceptance
+
+Docker packages the runtime and verifies container cold start and volume persistence; it is not a prerequisite for single-machine development. Container deployment requires Docker 20.10+ and Docker Compose v2.
 
 ```bash
-npm run console:dev
+cp .env.example .env
+# Fill AGENT_SUPERVISOR_API_TOKEN,
+# AGENT_SUPERVISOR_AGENT_TOKENS_JSON, and AGENT_SUPERVISOR_AUDIT_HMAC_KEY;
+# set AGENT_SUPERVISOR_AUTH_DISABLED=false and AGENT_SUPERVISOR_SECURITY_PROFILE=production
+docker compose up -d --build
 ```
 
-Open `http://127.0.0.1:5178`.
+Open `http://127.0.0.1:8012` in a browser. The container listens on `0.0.0.0`, while Compose publishes only host loopback `127.0.0.1` by default; add HTTPS through a reverse proxy for production.
 
-> [!TIP]
-> If the backend is not running, the console shows an empty offline state instead of presenting fixture data as live evidence. Start the backend to read runtime status and record real audit events.
+Run deployment gates only when needed: `npm run deploy:config` checks Compose configuration, `npm run deploy:verify` performs real container acceptance, and `npm run verify:container` runs both. Daily single-machine verification uses `npm run verify:local` or `npm run verify` and does not call Docker.
 
-### 4. Model configuration (optional)
+`AGENT_SUPERVISOR_SECURITY_PROFILE=production` forces both Agent tool and model registration boundaries. Loopback source launches default to `local`; public or container deployments should keep `production`.
+
+The local launcher opens the operational console directly without an authentication gate. Production or explicitly authenticated runs still show the Token form; the Token is stored only in the current browser session's `sessionStorage`, never in the URL, audit records, or build output. A 401 clears the session and returns to the login page; a 403 keeps the identity and reports the missing permission.
+
+### Model configuration (optional)
 
 No real model key is required for the fixed lab. Without keys, that path uses local target fixtures and sandbox side-effect assertions. The transparent LLM API gateway is not a simulator: `POST /v1/chat/completions` requires a configured target-provider API key and returns 502 when no provider is available. Fixed-lab and real-provider evidence are labeled separately.
 
@@ -335,27 +324,31 @@ ZHIPU_API_KEY=your-zhipu-key
 
 The CLI is used for real gateway probes, batch regression, evaluation, and evidence export. `gateway-probe` sends one caller-authored request; `gateway-agent-run` sends a caller-authored set of OpenAI-compatible requests through the real HTTP gateway and aggregates redacted runtime evidence. `gateway-probe`, `gateway-agent-run`, and `mcp-probe` accept `--strict`: the report is still written; `gateway-agent-run` also requires every declared expectation to match, every requested baseline branch to succeed, and (when `--causal-url` is used) an observed baseline side effect that is suppressed by the guarded branch. Any failed assertion exits non-zero for CI or pre-submission acceptance. Neither command fabricates tool calls or calls the local supervisor in place of the gateway. `real-model-eval` remains a model-behavior evaluation and is explicitly marked as outside the gateway path.
 
-| Task | Command |
-|---|---|
-| Run one attack script | `npm run cli -- run TOOL-HIJACK-001 on` |
-| Batch compare all scripts | `npm run cli -- batch --guard compare` |
-| Export effectiveness assessment | `npm run cli -- assess --run-compare` |
-| Evaluate external agent event logs | `npm run cli -- evaluate --input apps/api/sandbox/examples/agent-events-batch.json` |
-| Policy ablation | `npm run cli -- policy-ablation` |
-| Historical fixture baseline (not core gateway evidence) | `npm run cli -- competition-benchmark` |
-| HTTP/SQLite/audit-chain benchmark | `npm run cli -- http-e2e-benchmark` |
-| One-click readiness check | `npm run cli -- readiness --write` |
-| Send a custom payload through the real gateway | `npm run cli -- gateway-probe --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions` |
-| Strictly verify one gateway artifact | `npm run cli -- gateway-probe --strict --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions` |
-| Run the same-request baseline/protected observation | `curl -X POST http://127.0.0.1:8012/api/gateway/compare -H "Authorization: Bearer $AGENT_SUPERVISOR_API_TOKEN" -H "Content-Type: application/json" -d @payload.json` |
-| Run real Agent requests and aggregate gateway evidence | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports` |
-| Strictly verify Agent gateway evidence | `npm run cli -- gateway-agent-run --strict --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports` |
-| Strictly verify MCP gateway evidence | `npm run cli -- mcp-probe --strict --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports` |
-| Run the supervisor-owned Agent execution loop | `npm run cli -- external-agent-demo --managed-server --output apps/api/sandbox/reports` |
-| OpenClaw plugin package | `npm run cli -- openclaw-plugin` |
-| OpenClaw plugin validation | `npm run cli -- openclaw-plugin-validate` |
+| Task                                                                                       | Command                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run one attack script                                                                      | `npm run cli -- run TOOL-HIJACK-001 on`                                                                                                                                                  |
+| Batch compare all scripts                                                                  | `npm run cli -- batch --guard compare`                                                                                                                                                   |
+| Export effectiveness assessment                                                            | `npm run cli -- assess --run-compare`                                                                                                                                                    |
+| Evaluate external agent event logs                                                         | `npm run cli -- evaluate --input apps/api/sandbox/examples/agent-events-batch.json`                                                                                                      |
+| Policy ablation                                                                            | `npm run cli -- policy-ablation`                                                                                                                                                         |
+| Historical fixture baseline (not core gateway evidence)                                    | `npm run cli -- competition-benchmark`                                                                                                                                                   |
+| HTTP/SQLite/audit-chain benchmark                                                          | `npm run cli -- http-e2e-benchmark`                                                                                                                                                      |
+| One-click readiness check                                                                  | `npm run cli -- readiness --write`                                                                                                                                                       |
+| Send a custom payload through the real gateway                                             | `npm run cli -- gateway-probe --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions`                                                                               |
+| Strictly verify one gateway artifact                                                       | `npm run cli -- gateway-probe --strict --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions`                                                                      |
+| Run the same-request baseline/protected observation                                        | `curl -X POST http://127.0.0.1:8012/api/gateway/compare -H "Authorization: Bearer $AGENT_SUPERVISOR_API_TOKEN" -H "Content-Type: application/json" -d @payload.json`                     |
+| Run real Agent requests and aggregate gateway evidence                                     | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports`          |
+| Strictly verify Agent gateway evidence                                                     | `npm run cli -- gateway-agent-run --strict --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports` |
+| Strictly verify MCP gateway evidence                                                       | `npm run cli -- mcp-probe --strict --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports`                                                               |
+| Run the production-profile gateway evidence closure                                        | `npm run proof:production`                                                                                                                                                               |
+| Run the production closure plus real-model, full policy, readiness, and self-review checks | `npm run proof:production:full`                                                                                                                                                          |
+| Run the supervisor-owned Agent execution loop                                              | `npm run cli -- external-agent-demo --managed-server --output apps/api/sandbox/reports`                                                                                                  |
+| OpenClaw plugin package                                                                    | `npm run cli -- openclaw-plugin`                                                                                                                                                         |
+| OpenClaw plugin validation                                                                 | `npm run cli -- openclaw-plugin-validate`                                                                                                                                                |
 
 `gateway-agent-run` accepts caller-authored cases and does not prescribe the model response:
+
+`proof:production` uses short-lived tokens and an audit HMAC that exist only in its process. It verifies the HTTP gateway, Agent harness, approval/claim/completion and rejection paths, and the sandbox-causal boundary, then prints a compact verdict while retaining complete artifacts under `apps/api/sandbox/reports`. The `proof:production:full` command additionally refreshes the real-model evaluation, all policy comparisons, readiness, and self-review.
 
 Before a defense or release, bind the evidence to the current source tree by starting the local fixture gateway in one terminal and running the strict batch in another. The script generates the HTTP probe, Agent harness, MCP probe, strict real-model evaluation, readiness report, and self-review report; stop the fixture process after the batch completes.
 
@@ -377,7 +370,7 @@ The supply-chain gate is `npm run audit:security`. Its report records the curren
       "expected_control": true,
       "payload": {
         "model": "TARGET_MODEL",
-        "messages": [{"role": "user", "content": "ATTACK_PAYLOAD"}]
+        "messages": [{ "role": "user", "content": "ATTACK_PAYLOAD" }]
       }
     },
     {
@@ -386,7 +379,7 @@ The supply-chain gate is `npm run audit:security`. Its report records the curren
       "expected_control": false,
       "payload": {
         "model": "TARGET_MODEL",
-        "messages": [{"role": "user", "content": "NORMAL_TASK"}]
+        "messages": [{ "role": "user", "content": "NORMAL_TASK" }]
       }
     }
   ]
@@ -400,14 +393,14 @@ The report stores request hashes, provider/decision facts, audit IDs, receipt st
 > [!CAUTION]
 > This repository contains attack samples, jailbreak examples, and tool-abuse scenarios for controlled research only. Do not use them against real systems.
 
-| Tool type | Boundary |
-|---|---|
-| Mail | Writes to a fake outbox only; never sends real mail |
-| File | Accesses sandbox directories only; never reads user files |
-| API | Accesses local simulated business data only |
+| Tool type      | Boundary                                                                                                                         |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Mail           | Writes to a fake outbox only; never sends real mail                                                                              |
+| File           | Accesses sandbox directories only; never reads user files                                                                        |
+| API            | Accesses local simulated business data only                                                                                      |
 | Code execution | Registered probes run with argument arrays; other commands run in a disposable no-network, read-only, resource-limited container |
-| Memory | The local controlled executor uses per-Agent namespaces; quarantined/removed records are not fed back to the model |
-| Audit data | Tokens, passwords, API keys, and emails are redacted before persistence; optional HMAC signing |
+| Memory         | The local controlled executor uses per-Agent namespaces; quarantined/removed records are not fed back to the model               |
+| Audit data     | Tokens, passwords, API keys, and emails are redacted before persistence; optional HMAC signing                                   |
 
 ## Project Structure
 
@@ -432,27 +425,33 @@ agent-security-supervisor/
 
 ## Development & Quality Checks
 
-| Check | Command |
-|---|---|
-| Backend tests | `npm run api:test` |
-| Backend coverage gate | `npm run api:coverage` (fails below 85%) |
-| Backend lint | `npm run api:lint` |
-| Backend type check | `npm run api:typecheck` |
-| Architecture governance | `npm run api:architecture` |
-| Console build | `npm run console:build` |
-| Console lint | `npm run console:lint` |
-| Operational browser black-box acceptance | `npm run console:test:e2e` |
-| Dependency security audit | `npm run audit:security` |
-| Full verification | `npm run verify` (static checks, unit tests, coverage, production build, process-level E2E, dependency audit) |
+| Check                                    | Command                                                                                                                                            |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend tests                            | `npm run api:test`                                                                                                                                 |
+| Backend policy coverage gate             | `npm run api:coverage` (core supervision, scoring, credentials, and policy data; fails below 85%)                                                  |
+| Backend production-surface coverage gate | `npm run api:coverage:production` (excludes attack labs, report generation, and compatibility demos; fails below 75%)                              |
+| Backend lint                             | `npm run api:lint`                                                                                                                                 |
+| Backend type check                       | `npm run api:typecheck`                                                                                                                            |
+| Architecture governance                  | `npm run api:architecture`                                                                                                                         |
+| Console build                            | `npm run console:build`                                                                                                                            |
+| Console lint                             | `npm run console:lint`                                                                                                                             |
+| Operational browser black-box acceptance | `npm run console:test:e2e`                                                                                                                         |
+| Dependency security audit                | `npm run audit:security`                                                                                                                           |
+| Deployment configuration gate            | `npm run deploy:config` (Docker engine not required)                                                                                               |
+| Container deployment acceptance          | `npm run deploy:verify` (image, cold start, auth, health, replacement persistence)                                                                 |
+| Local full verification                  | `npm run verify:local` or `npm run verify` (static checks, unit tests, coverage, production build, process-level E2E, dependency audit; no Docker) |
+| Container full verification              | `npm run verify:container` (deployment configuration and real container acceptance)                                                                |
+| Release verification                     | `npm run verify:release` (local full verification plus container deployment acceptance)                                                            |
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the contribution guide, [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) for the code of conduct, and [CHANGELOG.md](./CHANGELOG.md) for the changelog.
 
 ## Roadmap
 
-- [x] MCP Gateway: enforced supervision at the Model Context Protocol proxy layer (stdio upstream + Streamable HTTP subset entry)
-- [x] MCP Gateway: multi-upstream routing, audit persistence, upstream notification polling
+- [x] MCP Gateway: enforced proxy with stdio upstreams and dual-era 2026/2025 Streamable HTTP
+- [x] MCP Gateway: modern metadata/header validation, `server/discover`, and bounded `subscriptions/listen` SSE
+- [x] MCP Gateway: multi-upstream routing, persisted auditing, and legacy operator notification polling
 - [x] Dual-channel jailbreak detection wiring: rule channel first; semantic channel activates only when a verified model is present
-- [ ] MCP Gateway: full SSE streaming and upstream-initiated request support
+- [x] MCP Gateway: translate legacy upstream server requests into 2026 MRTR with client-capability gates and request-scoped progress/log SSE
 - [ ] Release and reproduce a verified Chinese semantic model (`training/finetune_bert.py` is currently a training script)
 - [ ] OWASP Agentic Top 10 coverage to 90%+
 - [ ] More real-world agent framework adapters

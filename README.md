@@ -66,16 +66,16 @@ Agent 工具调用 -> 执行前监督 -> 允许 / 拒绝 / 询问 / 隔离
 
 ## 核心能力
 
-| 模块 | 能力 | 代码入口 |
-|---|---|---|
-| 防护 | 实时请求流、接入向导、Provider 前后检查、Tool Call 执行回执 | `apps/console/src/pages/GatewayPanel.tsx` |
-| 事件 | 展示运营网关的风险调用链，支持人工批准/驳回、Agent恢复状态和执行审计 | `apps/console/src/pages/SecurityEventsPanel.tsx` |
-| 设置 | 应用接入地址、Provider 顺序与模型、Agent 工具和数据权限 | `apps/console/src/pages/SettingsPanel.tsx` |
-| 研究与回归（开发资产） | 固定样本、历史报告和对照实验仅用于验证网关能力，不进入生产导航和实时指标 | `apps/api/agent_supervisor/domains/evaluations/` |
-| 行为监督器 | 对工具调用输出允许、拒绝、询问、隔离四类决策 | `apps/api/agent_supervisor/domains/governance/supervisor.py` |
-| 审计与告警 | 记录工具参数、策略命中、风险分、异常分、审计 hash | `apps/api/agent_supervisor/domains/governance/integrity.py` |
-| 评测与证据 | 评测不参与生产请求路径；真实模型盲测只有在 Provider 原始响应、策略快照、当前运行快照和执行回执均匹配时才算就绪 | `apps/api/agent_supervisor/domains/evaluations/` |
-| 通用 Agent 接入 | HTTP 事件契约、AgentToolGuard、OpenAI Agents/LangChain/LangGraph 示例 | `apps/api/agent_supervisor/adapters/integrations/agent_integrations.py` |
+| 模块                   | 能力                                                                                                           | 代码入口                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 防护                   | 实时请求流、接入向导、Provider 前后检查、Tool Call 执行回执、MCP 工具/上下文验证与变更订阅                     | `apps/console/src/pages/GatewayPanel.tsx`                               |
+| 事件                   | 展示运营网关的风险调用链，支持人工批准/驳回、Agent 恢复状态、执行审计和不确定副作用核查                        | `apps/console/src/pages/SecurityEventsPanel.tsx`                        |
+| 设置                   | 应用接入地址、Provider 顺序与模型、Agent 工具和数据权限                                                        | `apps/console/src/pages/SettingsPanel.tsx`                              |
+| 研究与回归（开发资产） | 固定样本、历史报告和对照实验仅用于验证网关能力，不进入生产导航和实时指标                                       | `apps/api/agent_supervisor/domains/evaluations/`                        |
+| 行为监督器             | 对工具调用输出允许、拒绝、询问、隔离四类决策                                                                   | `apps/api/agent_supervisor/domains/governance/supervisor.py`            |
+| 审计与告警             | 记录工具参数、策略命中、风险分、异常分、审计 hash                                                              | `apps/api/agent_supervisor/domains/governance/integrity.py`             |
+| 评测与证据             | 评测不参与生产请求路径；真实模型盲测只有在 Provider 原始响应、策略快照、当前运行快照和执行回执均匹配时才算就绪 | `apps/api/agent_supervisor/domains/evaluations/`                        |
+| 通用 Agent 接入        | HTTP 事件契约、AgentToolGuard、OpenAI Agents/LangChain/LangGraph 示例                                          | `apps/api/agent_supervisor/adapters/integrations/agent_integrations.py` |
 
 ## 系统架构
 
@@ -100,13 +100,13 @@ flowchart LR
 
 智安哨可以作为外部 Agent 的工具调用防火墙。外部系统把即将执行的工具调用发给智安哨，智安哨返回是否允许、拒绝、询问或隔离。
 
-| 接入方式 | 强制力 | 说明 |
-|---|---|---|
-| MCP Gateway | **强制式** | Agent 连接 Gateway（`POST /api/mcp`），Gateway 代理真实 MCP Server（stdio），所有 `tools/call` 必须经过监督器，拒绝/隔离/询问时不转发上游 |
-| OpenAI 兼容代理 | **输入与工具调用双阶段阻断** | `POST /v1/chat/completions` 与 `POST /v1/responses` 均进入同一安全链；Responses 当前只接受文本、函数工具和 receipt-bound 函数回灌，未知字段/内置工具/无状态续接显式返回 400；用户/工具返回中的不可信提示注入在 Provider 前拦截，模型文本、reasoning 内容与 tool call 在返回 Agent 前再次检查；Provider 不可用时明确返回 502，不切换本地模拟 |
-| 服务端执行入口 | **强制式** | `POST /api/runtime/execute` 强制开启监督和隔离执行器，工具由智安哨服务端完成，调用方提交的执行开关只作为输入证据 |
-| OpenClaw 插件（可选兼容） | **适配器级强制** | 仅作为既有 Agent 框架适配器；插件在 `before_tool_call` 钩子中返回 `block:true`，不属于当前产品主线 |
-| 通用 HTTP 接入 | **建议式** | 智安哨返回决策和审计编号，但是否遵守由接入方控制 |
+| 接入方式                  | 强制力                       | 说明                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP Gateway               | **强制式**                   | Agent 连接 Gateway（`POST /api/mcp`），Gateway 代理真实 MCP Server（stdio），所有 `tools/call` 必须经过监督器，拒绝/隔离/询问时不转发上游                                                                                                                                                                                                   |
+| OpenAI 兼容代理           | **输入与工具调用双阶段阻断** | `POST /v1/chat/completions` 与 `POST /v1/responses` 均进入同一安全链；Responses 当前只接受文本、函数工具和 receipt-bound 函数回灌，未知字段/内置工具/无状态续接显式返回 400；用户/工具返回中的不可信提示注入在 Provider 前拦截，模型文本、reasoning 内容与 tool call 在返回 Agent 前再次检查；Provider 不可用时明确返回 502，不切换本地模拟 |
+| 服务端执行入口            | **强制式**                   | `POST /api/runtime/execute` 强制开启监督和隔离执行器，工具由智安哨服务端完成，调用方提交的执行开关只作为输入证据                                                                                                                                                                                                                            |
+| OpenClaw 插件（可选兼容） | **适配器级强制**             | 仅作为既有 Agent 框架适配器；插件在 `before_tool_call` 钩子中返回 `block:true`，不属于当前产品主线                                                                                                                                                                                                                                          |
+| 通用 HTTP 接入            | **建议式**                   | 智安哨返回决策和审计编号，但是否遵守由接入方控制                                                                                                                                                                                                                                                                                            |
 
 > [!IMPORTANT]
 > 通用 HTTP 接入（`POST /api/runtime/evaluate`）属于**建议式 API**：智安哨不替代接入方执行工具，也不强制阻断；请求中的 `execute_in_sandbox` 在该生产入口及批量入口始终被忽略。需要强制阻断时，请使用 MCP Gateway、OpenAI 代理配合回执，或服务端执行入口；OpenClaw 仅作为可选兼容适配器。
@@ -116,6 +116,8 @@ flowchart LR
 > OpenAI 兼容代理默认是透明模式，面向真实 LLM API/Agent 接入；旧的副模型提示词改写实验仅在**本地安全档**中请求显式指定 `agent_supervisor.mode=research`、服务端开启 `AGENT_SUPERVISOR_PROXY_ALLOW_RESEARCH_MODE=true` 且调用角色为 analyst/admin 时可用。`production` 安全档即使残留该环境变量也会拒绝 research，避免隐藏重写链进入生产请求路径。
 
 > 透明代理的安全顺序是：`请求大小/契约校验 → 不可信消息/Provider 上下文预检 → tool/function 结果上下文扫描 → 工具定义投毒扫描 → Provider → content/reasoning_content/reasoning/thinking/analysis/refusal、普通文本和 tool call、工具参数递归检查`。入站 assistant tool call 的参数和 Provider 生成的 tool 参数均有结构与数量上限；后续回灌的工具结果同样是低信任输入。Provider 普通文本也会经过间接指令扫描，命中时原文不会返回给 Agent。命中间接提示注入或外传指令时，原始 tool call/工具结果不会返回给 Agent，并以 `tool-return-trust` 写入隔离审计。被预检或输出策略控制的响应不会把原始 tool call、恶意文本或不可信参数回显到 `agent_supervisor` 元数据；`agent_supervisor.request_stage` 和 `request_hash` 用于区分 Provider 前后的证据。
+>
+> `POST /v1/chat/completions` 的 `stream=true` 会建立真实 Provider SSE，而不是把完整响应事后包装成流。普通文本经过累计扫描和默认 256 字符尾部安全窗口后增量返回；窗口可用 `AGENT_SUPERVISOR_PROXY_STREAM_SAFETY_WINDOW_CHARS` 在 64–4096 之间调整。分片 Tool Call 参数、reasoning 和 Provider 扩展在完整响应通过既有监督前不会返回；跨 Chunk 风险命中会以 `content_filter` 收口并附带审计证据，Provider 中断或流终态不一致会发送带持久化审计 ID 的有界错误事件，并明确区分“已调用 Provider”“Provider 未完成”和“输出未暴露”。`stream_options` 只可与 `stream=true` 同时使用，当前校验 `include_usage` 与 `include_obfuscation` 两个布尔字段；请求 `include_usage=true` 时会在 `[DONE]` 前返回标准空 `choices` usage 终块。`managed`/`research` 模式继续使用非流式完整证据链；Responses API 的流式事件协议尚未开放。
 
 > 旧版 OpenAI SDK 的 `functions` / `function_call` 不是旁路：网关会把 legacy function 定义投影到与 `tools` 相同的投毒扫描、Agent 能力白名单和 Provider 返回参数 schema 校验中，同时保留原始 legacy 形状转发给 Provider。
 
@@ -152,6 +154,10 @@ flowchart LR
 > Provider 的 `reasoning_content`、`reasoning`、`thinking`、`analysis` 通道会参与安全扫描，但默认不返回给下游 Agent，以缩小模型可见面并避免内部上下文泄露；需要兼容依赖这些字段的客户端时，部署侧显式设置 `AGENT_SUPERVISOR_PROXY_EXPOSE_REASONING=true`，并把它视为降级配置。
 >
 > MCP Gateway 通过环境变量启用：`MCP_GATEWAY_UPSTREAM_COMMAND` 指向上游 MCP Server 启动命令（如 `npx -y @modelcontextprotocol/server-filesystem /sandbox`）。自定义 MCP 工具名需在策略设置的 `agent_tool_mappings` 中映射到标准能力，否则会被 tool-contract 策略拒绝。
+>
+> MCP HTTP 入口是双时代协议边界：保留 `2025-06-18` 的 `initialize` 兼容链，同时支持 [MCP `2026-07-28` Streamable HTTP](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) 的逐请求 `_meta`、`MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` 一致性校验、`server/discover` 和 `subscriptions/listen` SSE。现代请求不接受 JSON-RPC 批量或无 `id` 副作用通知；`Origin`、工具参数镜像头和请求体不一致时在上游执行前拒绝。`X-Agent-Session-ID` 只用于智安哨内部 Agent 隔离和审计关联，不会伪装成新版已移除的 MCP 协议 Session。
+
+> 现代 `tools/call`、`prompts/get` 和 `resources/read` 所需的旧版上游 `sampling/createMessage`、`elicitation/create`、`roots/list` 请求会被桥接为 MCP 2026 `input_required`：`requestState` 由 HMAC 完整性保护，绑定 Agent、会话、原始调用摘要、当前轮次和短 TTL，并在进程内单次消费；`inputResponses` 与 `requestState` 必须成对提交，否则在上游 I/O 前返回 `-32602`。正式防护页会展示 `inputRequests`，校验操作员填写的逐项 JSON 响应，并保留原始方法、参数、Agent 会话和镜像头恢复同一轮调用。网关只会向本次请求声明了对应 `sampling`、`elicitation` 或 `roots` 能力的客户端返回输入请求，缺失时返回 `-32021`。带 `_meta.progressToken` 或 `io.modelcontextprotocol/logLevel` 的现代请求使用请求级 SSE：进度按 Token 精确归属；日志支持 `debug` 至 `emergency` 八个标准级别，必须显式选择最低级别，并只转发该级别及以上消息；MRTR 恢复会将通知重新绑定到本轮请求流，最终 JSON-RPC 响应随后结束流。跨进程部署应在所有 API worker 设置相同且至少 32 字节的高熵 `MCP_GATEWAY_REQUEST_STATE_SECRET`，并让同一 `X-Agent-Session-ID` 保持会话亲和（或接入共享 pending store）；只有密钥而没有 pending 状态时，网关会拒绝恢复轮次。未配置密钥时重启也会使未完成轮次失效，这是刻意的 fail-closed 行为。
 
 > MCP 状态边界按 `Agent 身份 + X-Agent-Session-ID` 隔离：生产默认由每个会话创建独立的 stdio 上游进程、initialize 状态、工具/资源目录和响应缓存，避免有状态 MCP Server 在不同 Agent 间串状态。会话池默认最多保留 128 个活动会话，超出后按最久未使用顺序回收子进程；实际范围可在 `GET /api/runtime_status` 的 `mcp.session_isolation` 查看。未携带会话 ID 的请求使用一次性会话，适合无状态请求但不会保留跨请求 MCP 状态。
 
@@ -218,90 +224,60 @@ flowchart TD
 
 ## 攻击面矩阵
 
-| 攻击面 | 风险 | 样本 | 典型风险 |
-|---|---|---:|---|
-| 提示注入 | high | 18 | 让外部内容覆盖系统规则 |
-| 模型越狱 | high | 9 | 诱导模型绕过安全约束 |
-| 数据泄露 | critical | 18 | 读取敏感数据并外发 |
-| 滥用风险 | medium | 13 | 批量外发、垃圾邮件、未授权导出 |
-| 工具调用劫持 | critical | 17 | 通过工具返回或参数污染劫持执行链 |
-| 记忆中毒 | high | 9 | 写入恶意长期记忆，影响未来决策 |
-| 环境感知污染 | medium | 12 | 伪造环境变量或运行上下文 |
+| 攻击面       | 风险     | 样本 | 典型风险                         |
+| ------------ | -------- | ---: | -------------------------------- |
+| 提示注入     | high     |   18 | 让外部内容覆盖系统规则           |
+| 模型越狱     | high     |    9 | 诱导模型绕过安全约束             |
+| 数据泄露     | critical |   18 | 读取敏感数据并外发               |
+| 滥用风险     | medium   |   13 | 批量外发、垃圾邮件、未授权导出   |
+| 工具调用劫持 | critical |   17 | 通过工具返回或参数污染劫持执行链 |
+| 记忆中毒     | high     |    9 | 写入恶意长期记忆，影响未来决策   |
+| 环境感知污染 | medium   |   12 | 伪造环境变量或运行上下文         |
 
 ## 防御策略矩阵
 
-| 策略 ID | 策略名称 | 默认 | 主要动作 |
-|---|---|---|---|
-| `path-boundary` | 文件沙箱边界 | 开启 | 拒绝越界读写 |
-| `dangerous-command` | 危险命令拦截 | 开启 | 拒绝高危命令 |
-| `code-sandbox` | 代码执行沙箱 | 开启 | 隔离代码运行 |
-| `external-mail` | 邮件外发询问 | 开启 | 人工确认外部邮件 |
-| `sensitive-egress` | 敏感数据外发复核 | 开启 | 内部或外部收件人携带凭据/敏感数据时先人工复核 |
-| `sensitive-api` | 高敏 API 审计 | 开启 | 拒绝未授权高敏接口 |
-| `external-api-allowlist` | Agent 外部 API 主机白名单 | 开启 | 未登记绝对 HTTP(S) 目标进入人工复核 |
-| `memory-write` | 记忆写入隔离 | 开启 | 隔离污染型记忆 |
-| `memory-read-sensitive` | 敏感记忆读取拦截 | 开启 | 拒绝敏感检索 |
-| `jailbreak-filter` | 越狱提示过滤 | 开启 | 拒绝越狱提示 |
-| `jailbreak-semantic` | 语义越狱检测 | 开启 | 规则未拦截时由 BERT 语义模型兜底判定（模型缺失自动降级） |
-| `model-output-filter` | 模型输出过滤 | 开启 | 拒绝高风险输出 |
-| `bulk-action-review` | 批量动作复核 | 开启 | 询问批量导出或批量外发 |
-| `tool-description-scan` | 工具描述投毒扫描 | 开启 | 隔离 description 含可疑指令的工具（OWASP A04） |
-| `tool-return-trust` | 工具返回低信任隔离 | 开启 | 隔离不可信工具返回 |
-| `environment-trust` | 环境信息低信任隔离 | 开启 | 隔离被污染环境信号 |
-| `anomaly-detection` | 轻量异常检测 | 开启 | 按异常分询问或拒绝 |
+| 策略 ID                  | 策略名称                  | 默认 | 主要动作                                                 |
+| ------------------------ | ------------------------- | ---- | -------------------------------------------------------- |
+| `path-boundary`          | 文件沙箱边界              | 开启 | 拒绝越界读写                                             |
+| `dangerous-command`      | 危险命令拦截              | 开启 | 拒绝高危命令                                             |
+| `code-sandbox`           | 代码执行沙箱              | 开启 | 隔离代码运行                                             |
+| `external-mail`          | 邮件外发询问              | 开启 | 人工确认外部邮件                                         |
+| `sensitive-egress`       | 敏感数据外发复核          | 开启 | 内部或外部收件人携带凭据/敏感数据时先人工复核            |
+| `sensitive-api`          | 高敏 API 审计             | 开启 | 拒绝未授权高敏接口                                       |
+| `external-api-allowlist` | Agent 外部 API 主机白名单 | 开启 | 未登记绝对 HTTP(S) 目标进入人工复核                      |
+| `memory-write`           | 记忆写入隔离              | 开启 | 隔离污染型记忆                                           |
+| `memory-read-sensitive`  | 敏感记忆读取拦截          | 开启 | 拒绝敏感检索                                             |
+| `jailbreak-filter`       | 越狱提示过滤              | 开启 | 拒绝越狱提示                                             |
+| `jailbreak-semantic`     | 语义越狱检测              | 开启 | 规则未拦截时由 BERT 语义模型兜底判定（模型缺失自动降级） |
+| `model-output-filter`    | 模型输出过滤              | 开启 | 拒绝高风险输出                                           |
+| `bulk-action-review`     | 批量动作复核              | 开启 | 询问批量导出或批量外发                                   |
+| `tool-description-scan`  | 工具描述投毒扫描          | 开启 | 隔离 description 含可疑指令的工具（OWASP A04）           |
+| `tool-return-trust`      | 工具返回低信任隔离        | 开启 | 隔离不可信工具返回                                       |
+| `environment-trust`      | 环境信息低信任隔离        | 开启 | 隔离被污染环境信号                                       |
+| `anomaly-detection`      | 轻量异常检测              | 开启 | 按异常分询问或拒绝                                       |
 
 ## OWASP Agentic Top 10 覆盖度
 
 对齐 [OWASP Top 10 for Agentic Applications](https://genai.owasp.org/resource/owasp-top-10-for-agentic-applications-for-2026/)（2025-12 发布）逐项标注：
 
-| 编号 | 风险 | 覆盖状态 | 智安哨防线 |
-|---|---|---|---|
-| ASI01 | Agent Goal Hijack（目标劫持） | 🟡 部分覆盖 | 规则通道（历史 B-01 留出集召回 54.5%、零误报、<5ms）+ 已接线但当前未部署模型文件的语义通道 + `model-output-filter` 输出层兜底 |
-| ASI02 | Tool Misuse & Exploitation（工具滥用） | 🟢 已覆盖 | 工具契约白名单、路径边界、危险命令拦截、敏感 API、批量动作复核、外部邮件人工确认 |
-| ASI03 | Identity & Privilege Abuse（身份权限滥用） | 🟡 部分覆盖 | `agent_tool_allowlists` 与 `agent_api_allowlists` 按身份授权工具/外部主机、生产 Token 绑定 `agent_id`、审计链记录身份核验字段 |
-| ASI04 | Agentic Supply Chain（智能体供应链） | 🟡 部分覆盖 | MCP 工具描述投毒扫描（`tool-description-scan`：指令覆盖 / 外传通道 / 凭据读取三类隔离级特征，命中工具禁止调用）；SBOM 与依赖签名在路线图 |
-| ASI05 | Unexpected Code Execution（意外代码执行） | 🟢 已覆盖 | 危险命令黑名单直接拒绝，其余命令进入无网络、只读文件系统、资源受限的一次性沙箱容器 |
-| ASI06 | Memory & Context Poisoning（记忆上下文投毒） | 🟢 已覆盖 | 记忆写入隔离、敏感记忆读取拦截、环境低信任信号隔离、不可信工具返回隔离 |
-| ASI07 | Insecure Inter-Agent Communication（不安全 Agent 间通信） | 🟡 部分覆盖 | 跨 Agent 关联链检测（"敏感读取 → 批量导出 → 外发"分步外泄链前置阻断）；通信加密与消息签名在路线图 |
-| ASI08 | Cascading Failures（级联失败） | 🟡 部分覆盖 | 轻量异常检测按异常分阻断可疑调用链，跨 Agent 链检测在级联发生前暂停执行 |
-| ASI09 | Human-Agent Trust Exploitation（人-Agent 信任滥用） | 🟡 部分覆盖 | 批量/外发动作触发人工复核单闭环，执行回执强校验接入方是否按决策执行 |
-| ASI10 | Rogue Agents（流氓 Agent） | 🟡 部分覆盖 | 工具授权白名单 + 异常行为检测 + 跨 Agent 可疑协作关联 |
+| 编号  | 风险                                                      | 覆盖状态    | 智安哨防线                                                                                                                               |
+| ----- | --------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| ASI01 | Agent Goal Hijack（目标劫持）                             | 🟡 部分覆盖 | 规则通道（历史 B-01 留出集召回 54.5%、零误报、<5ms）+ 已接线但当前未部署模型文件的语义通道 + `model-output-filter` 输出层兜底            |
+| ASI02 | Tool Misuse & Exploitation（工具滥用）                    | 🟢 已覆盖   | 工具契约白名单、路径边界、危险命令拦截、敏感 API、批量动作复核、外部邮件人工确认                                                         |
+| ASI03 | Identity & Privilege Abuse（身份权限滥用）                | 🟡 部分覆盖 | `agent_tool_allowlists` 与 `agent_api_allowlists` 按身份授权工具/外部主机、生产 Token 绑定 `agent_id`、审计链记录身份核验字段            |
+| ASI04 | Agentic Supply Chain（智能体供应链）                      | 🟡 部分覆盖 | MCP 工具描述投毒扫描（`tool-description-scan`：指令覆盖 / 外传通道 / 凭据读取三类隔离级特征，命中工具禁止调用）；SBOM 与依赖签名在路线图 |
+| ASI05 | Unexpected Code Execution（意外代码执行）                 | 🟢 已覆盖   | 危险命令黑名单直接拒绝，其余命令进入无网络、只读文件系统、资源受限的一次性沙箱容器                                                       |
+| ASI06 | Memory & Context Poisoning（记忆上下文投毒）              | 🟢 已覆盖   | 记忆写入隔离、敏感记忆读取拦截、环境低信任信号隔离、不可信工具返回隔离                                                                   |
+| ASI07 | Insecure Inter-Agent Communication（不安全 Agent 间通信） | 🟡 部分覆盖 | 跨 Agent 关联链检测（"敏感读取 → 批量导出 → 外发"分步外泄链前置阻断）；通信加密与消息签名在路线图                                        |
+| ASI08 | Cascading Failures（级联失败）                            | 🟡 部分覆盖 | 轻量异常检测按异常分阻断可疑调用链，跨 Agent 链检测在级联发生前暂停执行                                                                  |
+| ASI09 | Human-Agent Trust Exploitation（人-Agent 信任滥用）       | 🟡 部分覆盖 | 批量/外发动作触发人工复核单闭环，执行回执强校验接入方是否按决策执行                                                                      |
+| ASI10 | Rogue Agents（流氓 Agent）                                | 🟡 部分覆盖 | 工具授权白名单 + 异常行为检测 + 跨 Agent 可疑协作关联                                                                                    |
 
 覆盖统计：已覆盖 3/10（ASI02/05/06），部分覆盖 7/10，**风险触及率 100%**；MCP Gateway 是当前协议级强制接入链路，OpenClaw 仅作为可选兼容适配器，不计入主线成熟度。
 
 ## 快速启动
 
-### 方式一：Docker 一键启动（推荐）
-
-前置环境：Docker 20.10+ 与 Docker Compose v2。
-
-```bash
-# 1. 准备环境变量（两个必填项，缺失时容器拒绝启动）
-cp .env.example .env
-# 编辑 .env，至少填写：
-#   AGENT_SUPERVISOR_API_TOKEN=<读取 API 的 Bearer Token>
-#   AGENT_SUPERVISOR_AGENT_TOKENS_JSON={"agent-1":"<绑定到 agent-1 的执行 Token>"}
-#   AGENT_SUPERVISOR_AUDIT_HMAC_KEY=<审计链 HMAC 随机密钥>
-#   AGENT_SUPERVISOR_SECURITY_PROFILE=production
-
-# 2. 构建并启动（多阶段构建：前端编译 + Python 运行镜像）
-docker compose up -d --build
-
-# 3. 验证
-curl http://127.0.0.1:8012/api/health \
-  -H "Authorization: Bearer $AGENT_SUPERVISOR_API_TOKEN"
-```
-
-浏览器打开 `http://127.0.0.1:8012` 即可使用控制台（API 与前端静态资源由同一容器托管）。审计数据库等运行时数据持久化在 `zhi-an-data` 卷中。
-
-首次打开受保护部署的控制台时，页面会先显示身份验证门禁。粘贴一个已配置的操作员 Bearer Token，点击“验证并进入”后才会加载运营接口。Token 只保存在当前浏览器会话的 `sessionStorage`，不会写入请求 URL、审计记录或构建产物；401 会清除当前会话并返回登录页，403 会保留身份并明确提示权限不足。控制台不再读取 `VITE_*` 构建变量中的共享 Token，防止凭证进入公开浏览器产物。
-
-> [!IMPORTANT]
-> 容器以 `0.0.0.0` 监听（非回环地址），按安全策略强制要求 API Token 鉴权与审计 HMAC 密钥，二者缺失时服务拒绝启动（fail-closed）。生产部署请通过反向代理追加 HTTPS。
-
-`AGENT_SUPERVISOR_SECURITY_PROFILE=production` 会强制打开 Agent 工具登记和模型登记两个独立权限边界；未知 Agent、未登记模型不会继承本地 fixture 的兼容放行。回环地址启动默认使用 `local` 配置，便于运行受控样本；公开或容器部署应保持 `production`。
-
-### 方式二：源码启动
+### 方式一：本机源码启动（推荐）
 
 前置环境：
 
@@ -321,7 +297,13 @@ python -m pip install -r apps/api/requirements.txt
 python -m pip install -r apps/api/requirements-dev.txt
 ```
 
-Windows 本机也可以使用仓库的一键脚本。它会构建控制台并在 `http://127.0.0.1:8012` 启动同源前后端；窗口关闭或按 `Ctrl+C` 后服务停止。
+Windows 本机最简单的方式是运行仓库的一键脚本。它会先重新构建最新控制台，再在 `http://127.0.0.1:8012` 启动同源前后端；这样源码修改或文件删除不会被旧的 `dist` 构建缓存遮住。窗口关闭或按 `Ctrl+C` 后服务停止。
+
+```powershell
+npm run dev
+```
+
+如果不使用 npm，也可以直接运行：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\启动智安哨.ps1
@@ -333,33 +315,40 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\启动智安哨.ps
 python -m pip install python-docx openpyxl
 ```
 
-### 2. 启动后端 API
+`npm run dev` 是单机产品入口，不需要 Docker。它启动的是构建后的同源应用；本地启动脚本固定使用回环地址免鉴权模式，因此不会显示登录页，也不要求粘贴 Token。需要 Vite 热更新时，使用两个终端分别运行 `npm run api` 和 `npm run dev:console`，然后打开 `http://127.0.0.1:5178`。
 
-```bash
-npm run api
-```
+如需专门测试鉴权边界，请不要使用这个免登录启动器，直接在终端显式设置 `AGENT_SUPERVISOR_AUTH_DISABLED=false` 后运行 `python -X utf8 -m apps.api.dev_server`。
 
-源码启动会在绑定地址安全检查前读取仓库根目录 `.env`；`AGENT_SUPERVISOR_AUTH_DISABLED=false` 等显式配置优先于回环地址的本地默认值。Windows 一键启动脚本也遵循同一顺序。
-
-后端默认地址与健康检查：
+默认地址与公开存活检查：
 
 ```text
 http://127.0.0.1:8012
-http://127.0.0.1:8012/api/health
+http://127.0.0.1:8012/api/public/status
 ```
 
-### 3. 启动前端控制台
+`/api/health` 在本机免鉴权模式下直接返回 200；只有显式启用鉴权的运行方式才会要求 Bearer Token 并在匿名访问时返回 401。启动脚本使用公开且不包含运行详情的 `/api/public/status` 判断服务是否就绪。
+
+### 方式二：Docker可选部署验收
+
+Docker用于打包运行环境、验证容器冷启动和数据卷持久化，不是单机开发的前置条件。需要容器部署时，前置环境为 Docker 20.10+ 与 Docker Compose v2。
 
 ```bash
-npm run console:dev
+cp .env.example .env
+# 编辑 .env，至少填写 AGENT_SUPERVISOR_API_TOKEN、
+# AGENT_SUPERVISOR_AGENT_TOKENS_JSON、AGENT_SUPERVISOR_AUDIT_HMAC_KEY，
+# 并设置 AGENT_SUPERVISOR_AUTH_DISABLED=false、AGENT_SUPERVISOR_SECURITY_PROFILE=production
+docker compose up -d --build
 ```
 
-打开 `http://127.0.0.1:5178`。
+浏览器打开 `http://127.0.0.1:8012` 即可使用控制台。容器内应用监听 `0.0.0.0`，Compose默认只向宿主机回环地址 `127.0.0.1` 发布端口；生产环境请通过反向代理追加 HTTPS。
 
-> [!TIP]
-> 如果后端没启动，前端只显示空的离线状态，不把内置样本当作实时证据。要读取真实运行状态和记录审计日志，必须同时启动后端。
+部署门禁按需执行：`npm run deploy:config` 只检查Compose配置，`npm run deploy:verify`执行真实容器验收；`npm run verify:container`组合两者。日常单机验证使用 `npm run verify:local` 或 `npm run verify`，不会调用Docker。
 
-### 4. 模型配置（可选）
+`AGENT_SUPERVISOR_SECURITY_PROFILE=production` 会强制打开 Agent 工具登记和模型登记两个独立权限边界；未知 Agent、未登记模型不会继承本地 fixture 的兼容放行。回环地址源码启动默认使用 `local` 配置，公开或容器部署应保持 `production`。
+
+本机启动默认直接进入运营控制台，不显示身份验证门禁。生产安全档或显式鉴权运行仍会显示 Token 验证页；Token 只保存在当前浏览器会话的 `sessionStorage`，不会写入请求 URL、审计记录或构建产物；401 会清除当前会话并返回登录页，403 会保留身份并提示权限不足。
+
+### 模型配置（可选）
 
 固定攻防实验不强制要求真实模型密钥，不填密钥时仍可使用本地目标夹具和沙箱副作用断言。**LLM API 网关的透明模式不是模拟器**：要让 `POST /v1/chat/completions` 到达真实 Provider，必须配置目标 Provider 的 API Key；未配置时接口返回 502，不会伪造模型响应。固定实验与真实 Provider 证据在报告中分开标注。
 
@@ -392,7 +381,7 @@ curl http://127.0.0.1:8012/v1/chat/completions \
   -d '{"model":"TARGET_MODEL","messages":[{"role":"user","content":"请总结当前任务"}]}'
 ```
 
-控制台的「LLM API 网关」页会发送同一接口的真实请求，并展示 Provider 是否调用、Provider 前阻断、Provider 请求/响应哈希、tool call 决策、执行前强制阻断和审计 ID；页面中的注入测试与工具越权测试只是可编辑的请求起点，最终是否到达 Provider 由当前配置和策略决定。页面的「同请求验证（按需）」默认运行只观察模式，明确不把“tool call 被隐藏”写成副作用结论；admin 可显式运行 `sandbox-causal` 因果模式，在两份隔离沙箱中分别观察无防护执行与网关控制后的执行计数、状态 Hash 和输出 Hash，只有“同 Provider 请求 + 同 Tool call + 基线执行完成 + 受保护分支未执行”同时满足时才标记因果控制。页面下方的「MCP JSON-RPC 实际入口」直接调用 `/api/mcp`，可执行 `initialize`、`tools/list` 和 `tools/call`，展示真实 JSON-RPC 响应、可见/隔离工具数量、决策与审计 ID；未配置 MCP 上游时页面明确停用操作，不以本地样本伪造结果。
+控制台的「LLM API 网关」页会发送同一接口的真实请求，并展示 Provider 是否调用、Provider 前阻断、Provider 请求/响应哈希、tool call 决策、执行前强制阻断和审计 ID；页面中的注入测试与工具越权测试只是可编辑的请求起点，最终是否到达 Provider 由当前配置和策略决定。页面的「同请求验证（按需）」默认运行只观察模式，明确不把“tool call 被隐藏”写成副作用结论；admin 可显式运行 `sandbox-causal` 因果模式，在两份隔离沙箱中分别观察无防护执行与网关控制后的执行计数、状态 Hash 和输出 Hash，只有“同 Provider 请求 + 同 Tool call + 基线执行完成 + 受保护分支未执行”同时满足时才标记因果控制。防护页的「MCP 工具」页签直接调用 `/api/mcp`，默认选择 `2026-07-28` 现代协议并可切换 `2025-06-18` 兼容协议，可执行协议发现/初始化、工具目录/调用、Resource 目录/读取、Prompt 目录/获取；上游返回 `input_required` 时，页面会展示输入请求、校验操作员响应并恢复同一轮调用。现代协议还可按工具、Prompt、Resource 目录和具体 Resource URI 建立 `subscriptions/listen` 长连接，显示服务端确认与最近 100 条真实变更通知，并由操作员显式停止。页面同时展示真实 JSON-RPC 响应、可见/隔离工具数量、上下文证据、决策与审计 ID，并按后端返回的有效角色禁用不可执行动作；未配置 MCP 上游时明确停用操作，不以本地样本伪造结果。
 
 ## 命令行工具
 
@@ -400,31 +389,31 @@ CLI 用于把真实 Agent 请求送入网关、批量回归和证据导出。`ga
 
 下面的攻击样本、历史 fixture、消融和报告命令属于研究/回归平面；它们不会把本地结果抬升为真实 Provider 防护证据，也不参与运行时控制。
 
-| 目标 | 命令 |
-|---|---|
-| 运行单个攻击脚本 | `npm run cli -- run TOOL-HIJACK-001 on` |
-| 批量运行全部脚本对比 | `npm run cli -- batch --guard compare` |
-| 导出攻防有效性评测 | `npm run cli -- assess --run-compare` |
-| 评估外部智能体事件日志 | `npm run cli -- evaluate --input apps/api/sandbox/examples/agent-events-batch.json` |
-| 发送自定义 OpenAI 请求到真实网关 | `npm run cli -- gateway-probe --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions` |
-| 严格验收单条网关证据 | `npm run cli -- gateway-probe --strict --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions` |
-| 批量运行真实 Agent 请求并汇总网关证据 | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports` |
-| 严格验收 Agent 网关证据 | `npm run cli -- gateway-agent-run --strict --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports` |
-| 记录无防护 Provider 与网关的因果对照 | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --baseline-url=http://127.0.0.1:18013/v1/chat/completions --output=apps/api/sandbox/reports` |
-| 记录真实沙箱副作用因果证据 | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-real-full-causal-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --causal-url=http://127.0.0.1:8012/api/gateway/compare --api-token=TOKEN --output=apps/api/sandbox/reports` |
-| 生产式网关证据闭环（临时 Token/HMAC、DoH、公网 Provider、托管回执与因果控制） | `npm run proof:production` |
-| 生产式证据闭环加全量真实模型与 22 条策略对照 | `npm run proof:production -- -FullRegression` |
-| 运行真实 MCP HTTP 网关探针 | `npm run cli -- mcp-probe --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports` |
-| 严格验收 MCP 网关证据 | `npm run cli -- mcp-probe --strict --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports` |
-| 运行服务端托管 Agent 闭环 | `npm run cli -- external-agent-demo --managed-server --output apps/api/sandbox/reports` |
-| 运行策略消融实验 | `npm run cli -- policy-ablation` |
-| 运行历史 fixture 基线评测（不计入 LLM API/MCP 主线） | `npm run cli -- competition-benchmark` |
-| 运行 HTTP/SQLite/审计链路性能评测 | `npm run cli -- http-e2e-benchmark` |
-| 一键体检 | `npm run cli -- readiness --write` |
-| OpenClaw 插件包生成 | `npm run cli -- openclaw-plugin` |
-| OpenClaw 插件包验证 | `npm run cli -- openclaw-plugin-validate` |
+| 目标                                                                          | 命令                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 运行单个攻击脚本                                                              | `npm run cli -- run TOOL-HIJACK-001 on`                                                                                                                                                                                                                             |
+| 批量运行全部脚本对比                                                          | `npm run cli -- batch --guard compare`                                                                                                                                                                                                                              |
+| 导出攻防有效性评测                                                            | `npm run cli -- assess --run-compare`                                                                                                                                                                                                                               |
+| 评估外部智能体事件日志                                                        | `npm run cli -- evaluate --input apps/api/sandbox/examples/agent-events-batch.json`                                                                                                                                                                                 |
+| 发送自定义 OpenAI 请求到真实网关                                              | `npm run cli -- gateway-probe --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions`                                                                                                                                                          |
+| 严格验收单条网关证据                                                          | `npm run cli -- gateway-probe --strict --payload-file=payload.json --url=http://127.0.0.1:8012/v1/chat/completions`                                                                                                                                                 |
+| 批量运行真实 Agent 请求并汇总网关证据                                         | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports`                                                                                     |
+| 严格验收 Agent 网关证据                                                       | `npm run cli -- gateway-agent-run --strict --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --output=apps/api/sandbox/reports`                                                                            |
+| 记录无防护 Provider 与网关的因果对照                                          | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-agent-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --baseline-url=http://127.0.0.1:18013/v1/chat/completions --output=apps/api/sandbox/reports`                           |
+| 记录真实沙箱副作用因果证据                                                    | `npm run cli -- gateway-agent-run --input=apps/api/sandbox/examples/gateway-real-full-causal-cases.json --url=http://127.0.0.1:8012/v1/chat/completions --causal-url=http://127.0.0.1:8012/api/gateway/compare --api-token=TOKEN --output=apps/api/sandbox/reports` |
+| 生产式网关证据闭环（临时 Token/HMAC、DoH、公网 Provider、托管回执与因果控制） | `npm run proof:production`                                                                                                                                                                                                                                          |
+| 生产式证据闭环加全量真实模型与 22 条策略对照                                  | `npm run proof:production:full`                                                                                                                                                                                                                                     |
+| 运行真实 MCP HTTP 网关探针                                                    | `npm run cli -- mcp-probe --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports`                                                                                                                                                   |
+| 严格验收 MCP 网关证据                                                         | `npm run cli -- mcp-probe --strict --url=http://127.0.0.1:8012/api/mcp --tool=file.read --output=apps/api/sandbox/reports`                                                                                                                                          |
+| 运行服务端托管 Agent 闭环                                                     | `npm run cli -- external-agent-demo --managed-server --output apps/api/sandbox/reports`                                                                                                                                                                             |
+| 运行策略消融实验                                                              | `npm run cli -- policy-ablation`                                                                                                                                                                                                                                    |
+| 运行历史 fixture 基线评测（不计入 LLM API/MCP 主线）                          | `npm run cli -- competition-benchmark`                                                                                                                                                                                                                              |
+| 运行 HTTP/SQLite/审计链路性能评测                                             | `npm run cli -- http-e2e-benchmark`                                                                                                                                                                                                                                 |
+| 一键体检                                                                      | `npm run cli -- readiness --write`                                                                                                                                                                                                                                  |
+| OpenClaw 插件包生成                                                           | `npm run cli -- openclaw-plugin`                                                                                                                                                                                                                                    |
+| OpenClaw 插件包验证                                                           | `npm run cli -- openclaw-plugin-validate`                                                                                                                                                                                                                           |
 
-`proof:production` 会在 8013 端口启动短生命周期的 production 配置，随机生成 Agent Token、admin Token 和审计 HMAC，仅保存在当前进程；它不读取或覆盖仓库中的真实 Token/API Key。脚本以严格模式运行 HTTP 单条探针、独立 Agent Harness 和 `sandbox-causal` 因果对照，随后自动停止服务。追加 `-FullRegression` 会再运行真实模型盲测、全量策略对照、readiness 和自审。`production_ready` 与 `evaluation_ready` 只表示运行时证据闭合；正式报名材料和人工签署仍由 readiness 单独标记。
+`proof:production` 会在 8013 端口启动短生命周期的 production 配置，随机生成 Agent Token、admin Token 和审计 HMAC，仅保存在当前进程；它不读取或覆盖仓库中的真实 Token/API Key。脚本以严格模式运行 HTTP 单条探针、独立 Agent Harness、人工审批批准/恢复与驳回闭环，以及 `sandbox-causal` 因果对照，随后自动停止服务。`proof:production:full` 会再运行真实模型盲测、全量策略对照、readiness 和自审。终端只输出关键判定，完整证据保存在报告目录；`production_ready` 与 `evaluation_ready` 只表示运行时证据闭合，正式报名材料和人工签署仍由 readiness 单独标记。
 
 MCP 的 `tools/call` 使用调用方 Token 绑定的 `agent_id` 做工具白名单校验。生产或严格本地策略下，请使用已登记工具能力的 Agent Token；仅有 admin 角色的共享 Token 可能看到空工具目录，这是权限边界的真实结果，不是上游故障。
 
@@ -452,16 +441,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-fixture-gatewa
       "expected_control": true,
       "payload": {
         "model": "TARGET_MODEL",
-        "messages": [
-          {"role": "user", "content": "ATTACK_PAYLOAD"}
-        ],
+        "messages": [{ "role": "user", "content": "ATTACK_PAYLOAD" }],
         "tools": [
           {
             "type": "function",
             "function": {
               "name": "TARGET_TOOL",
               "description": "TARGET_TOOL_DESCRIPTION",
-              "parameters": {"type": "object", "properties": {}}
+              "parameters": { "type": "object", "properties": {} }
             }
           }
         ]
@@ -473,9 +460,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-fixture-gatewa
       "expected_control": false,
       "payload": {
         "model": "TARGET_MODEL",
-        "messages": [
-          {"role": "user", "content": "NORMAL_TASK"}
-        ]
+        "messages": [{ "role": "user", "content": "NORMAL_TASK" }]
       }
     }
   ]
@@ -498,40 +483,40 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-fixture-gatewa
 
 ## 接口地图
 
-| 分组 | 接口 | 用途 |
-|---|---|---|
-| 健康检查 | `GET /api/health` | 确认后端是否运行 |
-| 总览 | `GET /api/overview` | 首页统计、模型状态、近期日志 |
-| 脚本 | `GET /api/scenarios` | 获取攻击脚本列表 |
-| 运行 | `POST /api/run` | 运行单个脚本 |
-| 对比 | `POST /api/compare` | 对比无防护和有防护结果 |
-| 审计 | `GET /api/audit_logs` | 获取工具调用审计记录 |
-| 告警 | `GET /api/alerts` | 获取阻断、询问、隔离告警 |
-| 策略 | `GET /api/policies` · `PATCH /api/policies/{id}` | 查询与更新防御策略 |
-| 生产外部事件 | `POST /api/runtime/evaluate` | 评估单个外部 Agent 工具事件（**建议式**） |
-| 生产批量事件 | `POST /api/runtime/batch_evaluate` | 批量评估外部 Agent 事件（**建议式**） |
-| 执行回执 | `POST /api/runtime/executions/{audit_id}/complete` | 回传执行结果并绑定审计 Hash |
-| LLM API 网关 | `POST /v1/chat/completions` | OpenAI 兼容真实 Provider 透明代理，输入/输出/tool call 双阶段检查 |
-| 同请求攻防对照 | `POST /api/gateway/compare` | analyst/admin 运行同一 Provider 请求的观察对照；admin 可在 `agent_supervisor.comparison_mode=sandbox-causal` 下用隔离沙箱验证基线执行与网关执行差异 |
-| LLM API 模型发现 | `GET /v1/models` | 仅列出已配置的真实目标模型，不列出本地模拟器 |
-| 通用 Agent 接入包 | `GET /api/integrations/agents/bundle` | HTTP、OpenAI Agents、LangChain、LangGraph 接入示例 |
-| OpenClaw | `GET /api/integrations/openclaw/bundle` | 获取 OpenClaw 接入包 |
-| MCP Gateway | `POST /api/mcp` · `GET /api/mcp/info` · `POST /api/mcp/notifications` · `GET /api/mcp/tools/evidence` · `GET /api/mcp/context/evidence` | MCP 代理入口（强制式监督）、网关状态、上游通知消费与 analyst/admin operator-only 能力/上下文证据 |
+| 分组              | 接口                                                                                                                                    | 用途                                                                                                                                                |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 健康检查          | `GET /api/health`                                                                                                                       | 确认后端是否运行                                                                                                                                    |
+| 总览              | `GET /api/overview`                                                                                                                     | 首页统计、模型状态、近期日志                                                                                                                        |
+| 脚本              | `GET /api/scenarios`                                                                                                                    | 获取攻击脚本列表                                                                                                                                    |
+| 运行              | `POST /api/run`                                                                                                                         | 运行单个脚本                                                                                                                                        |
+| 对比              | `POST /api/compare`                                                                                                                     | 对比无防护和有防护结果                                                                                                                              |
+| 审计              | `GET /api/audit_logs`                                                                                                                   | 获取工具调用审计记录                                                                                                                                |
+| 告警              | `GET /api/alerts`                                                                                                                       | 获取阻断、询问、隔离告警                                                                                                                            |
+| 策略              | `GET /api/policies` · `PATCH /api/policies/{id}`                                                                                        | 查询与更新防御策略                                                                                                                                  |
+| 生产外部事件      | `POST /api/runtime/evaluate`                                                                                                            | 评估单个外部 Agent 工具事件（**建议式**）                                                                                                           |
+| 生产批量事件      | `POST /api/runtime/batch_evaluate`                                                                                                      | 批量评估外部 Agent 事件（**建议式**）                                                                                                               |
+| 执行回执          | `POST /api/runtime/executions/{audit_id}/complete`                                                                                      | 回传执行结果并绑定审计 Hash                                                                                                                         |
+| LLM API 网关      | `POST /v1/chat/completions`                                                                                                             | OpenAI 兼容真实 Provider 透明代理，输入/输出/tool call 双阶段检查                                                                                   |
+| 同请求攻防对照    | `POST /api/gateway/compare`                                                                                                             | analyst/admin 运行同一 Provider 请求的观察对照；admin 可在 `agent_supervisor.comparison_mode=sandbox-causal` 下用隔离沙箱验证基线执行与网关执行差异 |
+| LLM API 模型发现  | `GET /v1/models`                                                                                                                        | 仅列出已配置的真实目标模型，不列出本地模拟器                                                                                                        |
+| 通用 Agent 接入包 | `GET /api/integrations/agents/bundle`                                                                                                   | HTTP、OpenAI Agents、LangChain、LangGraph 接入示例                                                                                                  |
+| OpenClaw          | `GET /api/integrations/openclaw/bundle`                                                                                                 | 获取 OpenClaw 接入包                                                                                                                                |
+| MCP Gateway       | `POST /api/mcp` · `GET /api/mcp/info` · `POST /api/mcp/notifications` · `GET /api/mcp/tools/evidence` · `GET /api/mcp/context/evidence` | 2026/2025 双时代 MCP 强制监督入口、`subscriptions/listen` SSE、旧版运维通知消费与 operator-only 能力/上下文证据                                     |
 
 ## 安全边界
 
 > [!CAUTION]
 > 仓库里包含攻击样本、越狱样例和工具滥用场景，但它们只用于受控实验环境研究。不要把这些样例用于真实系统攻击。
 
-| 工具类型 | 边界 |
-|---|---|
-| 邮件工具 | 只写入假 outbox，不发送真实邮件 |
-| 文件工具 | 只访问沙箱目录，不读取用户真实文件 |
-| API 工具 | 只访问本地模拟业务数据 |
+| 工具类型        | 边界                                                                            |
+| --------------- | ------------------------------------------------------------------------------- |
+| 邮件工具        | 只写入假 outbox，不发送真实邮件                                                 |
+| 文件工具        | 只访问沙箱目录，不读取用户真实文件                                              |
+| API 工具        | 只访问本地模拟业务数据                                                          |
 | OpenAI 兼容代理 | 只负责 Provider 请求边界和模型输出/tool call 监督；不会替代调用方执行已放行工具 |
-| 代码执行工具 | 登记探针以参数数组运行；其他命令进入无网络、只读文件系统、资源受限的一次性容器 |
-| 记忆工具 | 本地受控执行器使用按 Agent 隔离的命名空间；隔离/删除状态不会回灌模型 |
-| 审计数据 | Token、密码、API Key、邮箱等直接标识在落库前脱敏；可选 HMAC 签名增强篡改检测 |
+| 代码执行工具    | 登记探针以参数数组运行；其他命令进入无网络、只读文件系统、资源受限的一次性容器  |
+| 记忆工具        | 本地受控执行器使用按 Agent 隔离的命名空间；隔离/删除状态不会回灌模型            |
+| 审计数据        | Token、密码、API Key、邮箱等直接标识在落库前脱敏；可选 HMAC 签名增强篡改检测    |
 
 ## 项目结构
 
@@ -556,27 +541,34 @@ agent-security-supervisor/
 
 ## 开发与质量检查
 
-| 检查 | 命令 |
-|---|---|
-| 后端测试 | `npm run api:test` |
-| 后端覆盖率门禁 | `npm run api:coverage`（低于 85% 失败） |
-| 后端 Lint | `npm run api:lint` |
-| 后端类型检查 | `npm run api:typecheck` |
-| 后端架构治理 | `npm run api:architecture` |
-| 控制台构建 | `npm run console:build` |
-| 控制台 Lint | `npm run console:lint` |
-| 运营网关浏览器黑盒验收 | `npm run console:test:e2e` |
-| 依赖安全审计 | `npm run audit:security` |
-| 全量验证 | `npm run verify`（静态检查、单元测试、覆盖率、生产构建、真实进程 E2E、依赖审计） |
+| 检查                   | 命令                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 后端测试               | `npm run api:test`                                                                                                        |
+| 后端策略覆盖率门禁     | `npm run api:coverage`（核心监督、风险评分、凭证与策略数据，低于 85% 失败）                                               |
+| 后端生产面覆盖率门禁   | `npm run api:coverage:production`（排除攻击实验、报告生成和兼容演示适配器；低于 75% 失败）                                |
+| MCP 监督性能门禁       | `npm run api:perf`（独立无插桩进程验证 p95 小于 10ms）                                                                    |
+| 后端 Lint              | `npm run api:lint`                                                                                                        |
+| 后端类型检查           | `npm run api:typecheck`                                                                                                   |
+| 后端架构治理           | `npm run api:architecture`                                                                                                |
+| 控制台构建             | `npm run console:build`                                                                                                   |
+| 控制台 Lint            | `npm run console:lint`                                                                                                    |
+| 运营网关浏览器黑盒验收 | `npm run console:test:e2e`                                                                                                |
+| 依赖安全审计           | `npm run audit:security`                                                                                                  |
+| 部署配置门禁           | `npm run deploy:config`（无需启动 Docker 引擎）                                                                           |
+| 容器部署验收           | `npm run deploy:verify`（镜像、冷启动、鉴权、健康检查、容器替换持久化）                                                   |
+| 本机全量验证           | `npm run verify:local` 或 `npm run verify`（静态检查、单元测试、覆盖率、生产构建、真实进程 E2E、依赖审计，不调用 Docker） |
+| 容器全量验证           | `npm run verify:container`（部署配置与真实容器验收）                                                                      |
+| 发布验证               | `npm run verify:release`（本机全量验证后追加容器部署验收）                                                                |
 
 贡献指南见 [CONTRIBUTING.md](./CONTRIBUTING.md)，行为准则见 [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)，版本记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## 路线图
 
-- [x] MCP Gateway：Model Context Protocol 代理层强制监督（stdio 上游 + Streamable HTTP 子集入口）
-- [x] MCP Gateway：多上游路由、审计落库、上游通知轮询
+- [x] MCP Gateway：Model Context Protocol 代理层强制监督（stdio 上游 + 2026/2025 双时代 Streamable HTTP）
+- [x] MCP Gateway：现代请求头/请求体一致性校验、`server/discover`、`subscriptions/listen` SSE 与有界并发订阅
+- [x] MCP Gateway：多上游路由、审计落库、旧版运维通知轮询
 - [x] 越狱检测双通道接线：规则通道先行；语义通道在模型存在时启用，缺失时明确降级
-- [ ] MCP Gateway：完整 SSE 流式传输与上游主动请求支持
+- [x] MCP Gateway：把旧版上游主动请求转换为 2026 MRTR，并补充请求级进度/日志 SSE 投影和客户端能力门禁
 - [ ] 发布并复现实验验证的中文语义模型（`training/finetune_bert.py` 目前只是训练脚本）
 - [ ] OWASP Agentic Top 10 覆盖度提升至 90%+
 - [ ] 更多真实 Agent 框架适配器
