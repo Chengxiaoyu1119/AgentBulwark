@@ -8,12 +8,16 @@ import re
 import threading
 from collections import OrderedDict
 from copy import deepcopy
+from dataclasses import dataclass
+from functools import partial
+from inspect import signature
 from time import perf_counter
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 from apps.api.agent_supervisor.domains.governance.skill_scanner import POLICY_ID as SKILL_SCAN_POLICY_ID
 from apps.api.agent_supervisor.domains.governance.skill_scanner import (
+    VERDICT_QUARANTINE,
     context_scan_enabled,
     project_mcp_context_response,
     scan_mcp_context_response,
@@ -28,19 +32,28 @@ from apps.api.agent_supervisor.domains.governance.tool_contract import (
 )
 from apps.api.agent_supervisor.domains.governance.tool_registry import resolve_tool_call
 from apps.api.agent_supervisor.mcp_gateway.audit import audit_backend_available, record_gateway_tool_call
-from apps.api.agent_supervisor.mcp_gateway.config import gateway_max_message_bytes, gateway_network_mode
+from apps.api.agent_supervisor.mcp_gateway.config import (
+    gateway_max_message_bytes,
+    gateway_mrtr_timeout_seconds,
+    gateway_network_mode,
+    gateway_request_state_secret,
+)
 from apps.api.agent_supervisor.mcp_gateway.interceptor import (
     BLOCKED_DECISIONS,
     build_blocked_response,
     evaluate_tools_call,
     validate_tool_arguments,
 )
+from apps.api.agent_supervisor.mcp_gateway.mrtr import RequestStateCodec, RequestStateError, validate_mrtr_retry_fields
 from apps.api.agent_supervisor.mcp_gateway.router import (
     CONTEXT_LIST_METHODS,
     DEFAULT_ROUTE,
     UpstreamRouter,
 )
-from apps.api.agent_supervisor.mcp_gateway.upstream import StdioMcpUpstream, StdioUpstreamError
+from apps.api.agent_supervisor.mcp_gateway.upstream import (
+    StdioMcpUpstream,
+    StdioUpstreamError,
+)
 from apps.api.agent_supervisor.storage.data import get_policy_settings
 
 GATEWAY_VERSION = "0.2.0"
@@ -61,6 +74,310 @@ SAFE_NOTIFICATION_METHODS = frozenset(
 )
 MCP_SAFE_METHOD_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,160}$")
 MCP_NOTIFICATION_SAFE_TEXT_CHARS = 512
+MRTR_INPUT_METHODS = frozenset({"elicitation/create", "sampling/createMessage", "roots/list"})
+
+
+@dataclass(frozen=True)
+class _McpInputEvent:
+    key: str
+    message: dict[str, Any]
+    generation: int
+
+
+class _PendingCancellationSignal:
+    """Expose the *current* HTTP cancellation state to a long-lived MRTR worker.
+
+    A modern request can return ``input_required`` and continue on a later HTTP
+    retry.  Passing the first request's Event directly to the upstream would
+    cancel that worker as soon as the hand-off response is closed.  This small
+    signal follows the pending execution instead, so each retry can attach its
+    own disconnect event without terminating the inter-round worker.
+    """
+
+    def __init__(self, pending: "_PendingMcpExecution") -> None:
+        self.pending = pending
+
+    def is_set(self) -> bool:
+        return self.pending._cancelled()
+
+
+class _PendingMcpExecution:
+    """Keep one legacy stdio call alive while a modern client answers it."""
+
+    def __init__(
+        self,
+        *,
+        pending_id: str,
+        timeout: float,
+        cancel_event: threading.Event | None = None,
+        on_close: Callable[[], None] | None = None,
+    ) -> None:
+        self.pending_id = pending_id
+        self.timeout = timeout
+        self.condition = threading.Condition()
+        self.current_event: _McpInputEvent | None = None
+        self.responses: dict[str, Any] = {}
+        self.response_errors: dict[str, dict[str, Any]] = {}
+        self.generation = 0
+        self.done = False
+        self.result: dict[str, Any] | None = None
+        self.error: BaseException | None = None
+        self.closed = False
+        self.cancel_event = cancel_event
+        self.notification_sink: Callable[[dict[str, Any]], None] | None = None
+        self.progress_token: Any = None
+        self.on_close = on_close
+
+    def bind_notification_sink(
+        self,
+        sink: Callable[[dict[str, Any]], None] | None,
+        progress_token: Any = None,
+    ) -> None:
+        """Route legacy notifications to the currently active HTTP retry."""
+
+        with self.condition:
+            self.notification_sink = sink
+            self.progress_token = progress_token
+
+    def publish_notification(self, notification: dict[str, Any]) -> None:
+        with self.condition:
+            sink = self.notification_sink
+            progress_token = self.progress_token
+        if sink is None:
+            return
+        projected = notification
+        if str(notification.get("method") or "") == "notifications/progress":
+            if progress_token is None:
+                return
+            raw_params = notification.get("params")
+            params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
+            projected = {**notification, "params": {**params, "progressToken": progress_token}}
+        sink(projected)
+
+    def server_request_handler(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        method = str(message.get("method") or "")
+        if method not in MRTR_INPUT_METHODS:
+            with self.condition:
+                self.error = StdioUpstreamError(f"上游 server request 方法不受现代 MRTR 支持：{method}")
+                self.closed = True
+                self.condition.notify_all()
+            return None
+        raw_params = message.get("params")
+        if raw_params is not None and not isinstance(raw_params, dict):
+            with self.condition:
+                self.error = StdioUpstreamError("上游 MRTR inputRequest.params 不是对象。")
+                self.closed = True
+                self.condition.notify_all()
+            return None
+        input_params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
+        if context_scan_enabled():
+            try:
+                serialized = json.dumps(input_params, ensure_ascii=False, separators=(",", ":"), default=str)
+            except (TypeError, ValueError, RecursionError):
+                serialized = "[mcp-input-request-serialization-failure]"
+            scan = scan_text(serialized, quarantine_on_truncate=True)
+            if scan.verdict == VERDICT_QUARANTINE:
+                with self.condition:
+                    self.error = StdioUpstreamError(
+                        "上游 MRTR inputRequest 命中不可信上下文隔离策略：" + ",".join(scan.signals)
+                    )
+                    self.closed = True
+                    self.condition.notify_all()
+                return None
+        key = _input_request_key(message.get("id"), self.current_event.key if self.current_event else "")
+        with self.condition:
+            self.generation += 1
+            event = _McpInputEvent(key=key, message=deepcopy(message), generation=self.generation)
+            self.current_event = event
+            self.condition.notify_all()
+            deadline = perf_counter() + self.timeout
+            while (
+                key not in self.responses
+                and key not in self.response_errors
+                and not self.closed
+                and not self._cancelled()
+            ):
+                remaining = deadline - perf_counter()
+                if remaining <= 0:
+                    self.error = StdioUpstreamError("现代 MCP input_required 等待客户端响应超时。")
+                    self.closed = True
+                    self.condition.notify_all()
+                    return None
+                self.condition.wait(timeout=min(remaining, 0.1))
+            # A capability rejection deliberately closes the pending slot
+            # after queueing ``response_errors``.  Cancellation still wins,
+            # but a queued protocol error must be sent before treating close
+            # as a transport abort.
+            if self._cancelled():
+                self.closed = True
+                self.condition.notify_all()
+                return None
+            response_error = self.response_errors.pop(key, None)
+            if response_error is not None:
+                self.current_event = None
+                return {"error": response_error}
+            if self.closed:
+                self.current_event = None
+                self.condition.notify_all()
+                return None
+            value = self.responses.pop(key)
+            self.current_event = None
+            return {"result": value}
+
+    def wait_for_update(self, previous_generation: int, timeout: float) -> tuple[str, _McpInputEvent | dict[str, Any] | BaseException | None]:
+        deadline = perf_counter() + timeout
+        with self.condition:
+            while not self.done and self.generation <= previous_generation and not self._cancelled():
+                remaining = deadline - perf_counter()
+                if remaining <= 0:
+                    return "timeout", None
+                self.condition.wait(timeout=min(remaining, 0.1))
+            if self._cancelled():
+                self.closed = True
+                self.condition.notify_all()
+                return "cancelled", None
+            if self.current_event is not None and self.generation > previous_generation:
+                return "input", self.current_event
+            if self.done:
+                if self.error is not None:
+                    return "error", self.error
+                return "complete", self.result or {}
+            return "timeout", None
+
+    def provide(self, expected_generation: int, responses: dict[str, Any], expected_key: str = "") -> None:
+        with self.condition:
+            self._validate_provided_locked(expected_generation, responses, expected_key)
+            assert self.current_event is not None
+            self.responses[self.current_event.key] = responses[self.current_event.key]
+            self.condition.notify_all()
+
+    def validate(self, expected_generation: int, responses: dict[str, Any], expected_key: str = "") -> None:
+        with self.condition:
+            self._validate_provided_locked(expected_generation, responses, expected_key)
+
+    def reject(self, expected_generation: int, error: dict[str, Any]) -> None:
+        """Answer the current legacy server request with a protocol error."""
+
+        with self.condition:
+            event = self.current_event
+            if event is None or event.generation != expected_generation:
+                return
+            self.response_errors[event.key] = dict(error)
+            self.condition.notify_all()
+
+    def _validate_provided_locked(self, expected_generation: int, responses: dict[str, Any], expected_key: str) -> None:
+        if not isinstance(responses, dict):
+            raise RequestStateError("inputResponses 必须是对象。")
+        event = self.current_event
+        if event is None or event.generation != expected_generation:
+            raise RequestStateError("requestState 不再对应当前等待中的输入。")
+        if expected_key and event.key != expected_key:
+            raise RequestStateError("requestState inputRequest 键不匹配。")
+        if set(responses) != {event.key}:
+            raise RequestStateError("inputResponses 必须只包含当前 inputRequest 的键。")
+        _validate_mrtr_input_response(str(event.message.get("method") or ""), responses[event.key])
+
+    def finish(self, *, result: dict[str, Any] | None = None, error: BaseException | None = None) -> None:
+        with self.condition:
+            self.result = result
+            self.error = error
+            self.done = True
+            self.notification_sink = None
+            self.progress_token = None
+            self.condition.notify_all()
+
+    def close(self) -> None:
+        release: Callable[[], None] | None = None
+        with self.condition:
+            self.closed = True
+            self.notification_sink = None
+            self.progress_token = None
+            release = self.on_close
+            self.on_close = None
+            self.condition.notify_all()
+        if release is not None:
+            release()
+
+    def attach_cancel_event(self, cancel_event: threading.Event | None) -> None:
+        """Bind cancellation to the current HTTP round-trip.
+
+        A pending MRTR execution survives the ``input_required`` response so a
+        later retry can provide the answer.  The event therefore belongs to a
+        single HTTP round-trip and must be detached before that response is
+        returned to the client.
+        """
+
+        with self.condition:
+            self.cancel_event = cancel_event
+            self.condition.notify_all()
+
+    def detach_cancel_event(self) -> None:
+        with self.condition:
+            self.cancel_event = None
+
+    def _cancelled(self) -> bool:
+        return self.cancel_event is not None and self.cancel_event.is_set()
+
+
+def _input_request_key(request_id: Any, previous: str = "") -> str:
+    raw = str(request_id if request_id is not None else "")
+    if raw and MCP_SAFE_METHOD_RE.fullmatch(raw):
+        return raw
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+    return f"input-{digest}" if not previous else f"input-{digest}-{previous[-6:]}"
+
+
+def _modern_request_hash(method: str, params: dict[str, Any]) -> str:
+    """Hash the original method/parameters, excluding round-trip metadata."""
+    material = {key: value for key, value in params.items() if key not in {"_meta", "inputResponses", "requestState"}}
+    serialized = json.dumps(
+        {"method": method, "params": material},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _validate_mrtr_input_response(method: str, value: Any) -> None:
+    """Reject malformed/oversized client input before it reaches stdio."""
+    if not isinstance(value, dict):
+        raise RequestStateError("inputResponses 的每个值必须是对象。")
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str).encode("utf-8")
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise RequestStateError("inputResponses 无法编码。") from exc
+    if len(encoded) > 256 * 1024:
+        raise RequestStateError("inputResponses 单项超过安全大小上限。")
+    if method == "elicitation/create":
+        action = value.get("action")
+        if action is not None and action not in {"accept", "decline", "cancel"}:
+            raise RequestStateError("elicitation inputResponses.action 无效。")
+    elif method == "roots/list":
+        roots = value.get("roots")
+        if roots is not None and (not isinstance(roots, list) or len(roots) > 256):
+            raise RequestStateError("roots inputResponses.roots 超过安全范围。")
+
+
+def _modern_forward_metadata(params: dict[str, Any]) -> dict[str, Any]:
+    """Forward only validated request-scoped controls to the legacy child."""
+
+    raw_metadata = params.get("_meta")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    forwarded: dict[str, Any] = {}
+    for key in ("progressToken", "io.modelcontextprotocol/logLevel"):
+        if metadata.get(key) is not None:
+            forwarded[key] = metadata[key]
+    return forwarded
+
+
+def _required_client_capability(input_method: str) -> str:
+    return {
+        "elicitation/create": "elicitation",
+        "sampling/createMessage": "sampling",
+        "roots/list": "roots",
+    }.get(input_method, "")
 
 
 def _normalize_mcp_method(value: Any) -> str:
@@ -227,6 +544,8 @@ class McpGateway:
         allow_side_effect_notifications: bool = False,
         session_isolation: bool = False,
         max_sessions: int = 128,
+        _retain_parent_session: Callable[[], None] | None = None,
+        _release_parent_session: Callable[[], None] | None = None,
     ) -> None:
         if router is not None:
             self._router = router
@@ -246,6 +565,15 @@ class McpGateway:
         self._max_sessions = max(1, min(bounded_max_sessions, 1024))
         self._session_lock = threading.Lock()
         self._session_gateways: OrderedDict[tuple[str, str], McpGateway] = OrderedDict()
+        self._session_leases: dict[tuple[str, str], int] = {}
+        self._retain_parent_session = _retain_parent_session
+        self._release_parent_session = _release_parent_session
+        self._legacy_bridge_lock = threading.Lock()
+        self._legacy_bridge_initialized = False
+        self._mrtr_timeout = gateway_mrtr_timeout_seconds()
+        self._mrtr_codec = RequestStateCodec(gateway_request_state_secret(), ttl_seconds=self._mrtr_timeout)
+        self._mrtr_lock = threading.Lock()
+        self._mrtr_pending: dict[str, _PendingMcpExecution] = {}
         self._stats_lock = threading.Lock()
         self._stats = {
             "messages": 0,
@@ -274,6 +602,62 @@ class McpGateway:
     def allow_side_effect_notifications(self) -> bool:
         return self._allow_side_effect_notifications
 
+    @property
+    def server_name(self) -> str:
+        return self._server_name
+
+    @property
+    def server_version(self) -> str:
+        return GATEWAY_VERSION
+
+    def ensure_modern_bridge(
+        self,
+        *,
+        agent_id: str,
+        session_id: str,
+        client_info: dict[str, str],
+    ) -> None:
+        """Initialize 2025-era stdio children behind a modern HTTP request.
+
+        The HTTP side is stateless in MCP 2026-07-28, but configured stdio
+        servers may still require the legacy initialize handshake.  The bridge
+        intentionally advertises no sampling/elicitation/roots capabilities,
+        so a legacy child has no basis to issue server requests that modern MCP
+        has replaced with MRTR.
+        """
+
+        normalized_agent = str(agent_id or "mcp-gateway").strip() or "mcp-gateway"
+        normalized_session = _normalize_session_id(session_id)
+        if self._session_isolation:
+            if not normalized_session:
+                raise ValueError("现代 MCP 兼容桥需要稳定的 Agent 会话标识。")
+            child = self._session_gateway(normalized_agent, normalized_session, lease=True)
+            try:
+                child.ensure_modern_bridge(
+                    agent_id=normalized_agent,
+                    session_id=normalized_session,
+                    client_info=client_info,
+                )
+            finally:
+                self._release_session(normalized_agent, normalized_session)
+            return
+
+        with self._legacy_bridge_lock:
+            if self._legacy_bridge_initialized:
+                return
+            safe_name = str(client_info.get("name") or "zhi-an-modern-http-client")[:256]
+            safe_version = str(client_info.get("version") or "1.0.0")[:128]
+            self._handle_initialize(
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": safe_name, "version": safe_version},
+                },
+                None,
+            )
+            self._router.notify_all("notifications/initialized", {})
+            self._legacy_bridge_initialized = True
+
     def stats(self) -> dict[str, int]:
         with self._stats_lock:
             combined = dict(self._stats)
@@ -290,16 +674,60 @@ class McpGateway:
 
         with self._session_lock:
             active_sessions = len(self._session_gateways)
+            leased_sessions = sum(1 for count in self._session_leases.values() if count > 0)
         return {
             "enabled": self._session_isolation,
             "scope": "agent+session" if self._session_isolation else "gateway-shared",
             "active_sessions": active_sessions,
             "max_sessions": self._max_sessions,
             "child_process_per_session": self._session_isolation,
+            "leased_sessions": leased_sessions,
         }
+
+    def pin_session(self, *, agent_id: str, session_id: str) -> None:
+        """Prevent an active SSE subscription's child from LRU eviction."""
+
+        if not self._session_isolation:
+            return
+        normalized_agent = str(agent_id or "mcp-gateway").strip() or "mcp-gateway"
+        normalized_session = _normalize_session_id(session_id)
+        if not normalized_session:
+            raise ValueError("MCP 订阅需要稳定的会话标识。")
+        self._session_gateway(normalized_agent, normalized_session, lease=True)
+
+    def unpin_session(self, *, agent_id: str, session_id: str) -> None:
+        if not self._session_isolation:
+            return
+        self._release_session(agent_id, session_id)
 
     def route_names(self) -> list[str]:
         return self._router.route_names()
+
+    def modern_tool_definition(
+        self,
+        tool_name: str,
+        *,
+        agent_id: str,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        """Return the current schema used for modern HTTP header validation."""
+
+        normalized_agent = str(agent_id or "mcp-gateway").strip() or "mcp-gateway"
+        normalized_session = _normalize_session_id(session_id)
+        if self._session_isolation:
+            if not normalized_session:
+                return None
+            child = self._session_gateway(normalized_agent, normalized_session, lease=True)
+            try:
+                return child.modern_tool_definition(
+                    tool_name,
+                    agent_id=normalized_agent,
+                    session_id=normalized_session,
+                )
+            finally:
+                self._release_session(normalized_agent, normalized_session)
+        self._router.ensure_catalog()
+        return self._router.tool_definition(tool_name)
 
     def notifications(
         self,
@@ -522,6 +950,10 @@ class McpGateway:
         *,
         agent_id: str = "mcp-gateway",
         session_id: str | None = None,
+        modern: bool = False,
+        client_capabilities: dict[str, Any] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, Any] | None:
         """处理单条 JSON-RPC 消息；通知返回 None，请求返回响应。
 
@@ -543,8 +975,19 @@ class McpGateway:
             raise ValueError(f"MCP 消息超过 {gateway_max_message_bytes()} 字节安全上限。")
         session_id = _normalize_session_id(session_id) or f"mcp-request-{uuid4().hex}"
         if self._session_isolation:
-            scoped_gateway = self._session_gateway(agent_id, session_id)
-            scoped_response = scoped_gateway.handle(message, agent_id=agent_id, session_id=session_id)
+            scoped_gateway = self._session_gateway(agent_id, session_id, lease=True)
+            try:
+                scoped_response = scoped_gateway.handle(
+                    message,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    modern=modern,
+                    client_capabilities=client_capabilities,
+                    progress_callback=progress_callback,
+                    cancel_event=cancel_event,
+                )
+            finally:
+                self._release_session(agent_id, session_id)
             if isinstance(scoped_response, dict) and isinstance(scoped_response.get("result"), dict):
                 marker = scoped_response["result"].setdefault("zhiAnSentinel", {})
                 if isinstance(marker, dict):
@@ -561,6 +1004,11 @@ class McpGateway:
         if not isinstance(params, dict):
             params = {}
         client_id = _normalize_mcp_client_id(message)
+        if modern:
+            try:
+                validate_mrtr_retry_fields(method, params)
+            except RequestStateError as exc:
+                return self._mrtr_error_response(client_id, str(exc))
 
         with self._stats_lock:
             self._stats["messages"] += 1
@@ -576,6 +1024,12 @@ class McpGateway:
                 agent_id=agent_id,
                 session_id=session_id,
                 notification=is_notification,
+                modern=modern,
+                input_responses=params.get("inputResponses") if modern else None,
+                request_state=params.get("requestState") if modern else None,
+                client_capabilities=client_capabilities,
+                progress_callback=progress_callback,
+                cancel_event=cancel_event,
             )
 
         if is_notification:
@@ -624,11 +1078,17 @@ class McpGateway:
             return {
                 "jsonrpc": "2.0",
                 "id": client_id,
-                "result": self._router.list_tools(agent_id=agent_id),
+                "result": self._router.list_tools(agent_id=agent_id, cancel_event=cancel_event),
             }
 
         if method in CONTEXT_LIST_METHODS:
-            response = self._router.list_context(method, params, client_id=client_id, agent_id=agent_id)
+            response = self._router.list_context(
+                method,
+                params,
+                client_id=client_id,
+                agent_id=agent_id,
+                cancel_event=cancel_event,
+            )
             return self._guard_context_response(
                 method,
                 response,
@@ -704,8 +1164,38 @@ class McpGateway:
                 },
             }
         route_name, upstream = routed_context
-        forward_params = {key: value for key, value in params.items() if key != "zhiAnRoute"}
-        response = upstream.request(method, forward_params, client_id=client_id)
+        forward_params = {
+            key: value
+            for key, value in params.items()
+            if key not in {"zhiAnRoute", "_meta", "inputResponses", "requestState"}
+        }
+        if modern:
+            forwarded_metadata = _modern_forward_metadata(params)
+            if forwarded_metadata:
+                forward_params["_meta"] = forwarded_metadata
+        if modern and method in {"prompts/get", "resources/read"}:
+            exchange = self._modern_upstream_exchange(
+                upstream,
+                method,
+                forward_params,
+                client_id=client_id,
+                agent_id=agent_id,
+                session_id=session_id,
+                request_state=params.get("requestState"),
+                input_responses=params.get("inputResponses"),
+                request_hash=_modern_request_hash(method, forward_params),
+                intent_audit_id="",
+                client_capabilities=client_capabilities,
+                progress_callback=progress_callback,
+                cancel_event=cancel_event,
+            )
+            if exchange["kind"] in {"input_required", "error"}:
+                return exchange["response"]
+            if exchange["kind"] == "cancelled":
+                return None
+            response = exchange["response"]
+        else:
+            response = upstream.request(method, forward_params, client_id=client_id)
         return self._guard_context_response(
             method,
             response,
@@ -716,14 +1206,20 @@ class McpGateway:
         )
 
     def close(self) -> None:
+        with self._mrtr_lock:
+            pending = list(self._mrtr_pending.values())
+            self._mrtr_pending.clear()
+        for item in pending:
+            item.close()
         with self._session_lock:
             children = list(self._session_gateways.values())
             self._session_gateways.clear()
+            self._session_leases.clear()
         for child in children:
             child.close()
         self._router.close()
 
-    def _session_gateway(self, agent_id: str, session_id: str) -> "McpGateway":
+    def _session_gateway(self, agent_id: str, session_id: str, *, lease: bool = False) -> "McpGateway":
         """Get or create the isolated Gateway instance for one Agent session.
 
         The child owns a cloned route set, so its MCP initialize handshake,
@@ -732,15 +1228,32 @@ class McpGateway:
         pool and aggregates operator-visible statistics.
         """
 
-        key = (str(agent_id or "mcp-gateway"), session_id)
+        normalized_agent = str(agent_id or "mcp-gateway").strip() or "mcp-gateway"
+        normalized_session = _normalize_session_id(session_id)
+        if not normalized_session:
+            raise ValueError("MCP 会话标识不能为空。")
+        key = (normalized_agent, normalized_session)
         evicted: McpGateway | None = None
         with self._session_lock:
             existing = self._session_gateways.get(key)
             if existing is not None:
                 self._session_gateways.move_to_end(key)
+                if lease:
+                    self._session_leases[key] = self._session_leases.get(key, 0) + 1
                 return existing
             if len(self._session_gateways) >= self._max_sessions:
-                _evicted_key, evicted = self._session_gateways.popitem(last=False)
+                evictable_key = next(
+                    (
+                        candidate
+                        for candidate in self._session_gateways
+                        if self._session_leases.get(candidate, 0) <= 0
+                    ),
+                    None,
+                )
+                if evictable_key is None:
+                    raise ValueError("MCP 会话池已被活动订阅或请求占满，请等待活动请求结束或关闭空闲订阅后重试。")
+                evicted = self._session_gateways.pop(evictable_key)
+                self._session_leases.pop(evictable_key, None)
             child = McpGateway(
                 router=self._router.clone(),
                 guard_enabled=self._guard_enabled,
@@ -749,11 +1262,37 @@ class McpGateway:
                 allow_side_effect_notifications=self._allow_side_effect_notifications,
                 session_isolation=False,
                 max_sessions=self._max_sessions,
+                _retain_parent_session=partial(self._retain_session_key, key),
+                _release_parent_session=partial(self._release_session_key, key),
             )
             self._session_gateways[key] = child
+            if lease:
+                self._session_leases[key] = self._session_leases.get(key, 0) + 1
         if evicted is not None:
             evicted.close()
         return child
+
+    def _retain_session_key(self, key: tuple[str, str]) -> None:
+        with self._session_lock:
+            if key not in self._session_gateways:
+                raise ValueError("MCP 会话已经失效。")
+            self._session_leases[key] = self._session_leases.get(key, 0) + 1
+            self._session_gateways.move_to_end(key)
+
+    def _release_session_key(self, key: tuple[str, str]) -> None:
+        with self._session_lock:
+            count = self._session_leases.get(key, 0)
+            if count <= 1:
+                self._session_leases.pop(key, None)
+            else:
+                self._session_leases[key] = count - 1
+
+    def _release_session(self, agent_id: str, session_id: str) -> None:
+        key = (
+            str(agent_id or "mcp-gateway").strip() or "mcp-gateway",
+            _normalize_session_id(session_id),
+        )
+        self._release_session_key(key)
 
     # -- 内部 ---------------------------------------------------------------
 
@@ -779,6 +1318,12 @@ class McpGateway:
         agent_id: str,
         session_id: str,
         notification: bool = False,
+        modern: bool = False,
+        input_responses: Any = None,
+        request_state: Any = None,
+        client_capabilities: dict[str, Any] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> dict[str, Any] | None:
         with self._stats_lock:
             self._stats["tool_calls"] += 1
@@ -1030,7 +1575,19 @@ class McpGateway:
         # reconcile the upstream execution instead of mistaking a missing log
         # for a call that never happened.
         intent_audit_ref: dict[str, Any] | None = None
-        if self._audit_enabled and decision is not None:
+        state_preview: dict[str, Any] | None = None
+        if modern and request_state is not None:
+            try:
+                if not isinstance(request_state, str):
+                    raise RequestStateError("requestState 必须是字符串。")
+                state_preview = self._mrtr_codec.verify(request_state)
+            except RequestStateError as exc:
+                return self._mrtr_error_response(client_id, str(exc))
+            intent_id = str(state_preview.get("intent_audit_id") or "")
+            if intent_id:
+                intent_audit_ref = {"audit_id": intent_id}
+
+        if self._audit_enabled and decision is not None and state_preview is None:
             intent_audit_ref = self._audit(
                 params=params,
                 decision=decision,
@@ -1058,12 +1615,74 @@ class McpGateway:
 
         with self._stats_lock:
             self._stats["forwarded_tool_calls"] += 1
+        upstream_params = {key: value for key, value in params.items() if key not in {"_meta", "inputResponses", "requestState"}}
+        # Only request-scoped progress/log controls cross the compatibility
+        # bridge. Modern client identity and capability declarations remain at
+        # the authenticated HTTP boundary.
+        if modern:
+            forwarded_metadata = _modern_forward_metadata(params)
+            if forwarded_metadata:
+                upstream_params["_meta"] = forwarded_metadata
         try:
-            if notification:
-                upstream.notify("tools/call", params)
+            if modern:
+                exchange = self._modern_upstream_exchange(
+                    upstream,
+                    "tools/call",
+                    upstream_params,
+                    client_id=client_id,
+                    agent_id=agent_id,
+                    session_id=session_id,
+                    request_state=request_state,
+                    input_responses=input_responses,
+                    request_hash=_modern_request_hash("tools/call", upstream_params),
+                    intent_audit_id=str((intent_audit_ref or {}).get("audit_id") or ""),
+                    client_capabilities=client_capabilities,
+                    progress_callback=progress_callback,
+                    cancel_event=cancel_event,
+                )
+                if exchange["kind"] == "input_required":
+                    return exchange["response"]
+                if exchange["kind"] == "cancelled":
+                    return None
+                if exchange["kind"] == "error":
+                    exchange_intent_id = str(exchange.get("intent_audit_id") or (intent_audit_ref or {}).get("audit_id") or "")
+                    error_response = exchange["response"]
+                    raw_error = error_response.get("error") if isinstance(error_response, dict) else None
+                    error_code = raw_error.get("code") if isinstance(raw_error, dict) else "unknown"
+                    result_audit_ref = (
+                        self._audit(
+                            params=params,
+                            decision=decision,
+                            forwarded=True,
+                            detection_latency_ms=detection_latency_ms,
+                            agent_id=agent_id or "mcp-gateway",
+                            session_id=session_id,
+                            client_request_id=client_id,
+                            upstream_route=route_name,
+                            upstream_error=f"modern-protocol-error:{error_code}",
+                            execution_phase="result",
+                            intent_audit_id=exchange_intent_id,
+                        )
+                        if decision is not None and exchange_intent_id and exchange.get("terminal") is True
+                        else None
+                    )
+                    if isinstance(raw_error, dict):
+                        raw_data = raw_error.get("data")
+                        error_data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
+                        marker = error_data.setdefault("zhiAnSentinel", {})
+                        if isinstance(marker, dict):
+                            marker["intentAuditId"] = exchange_intent_id
+                            marker["resultAuditId"] = str((result_audit_ref or {}).get("audit_id") or "")
+                        raw_error["data"] = error_data
+                    return exchange["response"]
+                response = exchange["response"]
+                if exchange.get("intent_audit_id") and not intent_audit_ref:
+                    intent_audit_ref = {"audit_id": str(exchange["intent_audit_id"])}
+            elif notification:
+                upstream.notify("tools/call", upstream_params)
                 response = None
             else:
-                response = upstream.request("tools/call", params, client_id=client_id)
+                response = upstream.request("tools/call", upstream_params, client_id=client_id)
         except Exception as exc:  # noqa: BLE001 - 上游异常转成 JSON-RPC 错误并留痕
             if decision is not None:
                 self._audit(
@@ -1160,6 +1779,278 @@ class McpGateway:
             if context_quarantined:
                 return response
         return response
+
+    def _mrtr_error_response(self, client_id: Any, message: str) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": client_id,
+            "error": {
+                "code": -32602,
+                "message": "MCP requestState 或 inputResponses 无效。",
+                "data": {"reason": message},
+            },
+        }
+
+    def _modern_upstream_exchange(
+        self,
+        upstream: Any,
+        method: str,
+        params: dict[str, Any],
+        *,
+        client_id: Any,
+        agent_id: str,
+        session_id: str,
+        request_state: Any,
+        input_responses: Any,
+        request_hash: str,
+        intent_audit_id: str,
+        client_capabilities: dict[str, Any] | None,
+        progress_callback: Callable[[dict[str, Any]], None] | None,
+        cancel_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
+        """Run or resume one legacy child call through modern MRTR."""
+
+        if cancel_event is not None and cancel_event.is_set():
+            return {"kind": "cancelled", "response": None, "terminal": True}
+
+        pending: _PendingMcpExecution | None = None
+        state_payload: dict[str, Any] | None = None
+        if request_state is not None:
+            try:
+                state_token = str(request_state)
+                state_payload = self._mrtr_codec.verify(state_token)
+                if str(state_payload.get("agent_id") or "") != str(agent_id or "mcp-gateway"):
+                    raise RequestStateError("requestState Agent 绑定不匹配。")
+                if str(state_payload.get("session_id") or "") != str(session_id):
+                    raise RequestStateError("requestState 会话绑定不匹配。")
+                if str(state_payload.get("request_hash") or "") != request_hash:
+                    raise RequestStateError("requestState 与原始 tools/call 不匹配。")
+                # Consume only after all bindings match. A caller that presents
+                # a valid state with a different request must not invalidate the
+                # legitimate retry racing on the same HTTP session.
+                pending_id = str(state_payload.get("pending_id") or "")
+                expected_generation = int(state_payload.get("generation") or 0)
+                expected_key = str(state_payload.get("expected_key") or "")
+                with self._mrtr_lock:
+                    pending = self._mrtr_pending.get(pending_id)
+                if pending is None:
+                    raise RequestStateError("requestState 对应的上游等待已过期或不在当前桥实例。")
+                pending.attach_cancel_event(cancel_event)
+                try:
+                    pending.validate(expected_generation, input_responses, expected_key)
+                    state_payload = self._mrtr_codec.consume(state_token)
+                    metadata = params.get("_meta")
+                    metadata = metadata if isinstance(metadata, dict) else {}
+                    pending.bind_notification_sink(progress_callback, metadata.get("progressToken"))
+                    pending.provide(expected_generation, input_responses, expected_key)
+                except (RequestStateError, TypeError, ValueError):
+                    # A rejected or raced retry must not leave its disconnect
+                    # signal attached to the still-pending execution.  The
+                    # legitimate retry remains alive and can attach its own
+                    # request-scoped signal.
+                    pending.detach_cancel_event()
+                    raise
+                previous_generation = expected_generation
+            except (RequestStateError, TypeError, ValueError) as exc:
+                return {"kind": "error", "response": self._mrtr_error_response(client_id, str(exc)), "terminal": False}
+        else:
+            pending_id = f"mrtr-{uuid4().hex}"
+            metadata = params.get("_meta")
+            metadata = metadata if isinstance(metadata, dict) else {}
+            with self._mrtr_lock:
+                if self._mrtr_pending:
+                    return {
+                        "kind": "error",
+                        "response": self._mrtr_error_response(
+                            client_id,
+                            "同一 Agent 会话已有待回答的 MRTR，上游 stdio 请求需要串行恢复。",
+                        ),
+                        "terminal": True,
+                    }
+                if self._retain_parent_session is not None:
+                    self._retain_parent_session()
+                pending = _PendingMcpExecution(
+                    pending_id=pending_id,
+                    timeout=float(self._mrtr_timeout),
+                    cancel_event=cancel_event,
+                    on_close=self._release_parent_session,
+                )
+                pending.bind_notification_sink(progress_callback, metadata.get("progressToken"))
+                self._mrtr_pending[pending_id] = pending
+            previous_generation = 0
+            worker = threading.Thread(
+                target=self._run_modern_upstream,
+                args=(pending, upstream, method, params, client_id),
+                daemon=True,
+                name="mcp-modern-call",
+            )
+            try:
+                worker.start()
+            except BaseException:
+                # A failed thread allocation must not leave a terminal pending
+                # entry that blocks every later MRTR call for this gateway.
+                self._discard_mrtr_pending(pending.pending_id, expected=pending)
+                raise
+
+        status, value = pending.wait_for_update(previous_generation, pending.timeout)
+        if status == "input" and isinstance(value, _McpInputEvent):
+            event = value
+            method = str(event.message.get("method") or "")
+            required_capability = _required_client_capability(method)
+            capabilities = client_capabilities if isinstance(client_capabilities, dict) else {}
+            if required_capability and not isinstance(capabilities.get(required_capability), dict):
+                error = {
+                    "code": -32021,
+                    "message": "MissingRequiredClientCapability",
+                    "data": {"requiredCapabilities": {required_capability: {}}},
+                }
+                pending.reject(event.generation, error)
+                self._discard_mrtr_pending(pending.pending_id, expected=pending)
+                return {
+                    "kind": "error",
+                    "response": {
+                        "jsonrpc": "2.0",
+                        "id": client_id,
+                        "error": error,
+                    },
+                    "intent_audit_id": intent_audit_id,
+                    "terminal": True,
+                }
+            request = {
+                "method": method,
+                "params": deepcopy(event.message.get("params") or {}),
+            }
+            try:
+                state = self._mrtr_codec.mint(
+                    {
+                        "pending_id": pending.pending_id,
+                        "generation": event.generation,
+                        "expected_key": event.key,
+                        "agent_id": str(agent_id or "mcp-gateway"),
+                        "session_id": str(session_id),
+                        "request_hash": request_hash,
+                        "intent_audit_id": intent_audit_id,
+                    }
+                )
+            except RequestStateError as exc:
+                pending.close()
+                self._discard_mrtr_pending(pending.pending_id, expected=pending)
+                return {
+                    "kind": "error",
+                    "response": self._mrtr_error_response(client_id, str(exc)),
+                    "terminal": True,
+                }
+            response = {
+                "jsonrpc": "2.0",
+                "id": client_id,
+                "result": {
+                    "resultType": "input_required",
+                    "inputRequests": {event.key: request},
+                    "requestState": state,
+                    "zhiAnSentinel": {
+                        "mrtr": {
+                            "pending": True,
+                            "generation": event.generation,
+                            "input_method": method,
+                            "intent_audit_id": intent_audit_id,
+                        }
+                    },
+                },
+            }
+            # ``input_required`` is a hand-off to a future HTTP retry.  Do not
+            # let the current response stream's disconnect event cancel that
+            # pending execution after the requestState has been minted.
+            pending.detach_cancel_event()
+            pending.bind_notification_sink(None)
+            return {"kind": "input_required", "response": response, "intent_audit_id": intent_audit_id}
+        if status == "cancelled":
+            self._discard_mrtr_pending(pending.pending_id, expected=pending)
+            return {"kind": "cancelled", "response": None, "terminal": True}
+        if status == "complete" and isinstance(value, dict):
+            self._discard_mrtr_pending(pending.pending_id, expected=pending)
+            if client_id is not None:
+                value["id"] = client_id
+            return {"kind": "complete", "response": value, "intent_audit_id": intent_audit_id}
+        self._discard_mrtr_pending(pending.pending_id, expected=pending)
+        if status == "error" and isinstance(value, BaseException):
+            return {
+                "kind": "error",
+                "response": {
+                    "jsonrpc": "2.0",
+                    "id": client_id,
+                    "error": {
+                        "code": -32603,
+                        "message": "MCP Gateway 上游请求失败；详细原因仅保存在审计记录中。",
+                        "data": _safe_upstream_error(value),
+                    },
+                },
+                "terminal": True,
+            }
+        return {
+            "kind": "error",
+            "response": self._mrtr_error_response(client_id, "现代 MRTR 等待上游输入超时。"),
+            "terminal": True,
+        }
+
+    def _run_modern_upstream(
+        self,
+        pending: _PendingMcpExecution,
+        upstream: Any,
+        method: str,
+        params: dict[str, Any],
+        client_id: Any,
+    ) -> None:
+        cancel_signal = _PendingCancellationSignal(pending)
+        request = upstream.request
+        modern_kwargs = {
+            "client_id": client_id,
+            "capture_server_requests": True,
+            "server_request_handler": pending.server_request_handler,
+            "notification_sink": pending.publish_notification,
+            "cancel_event": cancel_signal,
+        }
+        try:
+            request_signature = signature(request)
+        except (TypeError, ValueError):
+            supports_modern_kwargs = True
+        else:
+            try:
+                request_signature.bind(method, params, **modern_kwargs)
+            except TypeError:
+                supports_modern_kwargs = False
+            else:
+                supports_modern_kwargs = True
+        try:
+            if supports_modern_kwargs:
+                response = request(method, params, **modern_kwargs)
+            else:
+                # Select the legacy adapter path before execution.  Retrying a
+                # TypeError from inside request() could duplicate side effects.
+                response = request(method, params, client_id=client_id)
+            pending.finish(result=response)
+        except BaseException as exc:  # noqa: BLE001 - surfaced as JSON-RPC error
+            pending.finish(error=exc)
+        finally:
+            # ``input_required`` deliberately keeps the pending entry while the
+            # child waits for a future retry.  Once the worker finishes (normal
+            # response, upstream error, timeout or cancellation), that retry
+            # window is terminal and the entry must be released even when the
+            # client never sends another round.
+            self._discard_mrtr_pending(pending.pending_id, expected=pending)
+
+    def _discard_mrtr_pending(
+        self,
+        pending_id: str,
+        *,
+        expected: _PendingMcpExecution | None = None,
+    ) -> None:
+        """Drop one execution without closing a replacement entry."""
+        with self._mrtr_lock:
+            pending = self._mrtr_pending.get(pending_id)
+            if pending is None or (expected is not None and pending is not expected):
+                return
+            self._mrtr_pending.pop(pending_id, None)
+        pending.close()
 
     @staticmethod
     def _network_boundary_decision(params: dict[str, Any], agent_id: str) -> GuardDecision | None:
@@ -1510,6 +2401,9 @@ def get_gateway() -> McpGateway | None:
 def reset_gateway() -> None:
     """关闭并清空单例（测试与配置变更时使用）。"""
     global _gateway
+    from apps.api.agent_supervisor.mcp_gateway.subscriptions import reset_subscription_broker
+
+    reset_subscription_broker()
     with _gateway_lock:
         if _gateway is not None:
             _gateway.close()

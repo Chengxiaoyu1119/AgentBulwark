@@ -11,9 +11,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from threading import Lock
-from typing import Any
+from typing import Any, Iterator
 
 from apps.api.agent_supervisor.domains.runtime.security_profile import security_profile
 from apps.api.agent_supervisor.paths import REPO_ROOT, RUNTIME_DIR
@@ -29,6 +31,10 @@ GATEWAY_EVIDENCE_SOURCE_FILES: tuple[str, ...] = (
     "apps/api/agent_supervisor/routers/evaluations.py",
     "apps/api/agent_supervisor/routers/proxy.py",
     "apps/api/agent_supervisor/routers/mcp.py",
+    # Persisted release evidence is only trustworthy while both the probe
+    # writer and its readiness verifier are bound to the same contract.
+    "apps/api/agent_supervisor/commands/cli.py",
+    "apps/api/agent_supervisor/domains/reports/readiness_checks.py",
     "apps/api/agent_supervisor/adapters/proxy/openai_proxy.py",
     "apps/api/agent_supervisor/adapters/proxy/proxy_security.py",
     "apps/api/agent_supervisor/adapters/proxy/responses_compat.py",
@@ -67,13 +73,17 @@ GATEWAY_EVIDENCE_SOURCE_FILES: tuple[str, ...] = (
     "apps/api/agent_supervisor/domains/runtime/request_limits.py",
     "apps/api/agent_supervisor/domains/runtime/app_lifespan.py",
     "apps/api/agent_supervisor/domains/runtime/runtime_status.py",
+    "apps/api/agent_supervisor/domains/runtime/mcp_access.py",
     "apps/api/agent_supervisor/domains/runtime/event_stream.py",
     "apps/api/agent_supervisor/domains/reports/gateway_evidence.py",
     "apps/api/agent_supervisor/mcp_gateway/config.py",
     "apps/api/agent_supervisor/mcp_gateway/audit.py",
     "apps/api/agent_supervisor/mcp_gateway/gateway.py",
+    "apps/api/agent_supervisor/mcp_gateway/http_transport.py",
     "apps/api/agent_supervisor/mcp_gateway/interceptor.py",
+    "apps/api/agent_supervisor/mcp_gateway/mrtr.py",
     "apps/api/agent_supervisor/mcp_gateway/router.py",
+    "apps/api/agent_supervisor/mcp_gateway/subscriptions.py",
     "apps/api/agent_supervisor/mcp_gateway/upstream.py",
     "apps/api/agent_supervisor/storage/data.py",
     "apps/api/agent_supervisor/storage/database.py",
@@ -181,6 +191,10 @@ GATEWAY_EVIDENCE_RUNTIME_FILES: tuple[str, ...] = (
 
 _RUNTIME_EVIDENCE_LOCK = Lock()
 _RUNTIME_EVIDENCE: dict[str, Any] | None = None
+_SCOPED_GATEWAY_EVIDENCE: ContextVar[dict[str, Any] | None] = ContextVar(
+    "scoped_gateway_evidence",
+    default=None,
+)
 
 
 def _digest_text(value: str) -> str:
@@ -205,6 +219,20 @@ def _provider_evidence_config() -> dict[str, Any]:
 
 
 def _mcp_evidence_config() -> dict[str, Any]:
+    from apps.api.agent_supervisor.mcp_gateway.config import (
+        gateway_allow_side_effect_notifications,
+        gateway_enabled,
+        gateway_guard_enabled,
+        gateway_max_sessions,
+        gateway_max_subscriptions,
+        gateway_mrtr_timeout_seconds,
+        gateway_network_mode,
+        gateway_resource_limits,
+        gateway_server_name,
+        gateway_session_isolation,
+        gateway_timeout_seconds,
+    )
+
     config: dict[str, Any] = {}
     for name in GATEWAY_EVIDENCE_MCP_SECRET_ENV:
         value = os.getenv(name, "").strip()
@@ -212,6 +240,29 @@ def _mcp_evidence_config() -> dict[str, Any]:
             "configured": bool(value),
             "sha256": _digest_text(value) if value else "",
         }
+    explicit_state_secret = os.getenv("MCP_GATEWAY_REQUEST_STATE_SECRET", "").strip()
+    audit_hmac_fallback = os.getenv("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "").strip()
+    config["effective"] = {
+        "enabled": gateway_enabled(),
+        "guard_enabled": gateway_guard_enabled(),
+        "allow_side_effect_notifications": gateway_allow_side_effect_notifications(),
+        "network_mode": gateway_network_mode(),
+        "session_isolation": gateway_session_isolation(),
+        "max_sessions": gateway_max_sessions(),
+        "max_subscriptions": gateway_max_subscriptions(),
+        "request_state_timeout_seconds": gateway_mrtr_timeout_seconds(),
+        "request_state_key_source": (
+            "explicit"
+            if explicit_state_secret
+            else "audit-hmac-fallback"
+            if audit_hmac_fallback
+            else "ephemeral"
+        ),
+        "request_state_key_persistent": bool(explicit_state_secret or audit_hmac_fallback),
+        "timeout_seconds": gateway_timeout_seconds(),
+        "server_name": gateway_server_name(),
+        "resource_limits": gateway_resource_limits(),
+    }
     return config
 
 
@@ -259,23 +310,8 @@ def _effective_execution_evidence_config() -> dict[str, Any]:
     }
 
 
-def gateway_evidence_snapshot() -> dict[str, Any]:
+def _build_gateway_evidence_snapshot() -> dict[str, Any]:
     """Return a deterministic, non-secret snapshot of the gateway boundary."""
-
-    # The API lifespan loads ``.env`` before capturing its startup snapshot,
-    # while the standalone CLI can reach this function before importing any
-    # module that performs that load.  Normalise the environment at the
-    # evidence boundary so a probe and the server hash the same effective
-    # Provider/MCP configuration.  The loader only fills missing variables and
-    # never overwrites an explicit process environment value.
-    try:
-        from apps.api.agent_supervisor.domains.runtime.server_security import load_environment_file
-
-        load_environment_file()
-    except (ImportError, OSError):
-        # Fingerprinting remains usable for minimal library callers and tests
-        # that intentionally run without the server bootstrap module.
-        pass
 
     source_files: dict[str, str | None] = {}
     for relative_path in GATEWAY_EVIDENCE_SOURCE_FILES:
@@ -326,6 +362,35 @@ def gateway_evidence_snapshot() -> dict[str, Any]:
         "mcp_config": _mcp_evidence_config(),
         "runtime_files": _runtime_file_digests(),
     }
+
+
+def gateway_evidence_snapshot() -> dict[str, Any]:
+    """Return a current snapshot, reusing the active readiness scope."""
+
+    scoped = _SCOPED_GATEWAY_EVIDENCE.get()
+    return scoped if scoped is not None else _build_gateway_evidence_snapshot()
+
+
+@contextmanager
+def gateway_evidence_snapshot_scope() -> Iterator[dict[str, Any]]:
+    """Pin one source/config snapshot for a multi-artifact readiness read.
+
+    A readiness report may inspect hundreds of candidate probe files.  Every
+    candidate still gets compared against the same point-in-time snapshot, but
+    the gateway source and deployment files are read only once per report.
+    Direct fingerprint callers remain uncached outside this explicit scope.
+    """
+
+    current = _SCOPED_GATEWAY_EVIDENCE.get()
+    if current is not None:
+        yield current
+        return
+    snapshot = _build_gateway_evidence_snapshot()
+    token = _SCOPED_GATEWAY_EVIDENCE.set(snapshot)
+    try:
+        yield snapshot
+    finally:
+        _SCOPED_GATEWAY_EVIDENCE.reset(token)
 
 
 def gateway_evidence_fingerprint(snapshot: dict[str, Any] | None = None) -> str:

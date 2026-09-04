@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from apps.api.agent_supervisor.auth import (
+    authenticated_operator,
     current_agent_identity,
     current_security_role,
     require_agent_identity,
@@ -276,7 +277,7 @@ def approval_review_decision(
         return decide_approval_review(
             review_id,
             action=request.action,
-            operator=request.operator,
+            operator=authenticated_operator(role),
             comment=request.comment,
             execute_in_sandbox=request.execute_in_sandbox,
         )

@@ -4,13 +4,16 @@ import hashlib
 import json
 import math
 import os
+import queue
 import re
+import threading
 import time
 from copy import deepcopy
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from uuid import uuid4
 
 from apps.api.agent_supervisor.adapters.models.model_adapter import (
+    ModelProviderStreamCancelledError,
     ModelProviderUnavailableError,
     filter_model_output,
     forward_openai_chat_completion,
@@ -52,6 +55,7 @@ from apps.api.agent_supervisor.domains.reports.gateway_evidence import (
     gateway_runtime_evidence,
     gateway_source_fingerprint,
 )
+from apps.api.agent_supervisor.domains.runtime.agent_credentials import can_execute_managed_tools
 from apps.api.agent_supervisor.domains.runtime.events import evaluate_agent_event
 from apps.api.agent_supervisor.domains.runtime.execution_receipts import (
     ExecutionReceiptConflictError,
@@ -74,6 +78,16 @@ class ProxyPolicyRejectionError(ValueError):
     def __init__(self, message: str, *, gateway_audit: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.gateway_audit = gateway_audit if isinstance(gateway_audit, dict) else {}
+
+
+class GatewayStreamFinalizationError(RuntimeError):
+    """A post-Provider stream consistency failure with durable evidence."""
+
+    def __init__(self, *, gateway_audit: dict[str, Any] | None = None) -> None:
+        super().__init__("网关流式终态校验失败。")
+        self.gateway_audit = gateway_audit if isinstance(gateway_audit, dict) else {}
+
+
 DEFAULT_BLOCK_TERMS = "拒绝,不能,抱歉,绕过,忽略,系统提示词,token,secret,flag"
 DEFAULT_REFUSAL_TERMS = "抱歉,不能帮助你,无法协助你,不能提供,无法提供,i can't,i cannot,cannot assist"
 REFUSAL_MARKERS = [
@@ -1175,6 +1189,19 @@ def _validate_proxy_request(payload: dict[str, Any]) -> None:
         raise ValueError("model 不能包含控制字符")
     if "stream" in payload and not isinstance(payload.get("stream"), bool):
         raise ValueError("stream 必须是布尔值")
+    stream_options = payload.get("stream_options")
+    if stream_options is not None:
+        if payload.get("stream") is not True:
+            raise ValueError("stream_options 仅可在 stream=true 时使用")
+        if not isinstance(stream_options, dict):
+            raise ValueError("stream_options 必须是对象")
+        supported_stream_options = {"include_usage", "include_obfuscation"}
+        unknown_stream_options = sorted(set(stream_options) - supported_stream_options)
+        if unknown_stream_options:
+            raise ValueError(f"stream_options 包含不支持的字段：{', '.join(unknown_stream_options)}")
+        for option_name, option_value in stream_options.items():
+            if not isinstance(option_value, bool):
+                raise ValueError(f"stream_options.{option_name} 必须是布尔值")
     _validate_generation_controls(payload)
     # Validate the complete materialized JSON tree, not only messages and tool
     # schemas.  Otherwise a valid-looking top-level field (for example
@@ -2079,17 +2106,29 @@ def _record_gateway_provider_failure_audit(
     model: str,
     failures: list[dict[str, str]],
     failure_kind: str = "provider-unavailable",
+    provider_called: bool = False,
+    provider_attempted: bool | None = None,
+    provider_output_exposed: bool = False,
+    stream_released_char_count: int = 0,
+    related_audit_id: str = "",
 ) -> dict[str, Any]:
     """Persist a non-reflective audit when the Provider path cannot complete.
 
     A 502 is still a security-boundary event: the gateway accepted an Agent
     request, attempted an upstream call (or rejected the model binding), and
-    must prove that no model output or tool call was exposed.  The raw upstream
-    body is intentionally excluded; only redacted categories and a bounded
-    count are kept in the signed audit row.
+    must prove whether any model output reached the caller before the failure.
+    The raw upstream body is intentionally excluded; only redacted categories
+    and the bounded released-character count are kept in the signed audit row.
     """
 
     safe_failures = _safe_provider_failures(failures)
+    attempted = (
+        provider_called or bool(safe_failures)
+        if provider_attempted is None
+        else bool(provider_attempted)
+    )
+    released_char_count = _safe_stream_released_char_count(stream_released_char_count)
+    output_exposed = bool(provider_output_exposed) or released_char_count > 0
     try:
         return evaluate_agent_event(
             {
@@ -2111,10 +2150,14 @@ def _record_gateway_provider_failure_audit(
                     "request_hash": request_hash,
                     "provider_profile": provider_profile,
                     "provider_model": _safe_model_label(model),
-                    "provider_called": False,
-                    "provider_attempted": bool(safe_failures),
+                    "provider_called": bool(provider_called),
+                    "provider_attempted": attempted,
+                    "provider_completed": False,
+                    "provider_output_exposed": output_exposed,
+                    "stream_released_char_count": released_char_count,
                     "provider_failure_kind": failure_kind,
                     "provider_failures": safe_failures,
+                    "related_audit_id": _safe_protocol_identifier(related_audit_id),
                 },
             },
             guard_enabled=True,
@@ -2125,6 +2168,29 @@ def _record_gateway_provider_failure_audit(
         # Availability evidence must never turn a safe 502 into an opaque 500.
         # The original exception still carries redacted failure categories.
         return {}
+
+
+def _safe_stream_released_char_count(value: Any) -> int:
+    """Return a bounded stream-release count without retaining Provider text."""
+
+    if isinstance(value, bool):
+        return 0
+    try:
+        count = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, min(count, PROXY_MAX_TOTAL_TEXT_CHARS * PROXY_MAX_PROVIDER_CHOICES))
+
+
+def _stream_released_char_count(supplier: Callable[[], int] | None) -> int:
+    """Read the projector's release count without letting audit collection fail a stream."""
+
+    if supplier is None:
+        return 0
+    try:
+        return _safe_stream_released_char_count(supplier())
+    except Exception:
+        return 0
 
 
 def _raise_provider_response_contract_failure(
@@ -2165,6 +2231,8 @@ def _raise_provider_response_contract_failure(
         model=provider_model,
         failures=failures,
         failure_kind="provider-response-contract",
+        provider_called=True,
+        provider_attempted=True,
     )
     raise ModelProviderUnavailableError(
         "模型供应商响应未通过网关协议校验。",
@@ -2370,6 +2438,10 @@ def run_openai_proxy_completion(
     payload: dict[str, Any],
     *,
     security_context: dict[str, Any] | None = None,
+    provider_stream_callback: Callable[[dict[str, Any]], None] | None = None,
+    stream_cancel_event: Any = None,
+    stream_released_char_count_supplier: Callable[[], int] | None = None,
+    request_id_override: str = "",
 ) -> dict[str, Any]:
     """Run the production-transparent proxy or an explicit research adapter.
 
@@ -2384,6 +2456,8 @@ def run_openai_proxy_completion(
     options = options if isinstance(options, dict) else {}
     mode = _validated_proxy_mode(options)
     _validate_proxy_mode_access(mode, options=options, security_context=security_context)
+    if provider_stream_callback is not None and mode != "transparent":
+        raise ValueError("真实流式安全链当前只支持 transparent 模式")
     resource_lease: ResourceLease | None = None
     resource_plan = _proxy_resource_plan(payload, security_context=security_context, mode=mode)
     if resource_plan is not None:
@@ -2414,7 +2488,14 @@ def run_openai_proxy_completion(
                 raise ValueError("代理研究模式未启用；生产请求必须使用透明转发模式")
             result = _run_research_proxy_completion(payload)
         else:
-            result = _run_transparent_proxy_completion(payload, security_context=security_context)
+            result = _run_transparent_proxy_completion(
+                payload,
+                security_context=security_context,
+                provider_stream_callback=provider_stream_callback,
+                stream_cancel_event=stream_cancel_event,
+                stream_released_char_count_supplier=stream_released_char_count_supplier,
+                request_id_override=request_id_override,
+            )
     except Exception as error:
         if resource_lease is not None:
             # An exception after reservation may follow a Provider attempt.  A
@@ -2511,7 +2592,9 @@ def _validate_proxy_mode_access(
     requested_agent_id = str(options.get("agent_id") or "").strip()
     if authenticated_agent_id and requested_agent_id and authenticated_agent_id != requested_agent_id:
         raise ValueError("请求中的 agent_id 与代理凭证绑定身份不一致")
-    if mode == "managed" and security_context is not None and role not in {"executor", "admin"}:
+    if mode == "managed" and security_context is not None and not can_execute_managed_tools(
+        role, authenticated_agent_id
+    ):
         raise ValueError("当前角色无权使用服务端托管工具执行模式")
     # ``research`` runs the historical prompt-optimizer/refusal-rewrite chain
     # and is intentionally a verification surface, not a production gateway
@@ -2703,9 +2786,9 @@ def _run_managed_proxy_completion(
     # not receive server-owned side effects.  Managed mode crosses the second
     # trust boundary by executing a Provider-generated tool call, so keep it
     # limited to a bound executor or an administrator.
-    if security_context is not None and context_role not in {"executor", "admin"}:
-        raise ValueError("当前角色无权使用服务端托管工具执行模式")
     authenticated_agent_id = str(context.get("agent_id") or "").strip()
+    if security_context is not None and not can_execute_managed_tools(context_role, authenticated_agent_id):
+        raise ValueError("当前角色无权使用服务端托管工具执行模式")
     requested_agent_id = str(options.get("agent_id") or "").strip()
     if authenticated_agent_id and requested_agent_id and authenticated_agent_id != requested_agent_id:
         raise ValueError("请求中的 agent_id 与代理凭证绑定身份不一致")
@@ -3198,8 +3281,12 @@ def _run_transparent_proxy_completion(
     security_context: dict[str, Any] | None,
     receipt_messages: list[dict[str, Any]] | None = None,
     force_tool_receipts: bool = False,
+    provider_stream_callback: Callable[[dict[str, Any]], None] | None = None,
+    stream_cancel_event: Any = None,
+    stream_released_char_count_supplier: Callable[[], int] | None = None,
+    request_id_override: str = "",
 ) -> dict[str, Any]:
-    request_id = f"chatcmpl-zhian-{uuid4().hex[:16]}"
+    request_id = request_id_override or f"chatcmpl-zhian-{uuid4().hex[:16]}"
     options = payload.get("agent_supervisor") if isinstance(payload, dict) else None
     options = options if isinstance(options, dict) else {}
     context = security_context if isinstance(security_context, dict) else {}
@@ -3483,8 +3570,31 @@ def _run_transparent_proxy_completion(
             provider_payload,
             provider_profile=provider_profile,
             model_override=model_override,
+            stream_callback=provider_stream_callback,
+            stream_cancel_event=stream_cancel_event,
         )
+    except ModelProviderStreamCancelledError as exc:
+        released_char_count = _stream_released_char_count(stream_released_char_count_supplier)
+        audit = _record_gateway_provider_failure_audit(
+            session_id=session_id,
+            agent_id=agent_id,
+            request_id=request_id,
+            prompt=prompt,
+            request_hash=request_hash,
+            provider_profile=provider_profile,
+            model=model,
+            failures=[],
+            failure_kind="client-cancelled-stream",
+            provider_called=True,
+            provider_attempted=True,
+            provider_output_exposed=released_char_count > 0,
+            stream_released_char_count=released_char_count,
+        )
+        exc.gateway_audit = audit
+        raise
     except ModelProviderUnavailableError as exc:
+        released_char_count = _stream_released_char_count(stream_released_char_count_supplier)
+        provider_called = bool(exc.failures) or released_char_count > 0
         audit = _record_gateway_provider_failure_audit(
             session_id=session_id,
             agent_id=agent_id,
@@ -3494,6 +3604,10 @@ def _run_transparent_proxy_completion(
             provider_profile=provider_profile,
             model=model,
             failures=exc.failures,
+            provider_called=provider_called,
+            provider_attempted=provider_called,
+            provider_output_exposed=released_char_count > 0,
+            stream_released_char_count=released_char_count,
         )
         exc.gateway_audit = audit
         raise
@@ -3501,6 +3615,7 @@ def _run_transparent_proxy_completion(
         # Provider protocol failures are upstream failures, not malformed Agent
         # requests.  Record the same no-output boundary and expose a 502 to HTTP
         # clients so retries and operational dashboards classify them correctly.
+        released_char_count = _stream_released_char_count(stream_released_char_count_supplier)
         audit = _record_gateway_provider_failure_audit(
             session_id=session_id,
             agent_id=agent_id,
@@ -3511,6 +3626,10 @@ def _run_transparent_proxy_completion(
             model=model,
             failures=[],
             failure_kind="provider-response-contract",
+            provider_called=True,
+            provider_attempted=True,
+            provider_output_exposed=released_char_count > 0,
+            stream_released_char_count=released_char_count,
         )
         raise ModelProviderUnavailableError("模型供应商响应未通过网关协议校验。", [], gateway_audit=audit) from exc
     try:
@@ -4006,7 +4125,9 @@ def _run_transparent_proxy_completion(
         ),
         "decision_source": "gateway-provider-response-policy",
         **receipt_metadata,
-        "stream_buffered": True,
+        "stream_buffered": provider_stream_callback is None,
+        "provider_streamed": bool(provider_result.get("provider_streamed")),
+        "provider_stream_chunk_count": int(provider_result.get("provider_stream_chunk_count") or 0),
     }
     metadata.update(_gateway_evidence_metadata())
     _apply_execution_contract_metadata(metadata)
@@ -4192,64 +4313,348 @@ def _run_research_proxy_completion(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+PROXY_STREAM_SAFETY_WINDOW_ENV = "AGENT_SUPERVISOR_PROXY_STREAM_SAFETY_WINDOW_CHARS"
+PROXY_STREAM_DEFAULT_SAFETY_WINDOW_CHARS = 256
+PROXY_STREAM_MIN_SAFETY_WINDOW_CHARS = 64
+PROXY_STREAM_MAX_SAFETY_WINDOW_CHARS = 4096
+PROXY_STREAM_QUEUE_ITEMS = 128
+
+
+def _proxy_stream_safety_window_chars() -> int:
+    raw = os.getenv(PROXY_STREAM_SAFETY_WINDOW_ENV, str(PROXY_STREAM_DEFAULT_SAFETY_WINDOW_CHARS))
+    try:
+        value = int(raw)
+    except ValueError:
+        value = PROXY_STREAM_DEFAULT_SAFETY_WINDOW_CHARS
+    return max(PROXY_STREAM_MIN_SAFETY_WINDOW_CHARS, min(value, PROXY_STREAM_MAX_SAFETY_WINDOW_CHARS))
+
+
+def _sse_data(value: dict[str, Any] | str) -> str:
+    serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return f"data: {serialized}\n\n"
+
+
+class _SafeProviderStreamProjector:
+    """Release only text that has cleared a bounded trailing safety window.
+
+    Tool calls, reasoning and Provider extensions never pass through this
+    incremental projector.  They remain buffered until the complete response
+    has passed the existing post-Provider policy and audit path.
+    """
+
+    def __init__(self, *, request_id: str, model: str, created: int, safety_window_chars: int) -> None:
+        self.request_id = request_id
+        self.model = _safe_model_label(model, fallback="unknown-model")
+        self.created = created
+        self.safety_window_chars = safety_window_chars
+        self.choices: dict[int, dict[str, Any]] = {}
+        self.provider_tool_delta_seen = False
+        self.provider_chunk_count = 0
+
+    @property
+    def released_char_count(self) -> int:
+        return sum(int(state["released"]) for state in self.choices.values())
+
+    def ingest(self, chunk: dict[str, Any]) -> list[dict[str, Any]]:
+        self.provider_chunk_count += 1
+        projected_choices: list[dict[str, Any]] = []
+        raw_choices = chunk.get("choices")
+        if not isinstance(raw_choices, list):
+            return []
+        for raw_choice in raw_choices:
+            if not isinstance(raw_choice, dict):
+                continue
+            index = raw_choice.get("index")
+            if not isinstance(index, int) or isinstance(index, bool):
+                continue
+            delta = raw_choice.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            if "tool_calls" in delta or "function_call" in delta:
+                self.provider_tool_delta_seen = True
+            content = delta.get("content")
+            if content is None:
+                continue
+            if not isinstance(content, str):
+                continue
+            state = self.choices.setdefault(index, {"text": "", "released": 0, "blocked": False, "role_sent": False})
+            state["text"] = str(state["text"]) + content
+            if len(str(state["text"])) > PROXY_MAX_TOTAL_TEXT_CHARS:
+                state["blocked"] = True
+                continue
+            scan = _scan_provider_visible_output(str(state["text"]))
+            if scan["blocked"]:
+                state["blocked"] = True
+                continue
+            safe_end = max(0, len(str(state["text"])) - self.safety_window_chars)
+            released = int(state["released"])
+            if state["blocked"] or safe_end <= released:
+                continue
+            safe_delta = str(state["text"])[released:safe_end]
+            state["released"] = safe_end
+            projected_delta: dict[str, Any] = {"content": safe_delta}
+            if not state["role_sent"]:
+                projected_delta["role"] = "assistant"
+                state["role_sent"] = True
+            projected_choices.append({"index": index, "delta": projected_delta, "finish_reason": None})
+        if not projected_choices:
+            return []
+        return [
+            {
+                "id": self.request_id,
+                "object": "chat.completion.chunk",
+                "created": self.created,
+                "model": self.model,
+                "choices": projected_choices,
+            }
+        ]
+
+    def finalize(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        raw_choices = result.get("choices")
+        choices = raw_choices if isinstance(raw_choices, list) and raw_choices else [{}]
+        metadata = result.get("agent_supervisor")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        blocked = str(metadata.get("decision") or "") in CONTROL_DECISIONS or metadata.get("output_filter_blocked") is True
+        deltas: list[dict[str, Any]] = []
+        finishes: list[dict[str, Any]] = []
+        for fallback_index, raw_choice in enumerate(choices):
+            choice = raw_choice if isinstance(raw_choice, dict) else {}
+            raw_index = choice.get("index")
+            index = raw_index if isinstance(raw_index, int) and not isinstance(raw_index, bool) else fallback_index
+            raw_message = choice.get("message")
+            message = raw_message if isinstance(raw_message, dict) else {}
+            delta: dict[str, Any] = {}
+            content = _content_to_text(message.get("content"))
+            state = self.choices.get(index)
+            released = int(state["released"]) if state is not None else 0
+            observed = str(state["text"]) if state is not None else ""
+            if blocked:
+                if content:
+                    delta["content"] = content
+            elif released and content.startswith(observed[:released]):
+                remaining = content[released:]
+                if remaining:
+                    delta["content"] = remaining
+            elif released == 0:
+                if content:
+                    delta["content"] = content
+            else:
+                raise ValueError("流式增量与最终安全响应不一致，已停止输出")
+            if state is None or not state["role_sent"]:
+                delta["role"] = "assistant"
+            if not blocked and isinstance(message.get("tool_calls"), list):
+                delta["tool_calls"] = message["tool_calls"]
+            if not blocked and isinstance(message.get("function_call"), dict):
+                delta["function_call"] = message["function_call"]
+            if delta:
+                deltas.append({"index": index, "delta": delta, "finish_reason": None})
+            finishes.append(
+                {
+                    "index": index,
+                    "delta": {},
+                    "finish_reason": str(choice.get("finish_reason") or ("content_filter" if blocked else "stop")),
+                }
+            )
+        frames: list[dict[str, Any]] = []
+        base = {
+            "id": _safe_protocol_identifier(result.get("id"), fallback=self.request_id),
+            "object": "chat.completion.chunk",
+            "created": result.get("created", self.created),
+            "model": _safe_model_label(result.get("model"), fallback=self.model),
+        }
+        if deltas:
+            frames.append({**base, "choices": deltas})
+        frames.append({**base, "choices": finishes, "agent_supervisor": metadata})
+        stream_options = result.get("_request_stream_options")
+        if isinstance(stream_options, dict) and stream_options.get("include_usage") is True:
+            frames.append({**base, "choices": [], "usage": result.get("usage") or {}})
+        return frames
+
+
+def _put_stream_queue(
+    events: queue.Queue[tuple[str, Any]],
+    item: tuple[str, Any],
+    cancel_event: threading.Event,
+) -> None:
+    while not cancel_event.is_set():
+        try:
+            events.put(item, timeout=0.25)
+            return
+        except queue.Full:
+            continue
+    raise ModelProviderStreamCancelledError("下游客户端已取消模型流。")
+
+
+def _stream_error_payload(error: BaseException) -> dict[str, Any]:
+    audit = getattr(error, "gateway_audit", None)
+    audit = audit if isinstance(audit, dict) else {}
+    if isinstance(error, ProxyResourceLimitError):
+        code = "resource_limit"
+        message = "网关资源预算不足，本次流式请求未继续执行。"
+    elif isinstance(error, ProxyPolicyRejectionError):
+        code = "policy_rejection"
+        message = "请求在到达Provider前被安全策略阻断。"
+    elif isinstance(error, ModelProviderUnavailableError):
+        code = "provider_stream_error"
+        message = "Provider流式响应失败或在完成前中断。"
+    else:
+        code = "gateway_stream_error"
+        message = "网关流式响应未完成。"
+    return {
+        "error": {"message": message, "type": "agent_supervisor_stream_error", "code": code},
+        "agent_supervisor": {
+            "stream_interrupted": True,
+            "audit_id": str(audit.get("audit_id") or ""),
+            "gateway_audit_id": str(audit.get("audit_id") or ""),
+        },
+    }
+
+
 def stream_openai_proxy_completion(
     payload: dict[str, Any],
     *,
     security_context: dict[str, Any] | None = None,
 ) -> Iterable[str]:
-    """Return buffered, policy-checked SSE events.
+    """Stream policy-checked text with bounded delay and buffered tool calls."""
 
-    Tool calls must be inspected before they reach a client that may execute
-    them.  The gateway therefore buffers the provider response, applies the
-    same decision as the non-streaming path, and only then emits SSE frames.
-    """
-    result = run_openai_proxy_completion(payload, security_context=security_context)
-    raw_choices = result.get("choices")
-    choices = raw_choices if isinstance(raw_choices, list) and raw_choices else [{}]
-    deltas: list[dict[str, Any]] = []
-    finishes: list[dict[str, Any]] = []
-    for choice_index, raw_choice in enumerate(choices):
-        choice = raw_choice if isinstance(raw_choice, dict) else {}
-        raw_message = choice.get("message")
-        message: dict[str, Any] = raw_message if isinstance(raw_message, dict) else {}
-        delta: dict[str, Any] = {"role": "assistant"}
-        content = _content_to_text(message.get("content"))
-        if content:
-            delta["content"] = content
-        if isinstance(message.get("tool_calls"), list):
-            delta["tool_calls"] = message["tool_calls"]
-        if isinstance(message.get("function_call"), dict):
-            delta["function_call"] = message["function_call"]
-        deltas.append({"index": choice_index, "delta": delta, "finish_reason": None})
-        finishes.append(
-            {
-                "index": choice_index,
-                "delta": {},
-                "finish_reason": str(choice.get("finish_reason") or "stop"),
-            }
-        )
-    chunk_base = {
-        "id": result.get("id", f"chatcmpl-zhian-{uuid4().hex[:16]}"),
-        "object": "chat.completion.chunk",
-        "created": result.get("created", int(time.time())),
-        "model": result.get("model", ""),
-        "agent_supervisor": result.get("agent_supervisor", {}),
-    }
-    first = {
-        **chunk_base,
-        "choices": deltas,
-    }
-    done = {
-        **chunk_base,
-        "choices": finishes,
-    }
-    return iter(
-        (
-            f"data: {json.dumps(first, ensure_ascii=False)}\n\n",
-            f"data: {json.dumps(done, ensure_ascii=False)}\n\n",
-            "data: [DONE]\n\n",
-        )
+    _validate_proxy_request(payload)
+    options = payload.get("agent_supervisor") if isinstance(payload, dict) else None
+    options = options if isinstance(options, dict) else {}
+    mode = _validated_proxy_mode(options)
+    _validate_proxy_mode_access(mode, options=options, security_context=security_context)
+    if mode != "transparent":
+        raise ValueError("stream=true 当前只支持 transparent 模式；managed/research 必须使用非流式请求")
+
+    request_id = f"chatcmpl-zhian-{uuid4().hex[:16]}"
+    created = int(time.time())
+    model = str(payload.get("model") or "")
+    safety_window = _proxy_stream_safety_window_chars()
+    projector = _SafeProviderStreamProjector(
+        request_id=request_id,
+        model=model,
+        created=created,
+        safety_window_chars=safety_window,
     )
+    events: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=PROXY_STREAM_QUEUE_ITEMS)
+    cancel_event = threading.Event()
+
+    def record_stream_failure_audit(failure_kind: str, *, related_audit_id: str = "") -> dict[str, Any]:
+        context = security_context if isinstance(security_context, dict) else {}
+        request_options = payload.get("agent_supervisor")
+        request_options = request_options if isinstance(request_options, dict) else {}
+        raw_messages = payload.get("messages")
+        messages = raw_messages if isinstance(raw_messages, list) else []
+        provider_called = projector.provider_chunk_count > 0
+        released_char_count = projector.released_char_count
+        return _record_gateway_provider_failure_audit(
+            session_id=str(context.get("session_id") or request_options.get("session_id") or request_id),
+            agent_id=str(context.get("agent_id") or request_options.get("agent_id") or "openai-compatible-proxy"),
+            request_id=request_id,
+            prompt=_extract_prompt(messages),
+            request_hash=_proxy_payload_hash(payload),
+            provider_profile=str(request_options.get("target_provider_profile") or "target")[:40],
+            model=model,
+            failures=[],
+            failure_kind=failure_kind,
+            provider_called=provider_called,
+            provider_attempted=provider_called,
+            provider_output_exposed=released_char_count > 0,
+            stream_released_char_count=released_char_count,
+            related_audit_id=related_audit_id,
+        )
+
+    def on_provider_chunk(chunk: dict[str, Any]) -> None:
+        for frame in projector.ingest(chunk):
+            _put_stream_queue(events, ("frame", frame), cancel_event)
+
+    def run() -> None:
+        try:
+            result = run_openai_proxy_completion(
+                payload,
+                security_context=security_context,
+                provider_stream_callback=on_provider_chunk,
+                stream_cancel_event=cancel_event,
+                stream_released_char_count_supplier=lambda: projector.released_char_count,
+                request_id_override=request_id,
+            )
+            metadata = result.get("agent_supervisor")
+            if not isinstance(metadata, dict):
+                metadata = {}
+                result["agent_supervisor"] = metadata
+            metadata.update(
+                {
+                    "stream_buffered": False,
+                    "provider_streamed": metadata.get("provider_streamed") is True,
+                    "stream_security_mode": "bounded-safety-window",
+                    "stream_safety_window_chars": safety_window,
+                    "stream_released_char_count": projector.released_char_count,
+                    "stream_tool_calls_buffered": projector.provider_tool_delta_seen,
+                    "stream_interrupted": False,
+                }
+            )
+            result["_request_stream_options"] = payload.get("stream_options")
+            _put_stream_queue(events, ("result", result), cancel_event)
+        except ModelProviderStreamCancelledError:
+            return
+        except BaseException as exc:  # noqa: BLE001 - serialized as a bounded SSE error
+            if not cancel_event.is_set():
+                stream_error: BaseException = exc
+                if projector.provider_chunk_count and not isinstance(
+                    exc,
+                    (ModelProviderUnavailableError, ProxyPolicyRejectionError, ProxyResourceLimitError),
+                ):
+                    audit = record_stream_failure_audit("gateway-stream-finalization")
+                    stream_error = GatewayStreamFinalizationError(gateway_audit=audit)
+                try:
+                    _put_stream_queue(events, ("error", stream_error), cancel_event)
+                except ModelProviderStreamCancelledError:
+                    return
+        finally:
+            if not cancel_event.is_set():
+                try:
+                    _put_stream_queue(events, ("done", None), cancel_event)
+                except ModelProviderStreamCancelledError:
+                    return
+
+    worker = threading.Thread(target=run, daemon=True, name="openai-safe-provider-stream")
+
+    def iterate() -> Iterable[str]:
+        worker.start()
+        completed = False
+        try:
+            while True:
+                kind, value = events.get()
+                if kind == "frame":
+                    yield _sse_data(value)
+                    continue
+                if kind == "result":
+                    try:
+                        for frame in projector.finalize(value):
+                            yield _sse_data(frame)
+                    except (TypeError, ValueError):
+                        result_metadata = value.get("agent_supervisor") if isinstance(value, dict) else None
+                        result_metadata = result_metadata if isinstance(result_metadata, dict) else {}
+                        audit = record_stream_failure_audit(
+                            "gateway-stream-finalization",
+                            related_audit_id=str(result_metadata.get("audit_id") or ""),
+                        )
+                        stream_error = GatewayStreamFinalizationError(gateway_audit=audit)
+                        yield _sse_data(_stream_error_payload(stream_error))
+                    yield _sse_data("[DONE]")
+                    completed = True
+                    continue
+                if kind == "error":
+                    yield _sse_data(_stream_error_payload(value))
+                    yield _sse_data("[DONE]")
+                    completed = True
+                    continue
+                if kind == "done":
+                    return
+        finally:
+            if not completed:
+                cancel_event.set()
+
+    return iterate()
 
 
 def _parse_transparent_tool_call(raw_call: Any) -> tuple[dict[str, Any] | None, str]:

@@ -42,6 +42,8 @@ _MAX_INPUT_ITEMS = 64
 _MAX_CONTENT_PARTS = 128
 _MAX_TEXT_CHARS = 40_000
 _MAX_TOOL_COUNT = 64
+_MAX_TOOL_ARGUMENT_CHARS = 32_000
+_MAX_TOOL_SCHEMA_BYTES = 64 * 1024
 
 
 def responses_request_to_chat(payload: dict[str, Any]) -> dict[str, Any]:
@@ -75,7 +77,7 @@ def responses_request_to_chat(payload: dict[str, Any]) -> dict[str, Any]:
     if instructions is not None:
         if not isinstance(instructions, str) or not instructions.strip():
             raise ResponsesCompatibilityError("Responses.instructions 只支持非空字符串。")
-        messages.append({"role": "system", "content": instructions})
+        messages.append({"role": "system", "content": _bounded_text(instructions, "instructions")})
     messages.extend(_input_to_messages(payload["input"]))
     if not messages:
         raise ResponsesCompatibilityError("Responses input 未生成可检查的消息。")
@@ -116,6 +118,11 @@ def chat_response_to_responses(response: dict[str, Any], request: dict[str, Any]
     output: list[dict[str, Any]] = []
     output_text_parts: list[str] = []
     choices = response.get("choices")
+    raw_metadata = response.get("agent_supervisor")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    metadata_present = isinstance(raw_metadata, dict)
+    response_incomplete = _chat_response_is_content_filtered(choices, metadata)
+    output_item_status = "incomplete" if response_incomplete else "completed"
     if isinstance(choices, list):
         # The adapter rejects caller-side n; a Provider response with multiple
         # choices is still projected deterministically by keeping the first.
@@ -130,12 +137,12 @@ def chat_response_to_responses(response: dict[str, Any], request: dict[str, Any]
                     "id": f"{response_id}-message",
                     "type": "message",
                     "role": "assistant",
-                    "status": "completed",
+                    "status": output_item_status,
                     "content": [{"type": "output_text", "text": content, "annotations": []}],
                 }
             )
         tool_calls = message.get("tool_calls")
-        if isinstance(tool_calls, list):
+        if not response_incomplete and isinstance(tool_calls, list):
             for index, raw_call in enumerate(tool_calls[:32]):
                 if not isinstance(raw_call, dict) or not isinstance(raw_call.get("function"), dict):
                     continue
@@ -148,7 +155,10 @@ def chat_response_to_responses(response: dict[str, Any], request: dict[str, Any]
                         "status": "completed",
                         "call_id": call_id,
                         "name": str(function.get("name") or "")[:160],
-                        "arguments": str(function.get("arguments") or "")[:32_000],
+                        "arguments": _strict_json_object_text(
+                            function.get("arguments"),
+                            f"Provider tool_calls[{index}].function.arguments",
+                        ),
                     }
                 )
 
@@ -168,7 +178,7 @@ def chat_response_to_responses(response: dict[str, Any], request: dict[str, Any]
         "id": response_id,
         "object": "response",
         "created_at": created_at,
-        "status": "completed",
+        "status": "incomplete" if response_incomplete else "completed",
         "model": model,
         "output": output,
         "output_text": "\n".join(output_text_parts),
@@ -176,24 +186,40 @@ def chat_response_to_responses(response: dict[str, Any], request: dict[str, Any]
         "tool_choice": request.get("tool_choice", "auto"),
         "usage": response_usage,
     }
-    metadata = response.get("agent_supervisor")
-    if isinstance(metadata, dict):
+    if response_incomplete:
+        result["incomplete_details"] = {"reason": "content_filter"}
+    if metadata_present:
         result["agent_supervisor"] = metadata
     return result
+
+
+def _chat_response_is_content_filtered(choices: Any, metadata: dict[str, Any]) -> bool:
+    """Keep Responses status aligned with an enforced Chat gateway block."""
+
+    if str(metadata.get("decision") or "").strip() in {"拒绝", "询问", "隔离"}:
+        return True
+    if metadata.get("output_filter_blocked") is True:
+        return True
+    if not isinstance(choices, list):
+        return False
+    return any(
+        isinstance(choice, dict) and str(choice.get("finish_reason") or "").strip().lower() == "content_filter"
+        for choice in choices
+    )
 
 
 def _input_to_messages(raw_input: Any) -> list[dict[str, Any]]:
     if isinstance(raw_input, str):
         if not raw_input:
             return []
-        return [{"role": "user", "content": raw_input}]
+        return [{"role": "user", "content": _bounded_text(raw_input, "input")}]
     if not isinstance(raw_input, list) or len(raw_input) > _MAX_INPUT_ITEMS:
         raise ResponsesCompatibilityError("Responses.input 必须是字符串或有限数组。")
     messages: list[dict[str, Any]] = []
     for index, item in enumerate(raw_input):
         path = f"input[{index}]"
         if isinstance(item, str):
-            messages.append({"role": "user", "content": item})
+            messages.append({"role": "user", "content": _bounded_text(item, path)})
             continue
         if not isinstance(item, dict):
             raise ResponsesCompatibilityError(f"{path} 必须是对象或字符串。")
@@ -209,8 +235,7 @@ def _input_to_messages(raw_input: Any) -> list[dict[str, Any]]:
             call_id = _required_identifier(item.get("call_id") or item.get("id"), f"{path}.call_id")
             name = _required_identifier(item.get("name"), f"{path}.name")
             arguments = item.get("arguments")
-            if not isinstance(arguments, str):
-                raise ResponsesCompatibilityError(f"{path}.arguments 必须是 JSON 字符串。")
+            arguments = _strict_json_object_text(arguments, f"{path}.arguments")
             messages.append(
                 {
                     "role": "assistant",
@@ -236,20 +261,20 @@ def _input_to_messages(raw_input: Any) -> list[dict[str, Any]]:
 
 def _content_to_chat(value: Any, *, path: str) -> Any:
     if isinstance(value, str):
-        return value
+        return _bounded_text(value, path)
     if not isinstance(value, list) or len(value) > _MAX_CONTENT_PARTS:
         raise ResponsesCompatibilityError(f"{path} 只支持字符串或有限文本块数组。")
     parts: list[dict[str, str]] = []
     for index, part in enumerate(value):
         if isinstance(part, str):
-            parts.append({"type": "text", "text": part})
+            parts.append({"type": "text", "text": _bounded_text(part, f"{path}[{index}]")})
             continue
         if not isinstance(part, dict) or str(part.get("type") or "") not in _TEXT_PART_TYPES:
             raise ResponsesCompatibilityError(f"{path}[{index}] 只支持 input_text/output_text 文本块。")
         text = part.get("text")
         if not isinstance(text, str):
             raise ResponsesCompatibilityError(f"{path}[{index}].text 必须是字符串。")
-        parts.append({"type": "text", "text": text})
+        parts.append({"type": "text", "text": _bounded_text(text, f"{path}[{index}].text")})
     return parts
 
 
@@ -264,9 +289,27 @@ def _responses_tools_to_chat(value: Any) -> list[dict[str, Any]]:
             )
         name = _required_identifier(raw_tool.get("name"), f"tools[{index}].name")
         function: dict[str, Any] = {"name": name}
-        for field_name in ("description", "parameters", "strict"):
-            if field_name in raw_tool:
-                function[field_name] = raw_tool[field_name]
+        if "description" in raw_tool:
+            description = raw_tool["description"]
+            if not isinstance(description, str):
+                raise ResponsesCompatibilityError(f"tools[{index}].description 必须是字符串。")
+            function["description"] = _bounded_text(description, f"tools[{index}].description")
+        if "parameters" in raw_tool:
+            parameters = raw_tool["parameters"]
+            if not isinstance(parameters, dict):
+                raise ResponsesCompatibilityError(f"tools[{index}].parameters 必须是 JSON 对象。")
+            try:
+                encoded_parameters = json.dumps(parameters, ensure_ascii=False, separators=(",", ":"))
+            except (TypeError, ValueError, RecursionError) as exc:
+                raise ResponsesCompatibilityError(f"tools[{index}].parameters 无法安全序列化。") from exc
+            if len(encoded_parameters.encode("utf-8")) > _MAX_TOOL_SCHEMA_BYTES:
+                raise ResponsesCompatibilityError(f"tools[{index}].parameters 超出大小限制。")
+            function["parameters"] = parameters
+        if "strict" in raw_tool:
+            strict = raw_tool["strict"]
+            if not isinstance(strict, bool):
+                raise ResponsesCompatibilityError(f"tools[{index}].strict 必须是布尔值。")
+            function["strict"] = strict
         tools.append({"type": "function", "function": function})
     return tools
 
@@ -289,6 +332,42 @@ def _required_identifier(value: Any, path: str) -> str:
     if not text or len(text) > 256 or any(ord(char) < 0x20 for char in text):
         raise ResponsesCompatibilityError(f"{path} 必须是有限的协议标识符。")
     return text
+
+
+def _bounded_text(value: str, path: str) -> str:
+    if len(value) > _MAX_TEXT_CHARS:
+        raise ResponsesCompatibilityError(f"{path} 文本长度超出 {_MAX_TEXT_CHARS} 字符限制。")
+    return value
+
+
+def _strict_json_object_text(value: Any, path: str) -> str:
+    if not isinstance(value, str):
+        raise ResponsesCompatibilityError(f"{path} 必须是 JSON 对象字符串。")
+    if len(value) > _MAX_TOOL_ARGUMENT_CHARS:
+        raise ResponsesCompatibilityError(f"{path} 超出 {_MAX_TOOL_ARGUMENT_CHARS} 字符长度限制。")
+
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON key")
+            result[key] = item
+        return result
+
+    def reject_non_finite(constant: str) -> Any:
+        raise ValueError(f"non-finite JSON number: {constant}")
+
+    try:
+        parsed = json.loads(
+            value,
+            object_pairs_hook=reject_duplicates,
+            parse_constant=reject_non_finite,
+        )
+    except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+        raise ResponsesCompatibilityError(f"{path} 必须是无重复字段的有效 JSON 对象字符串。") from exc
+    if not isinstance(parsed, dict):
+        raise ResponsesCompatibilityError(f"{path} 必须表示 JSON 对象。")
+    return value
 
 
 def _stringify_output(value: Any) -> str:

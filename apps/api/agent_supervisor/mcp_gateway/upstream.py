@@ -11,9 +11,11 @@ import os
 import re
 import subprocess
 import threading
-from collections import deque
+from collections import OrderedDict, deque
 from time import monotonic
-from typing import Any, cast
+from typing import Any, Callable, cast
+
+from apps.api.agent_supervisor.mcp_gateway.http_transport import log_level_allows
 
 NOTIFICATION_BUFFER_SIZE = 200
 DEFAULT_MAX_MESSAGE_BYTES = 1 * 1024 * 1024
@@ -48,6 +50,15 @@ ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 class StdioUpstreamError(RuntimeError):
     """上游 MCP Server 通信失败。"""
+
+
+class StdioUpstreamServerRequest(StdioUpstreamError):
+    """上游在等待客户端输入时发出的旧版 server→client 请求。"""
+
+    def __init__(self, message: dict[str, Any], *, parent_request_id: int) -> None:
+        self.message = message
+        self.parent_request_id = parent_request_id
+        super().__init__("上游 MCP Server 请求了现代 MRTR 输入。")
 
 
 class StdioMcpUpstream:
@@ -90,6 +101,9 @@ class StdioMcpUpstream:
         self._response_condition = threading.Condition()
         self._upstream_closed = False
         self._notifications: deque[dict[str, Any]] = deque(maxlen=NOTIFICATION_BUFFER_SIZE)
+        self._server_request_events: dict[int, deque[dict[str, Any]]] = {}
+        self._inflight_capture: "OrderedDict[int, bool]" = OrderedDict()
+        self._notification_sinks: dict[int, tuple[Callable[[dict[str, Any]], None], Any, str | None]] = {}
         self._reader: threading.Thread | None = None
         self._next_id = 0
         self._reader_error = ""
@@ -201,21 +215,83 @@ class StdioMcpUpstream:
 
     # -- 读写 ---------------------------------------------------------------
 
+    def _request_notification_sink(self, message: dict[str, Any]) -> Callable[[dict[str, Any]], None] | None:
+        """Resolve only an unambiguous, request-authorized notification sink.
+
+        Legacy stdio log notifications carry no parent request id. They are
+        therefore safe to bridge only while exactly one upstream request is in
+        flight and that request opted in with a valid per-request ``logLevel``.
+        """
+
+        method = str(message.get("method") or "")
+        raw_params = message.get("params")
+        params: dict[str, Any] = raw_params if isinstance(raw_params, dict) else {}
+        if method == "notifications/progress":
+            progress_token = params.get("progressToken")
+            matches = [
+                callback
+                for callback, expected_token, _ in self._notification_sinks.values()
+                if _same_jsonrpc_scalar(progress_token, expected_token)
+            ]
+            # A duplicated client token does not identify one request stream.
+            # Drop the notification instead of leaking it into whichever
+            # matching stream happened to be registered first.
+            return matches[0] if len(matches) == 1 else None
+        if method != "notifications/message" or len(self._inflight_capture) != 1:
+            return None
+        request_id = next(iter(self._inflight_capture))
+        sink_entry = self._notification_sinks.get(request_id)
+        if sink_entry is None:
+            return None
+        callback, _, minimum_level = sink_entry
+        return callback if log_level_allows(minimum_level, params.get("level")) else None
+
     def _reader_loop(self) -> None:
         proc = self._proc
         if proc is None or proc.stdout is None:
+            with self._response_condition:
+                self._reader_error = "上游 MCP 输出管道不可用。"
+                self._upstream_closed = True
+                self._response_condition.notify_all()
             return
+        # ``TextIOWrapper.readline(size)`` may return a partial line when the
+        # upstream frame is larger than ``size``.  Treating that partial chunk
+        # as a complete JSON-RPC message silently discards the rest of the
+        # frame and turns an oversized-response violation into a timeout.  Keep
+        # one bounded accumulator until the newline arrives so every frame is
+        # measured in encoded bytes and rejected deterministically.
+        pending_line = ""
+        pending_bytes = 0
         while True:
-            # ``readline(size)`` bounds the allocation made for one JSON-RPC
-            # frame.  A malicious MCP server cannot force the gateway to hold
-            # an unbounded line before the policy scanner sees it.
-            line = proc.stdout.readline(self._max_message_bytes + 1)
-            if not line:
+            # The size argument bounds each read allocation.  The accumulator
+            # below enforces the total frame bound even when the OS splits one
+            # line across several reads.
+            piece = self._read_stdout_piece(proc)
+            if piece is None:
+                return
+            if not piece:
                 break
-            if len(line.encode("utf-8", errors="replace")) > self._max_message_bytes:
+            if not isinstance(piece, str):
+                self._fail_reader("上游 MCP 输出管道返回了非文本数据。", proc)
+                return
+            pending_line += piece
+            pending_bytes += len(piece.encode("utf-8", errors="replace"))
+            if pending_bytes > self._max_message_bytes:
                 self._fail_reader(f"上游 MCP 消息超过 {self._max_message_bytes} 字节上限。", proc)
                 return
-            line = line.strip()
+            # A newline is part of the bounded wire frame (the writer checks
+            # the encoded payload including its trailing newline).  If the
+            # accumulator has already reached the limit without a newline,
+            # any valid terminator would exceed the limit; fail without
+            # waiting on a peer that may keep the pipe open forever.
+            if not piece.endswith("\n"):
+                if pending_bytes >= self._max_message_bytes:
+                    self._fail_reader(f"上游 MCP 消息超过 {self._max_message_bytes} 字节上限。", proc)
+                    return
+                continue
+            line = pending_line.strip()
+            pending_line = ""
+            pending_bytes = 0
             if not line:
                 continue
             try:
@@ -227,10 +303,48 @@ class StdioMcpUpstream:
             if "method" in message and "id" not in message:
                 # 上行通知（如 notifications/tools/list_changed）进入缓冲区
                 self._notifications.append(message)
+                with self._response_condition:
+                    sink = self._request_notification_sink(message)
+                if sink is not None:
+                    try:
+                        sink(message)
+                    except Exception:
+                        # A progress observer is best-effort; the actual MCP
+                        # response and audit chain remain authoritative.
+                        pass
                 continue
             if "method" in message and "id" in message:
-                # 上游主动请求（server→client）：v1 不支持，立即回错误避免上游挂起
-                self._reply_server_request(message)
+                ambiguous = False
+                with self._response_condition:
+                    inflight = list(self._inflight_capture.items())
+                    captured = [request_id for request_id, capture in inflight if capture]
+                    if not captured:
+                        should_reply = True
+                        parent_id = None
+                    elif len(inflight) == 1 and len(captured) == 1:
+                        should_reply = False
+                        parent_id = captured[0]
+                        self._server_request_events.setdefault(parent_id, deque()).append(message)
+                    else:
+                        # MCP server→client requests do not carry the parent
+                        # client request id.  With more than one in-flight
+                        # request there is no safe owner; never guess and leak
+                        # one Agent's input into another request.
+                        should_reply = False
+                        parent_id = None
+                        ambiguous = True
+                    self._response_condition.notify_all()
+                if ambiguous:
+                    self._fail_reader(
+                        "上游 MCP server→client 请求无法安全归属到唯一未决请求；已终止上游。",
+                        proc,
+                    )
+                    return
+                # Legacy calls retain the established automatic error reply.
+                # Modern bridge calls set ``capture_server_requests`` and let
+                # the request waiter project the event into input_required.
+                if should_reply:
+                    self._reply_server_request(message)
                 continue
             if "id" not in message or not ("result" in message or "error" in message):
                 continue
@@ -253,6 +367,22 @@ class StdioMcpUpstream:
         with self._response_condition:
             self._upstream_closed = True
             self._response_condition.notify_all()
+
+    def _read_stdout_piece(self, proc: subprocess.Popen[str]) -> str | None:
+        """Read one bounded UTF-8 chunk and converge pipe errors immediately."""
+        stdout = proc.stdout
+        if stdout is None:
+            self._fail_reader("上游 MCP 输出管道不可用。", proc)
+            return None
+        try:
+            return stdout.readline(self._max_message_bytes + 1)
+        except UnicodeError as exc:
+            self._fail_reader(f"上游 MCP 输出不是有效 UTF-8（{type(exc).__name__}）。", proc)
+        except (OSError, ValueError) as exc:
+            self._fail_reader(f"读取上游 MCP 输出管道失败（{type(exc).__name__}）。", proc)
+        except Exception as exc:  # noqa: BLE001 - reader must wake waiters on any pipe failure
+            self._fail_reader(f"读取上游 MCP 输出失败（{type(exc).__name__}）。", proc)
+        return None
 
     def _fail_reader(self, reason: str, proc: subprocess.Popen[str]) -> None:
         with self._response_condition:
@@ -288,31 +418,72 @@ class StdioMcpUpstream:
         proc = self._proc
         if proc is None or proc.stdin is None or proc.poll() is not None:
             raise StdioUpstreamError("上游 MCP Server 未运行。")
-        encoded = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-        if len(encoded) > self._max_message_bytes:
-            raise StdioUpstreamError(f"发送到上游的 MCP 消息超过 {self._max_message_bytes} 字节上限。")
-        proc.stdin.write(encoded.decode("utf-8"))
-        proc.stdin.flush()
+        try:
+            encoded = (json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+            if len(encoded) > self._max_message_bytes:
+                raise StdioUpstreamError(f"发送到上游的 MCP 消息超过 {self._max_message_bytes} 字节上限。")
+            proc.stdin.write(encoded.decode("utf-8"))
+            proc.stdin.flush()
+        except StdioUpstreamError:
+            raise
+        except (UnicodeError, OSError, ValueError) as exc:
+            self._fail_reader(f"写入上游 MCP 管道失败（{type(exc).__name__}）。", proc)
+            raise StdioUpstreamError("写入上游 MCP 管道失败。") from exc
 
     def _allocate_id(self) -> int:
         self._next_id += 1
         return self._next_id
 
-    def _wait_response(self, request_id: int, timeout: float) -> dict[str, Any]:
+    def _wait_response(
+        self,
+        request_id: int,
+        timeout: float,
+        *,
+        server_request_handler: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+        cancel_event: Any = None,
+    ) -> dict[str, Any]:
         deadline = monotonic() + (timeout or self._timeout)
-        with self._response_condition:
-            while True:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                self._send_cancelled(request_id)
+                raise StdioUpstreamError("MCP 请求已取消。")
+            server_request: dict[str, Any] | None = None
+            with self._response_condition:
                 message = self._responses.pop(request_id, None)
                 if message is not None:
                     return message
+                queued = self._server_request_events.get(request_id)
+                if queued:
+                    server_request = queued.popleft()
+                    if not queued:
+                        self._server_request_events.pop(request_id, None)
                 if self._reader_error:
                     raise StdioUpstreamError(self._reader_error)
                 if self._upstream_closed:
                     raise StdioUpstreamError("上游 MCP Server 已退出。")
-                remaining = deadline - monotonic()
-                if remaining <= 0:
-                    raise StdioUpstreamError(f"上游 MCP Server 响应超时（id={request_id}）。")
-                self._response_condition.wait(timeout=remaining)
+                if server_request is None:
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise StdioUpstreamError(f"上游 MCP Server 响应超时（id={request_id}）。")
+                    self._response_condition.wait(timeout=min(remaining, 0.1))
+                    continue
+            # Invoke a potentially blocking MRTR callback after releasing the
+            # reader condition. This keeps progress and final response frames
+            # flowing while the HTTP client is deciding what to return.
+            if server_request_handler is None:
+                raise StdioUpstreamServerRequest(server_request, parent_request_id=request_id)
+            response = server_request_handler(server_request)
+            if response is None:
+                # The handler returns ``None`` both for unsupported server
+                # requests and when a request-scoped HTTP stream is cancelled.
+                # In the latter case the loop does not reach its top-of-loop
+                # cancellation check again, so emit the MCP cancellation
+                # notification here before surfacing the deterministic error.
+                if cancel_event is not None and cancel_event.is_set():
+                    self._send_cancelled(request_id)
+                    raise StdioUpstreamError("MCP 请求已取消。")
+                raise StdioUpstreamServerRequest(server_request, parent_request_id=request_id)
+            self.respond_to_server_request(server_request, response)
 
     # -- 对外接口 -----------------------------------------------------------
 
@@ -323,23 +494,87 @@ class StdioMcpUpstream:
         *,
         client_id: Any = None,
         timeout: float | None = None,
+        capture_server_requests: bool = False,
+        server_request_handler: Callable[[dict[str, Any]], dict[str, Any] | None] | None = None,
+        notification_sink: Callable[[dict[str, Any]], None] | None = None,
+        cancel_event: Any = None,
     ) -> dict[str, Any]:
         """发送请求并返回响应；响应 id 还原为调用方的 client_id。
 
         注意：等待响应在锁外进行，避免 reader 线程需要拿锁应答上游
         主动请求时与主线程互等（死锁）。
         """
-        with self._lock:
-            self._ensure_started()
-            request_id = self._allocate_id()
-            payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
-            if params is not None:
-                payload["params"] = params
-            self._write_line(payload)
-        response = self._wait_response(request_id, timeout or self._timeout)
+        # ``_ensure_started`` and ``_write_line`` can fail before an id is
+        # allocated (for example when the configured executable is missing).
+        # Initialise the local up front so the cleanup path never masks the
+        # original, actionable upstream error with ``UnboundLocalError``.
+        request_id: int | None = None
+        try:
+            with self._lock:
+                self._ensure_started()
+                request_id = self._allocate_id()
+                payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
+                if params is not None:
+                    payload["params"] = params
+                with self._response_condition:
+                    self._inflight_capture[request_id] = bool(capture_server_requests)
+                    if notification_sink is not None:
+                        raw_metadata = params.get("_meta") if isinstance(params, dict) else None
+                        metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+                        raw_log_level = metadata.get("io.modelcontextprotocol/logLevel")
+                        log_level = raw_log_level if isinstance(raw_log_level, str) else None
+                        self._notification_sinks[request_id] = (
+                            notification_sink,
+                            metadata.get("progressToken"),
+                            log_level,
+                        )
+                self._write_line(payload)
+            response = self._wait_response(
+                request_id,
+                timeout or self._timeout,
+                server_request_handler=server_request_handler if capture_server_requests else None,
+                cancel_event=cancel_event,
+            )
+        finally:
+            if request_id is not None:
+                with self._response_condition:
+                    self._inflight_capture.pop(request_id, None)
+                    self._server_request_events.pop(request_id, None)
+                    self._notification_sinks.pop(request_id, None)
         if client_id is not None:
             response["id"] = client_id
         return response
+
+    def _send_cancelled(self, request_id: int) -> None:
+        """Best-effort MCP cancellation for a disconnected HTTP stream."""
+
+        try:
+            with self._lock:
+                if self.started:
+                    self._write_line(
+                        {
+                            "jsonrpc": "2.0",
+                            "method": "notifications/cancelled",
+                            "params": {"requestId": request_id, "reason": "client-disconnected"},
+                        }
+                    )
+        except (StdioUpstreamError, OSError):
+            # The reader/child may already have exited; the waiting caller is
+            # still given a deterministic cancellation error.
+            pass
+
+    def respond_to_server_request(self, message: dict[str, Any], response: dict[str, Any]) -> None:
+        """Reply to a captured legacy server request without exposing it upstream."""
+        request_id = message.get("id")
+        if request_id is None:
+            raise StdioUpstreamError("上游 server request 缺少 id。")
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id}
+        if "error" in response:
+            payload["error"] = response["error"]
+        else:
+            payload["result"] = response.get("result", response)
+        with self._lock:
+            self._write_line(payload)
 
     def notify(self, method: str, params: dict[str, Any] | None = None) -> None:
         with self._lock:
@@ -624,3 +859,13 @@ def _build_upstream_env(extra_env: dict[str, str]) -> dict[str, str]:
 
 def _looks_sensitive_env_name(name: str) -> bool:
     return bool(re.search(r"(?i)(token|api[_-]?key|secret|password|credential|auth|hmac|private[_-]?key)", name))
+
+
+def _same_jsonrpc_scalar(left: Any, right: Any) -> bool:
+    """Compare progress tokens without bool/int aliasing or container coercion."""
+    scalar_types = (str, int, float)
+    if isinstance(left, bool) or isinstance(right, bool):
+        return False
+    if not isinstance(left, scalar_types) or not isinstance(right, scalar_types):
+        return False
+    return type(left) is type(right) and left == right

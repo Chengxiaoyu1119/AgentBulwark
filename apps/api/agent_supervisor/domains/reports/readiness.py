@@ -18,6 +18,7 @@ from ..evaluations.datasets import build_attack_case_dataset
 from ..evaluations.demo_drill import load_judge_demo_drill_report
 from ..governance.approvals import list_approval_reviews
 from ..runtime.runtime_evaluation import load_real_model_evaluation_report
+from .gateway_evidence import gateway_evidence_snapshot_scope
 from .readiness_checks import (
     _approval_review_check,
     _attack_dataset_check,
@@ -54,6 +55,21 @@ def _completion_claim_allowed(
 
 
 def build_competition_readiness(
+    runs: list[dict[str, Any]] | None = None,
+    package_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one internally consistent readiness report.
+
+    All artifact checks in a report must compare against the same source and
+    deployment snapshot.  Pinning that snapshot also prevents repeated hashing
+    of the gateway source set when many historical candidates are present.
+    """
+
+    with gateway_evidence_snapshot_scope():
+        return _build_competition_readiness(runs=runs, package_snapshot=package_snapshot)
+
+
+def _build_competition_readiness(
     runs: list[dict[str, Any]] | None = None,
     package_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:

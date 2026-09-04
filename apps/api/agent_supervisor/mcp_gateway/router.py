@@ -84,10 +84,16 @@ def _uri_matches_template(uri: str, template: str) -> bool:
         literal = template[current.end() : following.start()] if following is not None else template[current.end() :]
         if not literal:
             continue
+        if following is None:
+            # The final literal is an anchor, not necessarily its first
+            # occurrence: the preceding variable may contain the same text.
+            return uri.endswith(literal) and len(uri) - len(literal) >= position
         next_position = uri.find(literal, position)
         if next_position < 0:
             return False
         position = next_position + len(literal)
+    # The final variable consumes the remainder of the URI, including slashes
+    # and other URI characters accepted by the upstream template.
     return position <= len(uri)
 
 
@@ -151,7 +157,7 @@ class UpstreamRouter:
         items.sort(key=lambda item: 0 if item[0] == DEFAULT_ROUTE else 1)
         return items
 
-    def refresh_catalog(self) -> dict[str, str]:
+    def refresh_catalog(self, *, cancel_event: Any = None) -> dict[str, str]:
         """查询所有上游 tools/list，重建 工具名 → 路由名 目录，并同步 Skill 扫描结论。"""
         scan_enabled = skill_scan_enabled()
         catalog: dict[str, str] = {}
@@ -159,10 +165,15 @@ class UpstreamRouter:
         verdicts: dict[str, dict[str, Any]] = {}
         conflicts: dict[str, list[str]] = {}
         for route, upstream in self._ordered_upstreams():
+            if cancel_event is not None and cancel_event.is_set():
+                raise StdioUpstreamError("MCP 请求已取消。")
             try:
                 # request 内部会 _ensure_started：未启动的路由首次列目录时启动
-                response = upstream.request("tools/list", {})
+                request_kwargs = {"cancel_event": cancel_event} if cancel_event is not None else {}
+                response = upstream.request("tools/list", {}, **request_kwargs)
             except StdioUpstreamError:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise
                 continue
             tools = (response.get("result") or {}).get("tools") or []
             for tool in tools:
@@ -285,6 +296,7 @@ class UpstreamRouter:
         *,
         client_id: Any = None,
         agent_id: str = "",
+        cancel_event: Any = None,
     ) -> dict[str, Any]:
         """聚合 resources/prompts 列表，并记录每项的真实路由。
 
@@ -315,9 +327,16 @@ class UpstreamRouter:
             else:
                 self._prompt_catalog = {}
         for route, upstream in self._ordered_upstreams():
+            if cancel_event is not None and cancel_event.is_set():
+                raise StdioUpstreamError("MCP 请求已取消。")
             try:
-                response = upstream.request(method, upstream_params, client_id=client_id)
+                request_kwargs = {"client_id": client_id}
+                if cancel_event is not None:
+                    request_kwargs["cancel_event"] = cancel_event
+                response = upstream.request(method, upstream_params, **request_kwargs)
             except StdioUpstreamError as exc:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise
                 failures.append({"route": route, **_safe_upstream_error(exc)})
                 continue
             if isinstance(response.get("error"), dict):
@@ -614,7 +633,7 @@ class UpstreamRouter:
                 return route, self._upstreams[route]
         return None
 
-    def list_tools(self, *, agent_id: str = "") -> dict[str, Any]:
+    def list_tools(self, *, agent_id: str = "", cancel_event: Any = None) -> dict[str, Any]:
         """聚合可交给模型的工具清单。
 
         ``tools/list`` is a model-context boundary, not an operator report.
@@ -622,7 +641,7 @@ class UpstreamRouter:
         caller must use :meth:`tool_inventory` through the authenticated
         management endpoint to inspect filtered/quarantined names.
         """
-        self.refresh_catalog()
+        self.refresh_catalog(cancel_event=cancel_event)
         with self._lock:
             catalog = dict(self._catalog)
             definitions = {name: dict(tool) for name, tool in self._tool_definitions.items()}

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
+import secrets
 import shlex
 from pathlib import Path
 
 from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
 
 DEFAULT_TIMEOUT_SECONDS = 10.0
+MIN_TIMEOUT_SECONDS = 0.1
+MAX_TIMEOUT_SECONDS = 300.0
 DEFAULT_SERVER_NAME = "zhiAn-sentinel-mcp-gateway"
 DEFAULT_MAX_MESSAGE_BYTES = 1 * 1024 * 1024
 DEFAULT_MAX_PENDING_RESPONSES = 256
@@ -18,6 +23,9 @@ DEFAULT_ALLOW_SIDE_EFFECT_NOTIFICATIONS = False
 DEFAULT_NETWORK_MODE = "reject-unpinned"
 DEFAULT_SESSION_ISOLATION = True
 DEFAULT_MAX_SESSIONS = 128
+DEFAULT_MAX_SUBSCRIPTIONS = 128
+DEFAULT_REQUEST_STATE_TTL_SECONDS = 300
+_EPHEMERAL_REQUEST_STATE_SECRET = secrets.token_bytes(48)
 
 
 def gateway_routes() -> dict[str, list[str]]:
@@ -173,11 +181,59 @@ def gateway_max_sessions() -> int:
     return max(1, min(value, 1024))
 
 
+def gateway_max_subscriptions() -> int:
+    """Bound concurrent modern ``subscriptions/listen`` response streams."""
+
+    try:
+        value = int(os.environ.get("MCP_GATEWAY_MAX_SUBSCRIPTIONS", DEFAULT_MAX_SUBSCRIPTIONS))
+    except (TypeError, ValueError):
+        value = DEFAULT_MAX_SUBSCRIPTIONS
+    return max(1, min(value, 1024))
+
+
+def gateway_request_state_secret() -> bytes:
+    """Return the HMAC key used to bind modern MRTR ``requestState``.
+
+    Deployments should set ``MCP_GATEWAY_REQUEST_STATE_SECRET`` to the same
+    high-entropy value on every worker.  A configured audit HMAC key is a
+    useful local fallback; when neither exists, the process uses an ephemeral
+    key, which intentionally invalidates outstanding states on restart.
+    """
+    validate_gateway_request_state_configuration()
+    raw = os.environ.get("MCP_GATEWAY_REQUEST_STATE_SECRET", "").strip()
+    if raw:
+        return raw.encode("utf-8")
+    audit_key = os.environ.get("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "").strip()
+    if audit_key:
+        return hashlib.sha256(("mcp-request-state:" + audit_key).encode("utf-8")).digest()
+    return _EPHEMERAL_REQUEST_STATE_SECRET
+
+
+def validate_gateway_request_state_configuration() -> None:
+    """Fail startup on an explicitly configured MRTR key below the HMAC floor."""
+
+    raw = os.environ.get("MCP_GATEWAY_REQUEST_STATE_SECRET", "").strip()
+    if raw and len(raw.encode("utf-8")) < 32:
+        raise RuntimeError("MCP_GATEWAY_REQUEST_STATE_SECRET 至少需要 32 字节。")
+
+
+def gateway_mrtr_timeout_seconds() -> int:
+    """Bound how long a legacy child may wait for modern input responses."""
+    try:
+        value = int(os.environ.get("MCP_GATEWAY_MRTR_TIMEOUT_SECONDS", DEFAULT_REQUEST_STATE_TTL_SECONDS))
+    except (TypeError, ValueError):
+        value = DEFAULT_REQUEST_STATE_TTL_SECONDS
+    return max(30, min(value, 900))
+
+
 def gateway_timeout_seconds() -> float:
     try:
-        return float(os.environ.get("MCP_GATEWAY_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
-    except ValueError:
+        value = float(os.environ.get("MCP_GATEWAY_TIMEOUT_SECONDS", DEFAULT_TIMEOUT_SECONDS))
+    except (TypeError, ValueError):
         return DEFAULT_TIMEOUT_SECONDS
+    if not math.isfinite(value):
+        return DEFAULT_TIMEOUT_SECONDS
+    return max(MIN_TIMEOUT_SECONDS, min(value, MAX_TIMEOUT_SECONDS))
 
 
 def gateway_max_message_bytes() -> int:

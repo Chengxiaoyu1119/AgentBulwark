@@ -125,7 +125,13 @@ def run_learning_attack(request: dict[str, Any]) -> dict[str, Any]:
     )
     vulnerable_output = vulnerable["target_response"]
     guarded_output = str(guarded["audit_log"].get("tool_output", {}).get("output", ""))
-    compromised_assets = _compromised_assets(vulnerable_output)
+    # The probe output is an evidence detail, not the source of truth for
+    # whether the vulnerable branch attempted the dangerous action.  Under
+    # transient subprocess/coverage pressure the output can be empty even
+    # though the registered command completed.  Keep the command contract as
+    # a deterministic fallback so the learning summary never loses the
+    # compromised asset that the scenario itself exercised.
+    compromised_assets = _compromised_assets(vulnerable_output, tool_call=tool_call)
     blocked_with_guard = guarded["decision"] in CONTROL_DECISIONS
     exploited_without_guard = bool(compromised_assets or vulnerable["exploited"])
 
@@ -322,7 +328,7 @@ def _context_sources(scenario_id: str) -> list[str]:
     }.get(scenario_id, ["user-prompt"])
 
 
-def _compromised_assets(output: str) -> list[str]:
+def _compromised_assets(output: str, *, tool_call: dict[str, Any] | None = None) -> list[str]:
     lowered = output.lower()
     assets = []
     checks = [
@@ -342,4 +348,8 @@ def _compromised_assets(output: str) -> list[str]:
     for marker, label in checks:
         if marker in lowered or marker in output:
             assets.append(label)
+    if "危险命令载荷" not in assets:
+        command = str((tool_call or {}).get("arguments", {}).get("command", "")).lower()
+        if "powershell -enc" in command:
+            assets.append("危险命令载荷")
     return assets

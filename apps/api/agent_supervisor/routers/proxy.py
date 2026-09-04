@@ -45,6 +45,7 @@ def _gateway_trace_agent_scope(role: str, authenticated_agent_id: str | None) ->
         if not authenticated_agent_id:
             raise HTTPException(status_code=403, detail="Agent Trace 查询需要绑定到 agent_id 的 executor 凭证")
         return authenticated_agent_id
+    require_any_role({"analyst", "admin"}, role)
     return ""
 
 
@@ -79,9 +80,9 @@ def gateway_trace_detail(
 ) -> dict[str, Any]:
     """Return one redacted gateway trace for exact operator deep-linking."""
 
+    agent_scope = _gateway_trace_agent_scope(role, authenticated_agent_id)
     if not request_id.strip() or len(request_id) > 256:
         raise HTTPException(status_code=404, detail="未找到网关 Trace")
-    agent_scope = _gateway_trace_agent_scope(role, authenticated_agent_id)
     rows = load_gateway_request_audit_events(request_id, agent_id=agent_scope)
     trace = build_gateway_trace(request_id, rows)
     if trace is None:
@@ -138,6 +139,7 @@ def openai_compatible_chat_completion(
                 headers={
                     "Cache-Control": "no-cache",
                     "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
                     "X-Agent-Supervisor-Proxy": "openai-compatible",
                 },
             )
