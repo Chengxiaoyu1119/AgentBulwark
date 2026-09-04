@@ -39,6 +39,17 @@ playwright-report/
 /.tmp-*
 /gateway-*.png
 
+# 本地事务验证产物（基线、差异、回滚和环境快照）
+/verification/
+
+# 根目录误落的运行时目录与运行锁
+# 正式运行数据统一使用 apps/api/runtime/ 或 AGENT_SUPERVISOR_RUNTIME_DIR。
+/runtime/
+/.runtime-active/
+/.agent_supervisor.sqlite3.lock
+/.policy_audit_outbox.json.lock
+/.runtime-maintenance.lock
+
 # 本地运行数据、数据库和日志
 *.log
 *.sqlite3
