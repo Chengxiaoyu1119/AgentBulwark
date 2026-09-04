@@ -34,6 +34,20 @@ def shared_executor_compatibility_enabled() -> bool:
     return env_bool(ALLOW_SHARED_EXECUTOR_TOKEN_ENV) and not production_security_profile()
 
 
+def can_execute_managed_tools(role: str, agent_id: str | None) -> bool:
+    """Project the server-owned tool boundary from authenticated identity.
+
+    Administrators may operate the managed executor directly.  Executor
+    credentials must be bound to one concrete Agent; the legacy shared-token
+    compatibility path remains suitable for transparent proxy migration only.
+    """
+
+    normalized_role = str(role or "").strip().lower()
+    return normalized_role == "admin" or (
+        normalized_role == "executor" and bool(str(agent_id or "").strip())
+    )
+
+
 def supplied_token(authorization: str | None, header_token: str | None) -> str:
     bearer_token = ""
     if authorization and authorization.lower().startswith("bearer "):

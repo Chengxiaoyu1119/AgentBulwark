@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+import uuid
 from copy import deepcopy
 from typing import Any, cast
 
 from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
 from apps.api.agent_supervisor.paths import PACKAGE_DIR, RUNTIME_DIR
 from apps.api.agent_supervisor.storage.database import record_policy_version
+from apps.api.agent_supervisor.storage.json_store import exclusive_file_lock, load_json, load_json_existing, save_json
 
 CONFIG_DIR = PACKAGE_DIR / "config"
 POLICY_OVERRIDES_PATH = RUNTIME_DIR / "policy_overrides.json"
 POLICY_SETTINGS_PATH = RUNTIME_DIR / "policy_settings.json"
+POLICY_AUDIT_OUTBOX_PATH = RUNTIME_DIR / "policy_audit_outbox.json"
 POLICY_EDITABLE_FIELDS = {"enabled", "name", "description", "decision", "layer", "risk_controls"}
 DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
     "anomaly_review_threshold": 55,
@@ -70,6 +74,7 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
 
 _json_cache: dict[str, tuple[float, Any]] = {}
 _enabled_cache: dict[str, tuple[float, bool]] = {}
+_POLICY_CONFIG_LOCK = threading.RLock()
 ENABLED_CACHE_TTL_SECONDS = 1.0
 
 
@@ -111,21 +116,34 @@ def _load_json_dict(filename: str) -> dict[str, Any]:
 _overrides_cache: dict[str, tuple[int, int, dict[str, dict[str, Any]]]] = {}
 
 
-def _load_policy_overrides() -> dict[str, dict[str, Any]]:
-    if not POLICY_OVERRIDES_PATH.exists():
+def _load_policy_overrides(
+    *, force_refresh: bool = False, reject_invalid_existing: bool = False
+) -> dict[str, dict[str, Any]]:
+    try:
+        stat = POLICY_OVERRIDES_PATH.stat()
+    except FileNotFoundError:
+        return {}
+    except OSError:
+        if reject_invalid_existing:
+            raise
         return {}
     cache_id = str(POLICY_OVERRIDES_PATH)
-    stat = POLICY_OVERRIDES_PATH.stat()
     mtime_ns = stat.st_mtime_ns
     file_size = stat.st_size
     cached = _overrides_cache.get(cache_id)
-    if cached is not None and cached[0] == mtime_ns and cached[1] == file_size:
-        return cached[2]
+    if not force_refresh and cached is not None and cached[0] == mtime_ns and cached[1] == file_size:
+        return deepcopy(cached[2])
     try:
-        raw = json.loads(POLICY_OVERRIDES_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+        raw = (
+            load_json_existing(POLICY_OVERRIDES_PATH)
+            if reject_invalid_existing
+            else load_json(POLICY_OVERRIDES_PATH)
+        )
+    except FileNotFoundError:
         return {}
     if not isinstance(raw, dict):
+        if reject_invalid_existing:
+            raise ValueError(f"{POLICY_OVERRIDES_PATH} must contain a JSON object")
         return {}
     overrides: dict[str, dict[str, Any]] = {}
     for key, value in raw.items():
@@ -137,7 +155,10 @@ def _load_policy_overrides() -> dict[str, dict[str, Any]]:
             if "enabled" in clean:
                 clean["enabled"] = bool(clean["enabled"])
             overrides[policy_id] = clean
-    _overrides_cache[cache_id] = (mtime_ns, file_size, overrides)
+    # Callers receive a detached value.  In particular, a writer must not
+    # mutate the process-wide read cache before its atomic file replacement has
+    # succeeded; otherwise a failed update can become effective in memory only.
+    _overrides_cache[cache_id] = (mtime_ns, file_size, deepcopy(overrides))
     return overrides
 
 
@@ -147,10 +168,7 @@ def _invalidate_overrides_cache() -> None:
 
 
 def _save_policy_overrides(overrides: dict[str, dict[str, Any]]) -> None:
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = POLICY_OVERRIDES_PATH.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(POLICY_OVERRIDES_PATH)
+    save_json(POLICY_OVERRIDES_PATH, overrides)
     _invalidate_overrides_cache()
 
 
@@ -162,30 +180,46 @@ _settings_stat_at: dict[str, float] = {}
 SETTINGS_STAT_TTL_SECONDS = 1.0
 
 
-def _load_policy_settings() -> dict[str, Any]:
+def _load_policy_settings(*, force_refresh: bool = False, reject_invalid_existing: bool = False) -> dict[str, Any]:
     cache_id = str(POLICY_SETTINGS_PATH)
     now = time.monotonic()
     cached = _settings_cache.get(cache_id)
-    if cached is not None and (now - _settings_stat_at.get(cache_id, 0.0)) < SETTINGS_STAT_TTL_SECONDS:
-        return dict(cached[1])
+    if not force_refresh and cached is not None and (now - _settings_stat_at.get(cache_id, 0.0)) < SETTINGS_STAT_TTL_SECONDS:
+        return deepcopy(cached[1])
     try:
         mtime = os.stat(POLICY_SETTINGS_PATH).st_mtime
-    except OSError:
-        _settings_cache[cache_id] = (0.0, dict(DEFAULT_POLICY_SETTINGS))
+    except FileNotFoundError:
+        defaults = deepcopy(DEFAULT_POLICY_SETTINGS)
+        _settings_cache[cache_id] = (0.0, deepcopy(defaults))
         _settings_stat_at[cache_id] = now
-        return dict(DEFAULT_POLICY_SETTINGS)
+        return defaults
+    except OSError:
+        if reject_invalid_existing:
+            raise
+        defaults = deepcopy(DEFAULT_POLICY_SETTINGS)
+        _settings_cache[cache_id] = (0.0, deepcopy(defaults))
+        _settings_stat_at[cache_id] = now
+        return defaults
     _settings_stat_at[cache_id] = now
-    if cached is not None and cached[0] == mtime:
-        return dict(cached[1])
+    if not force_refresh and cached is not None and cached[0] == mtime:
+        return deepcopy(cached[1])
     try:
-        raw = json.loads(POLICY_SETTINGS_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return dict(DEFAULT_POLICY_SETTINGS)
+        raw = (
+            load_json_existing(POLICY_SETTINGS_PATH)
+            if reject_invalid_existing
+            else load_json(POLICY_SETTINGS_PATH)
+        )
+    except FileNotFoundError:
+        return deepcopy(DEFAULT_POLICY_SETTINGS)
     if not isinstance(raw, dict):
-        return dict(DEFAULT_POLICY_SETTINGS)
-    settings = _normalize_policy_settings({**DEFAULT_POLICY_SETTINGS, **raw})
-    _settings_cache[cache_id] = (mtime, settings)
-    return dict(settings)
+        if reject_invalid_existing:
+            raise ValueError(f"{POLICY_SETTINGS_PATH} must contain a JSON object")
+        return deepcopy(DEFAULT_POLICY_SETTINGS)
+    settings = deepcopy(DEFAULT_POLICY_SETTINGS)
+    settings.update(deepcopy(raw))
+    settings = _normalize_policy_settings(settings)
+    _settings_cache[cache_id] = (mtime, deepcopy(settings))
+    return settings
 
 
 def _invalidate_settings_cache() -> None:
@@ -360,11 +394,152 @@ def _tool_mappings(value: Any) -> dict[str, dict[str, dict[str, Any]]]:
 
 
 def _save_policy_settings(settings: dict[str, Any]) -> None:
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_path = POLICY_SETTINGS_PATH.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(POLICY_SETTINGS_PATH)
+    save_json(POLICY_SETTINGS_PATH, settings)
     _invalidate_settings_cache()
+
+
+def _load_policy_audit_outbox() -> dict[str, dict[str, Any]]:
+    try:
+        raw = load_json_existing(POLICY_AUDIT_OUTBOX_PATH)
+    except FileNotFoundError:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{POLICY_AUDIT_OUTBOX_PATH} must contain a JSON object")
+    if any(not isinstance(value, dict) for value in raw.values()):
+        raise ValueError(f"{POLICY_AUDIT_OUTBOX_PATH} contains an invalid audit entry")
+    return {str(key): value for key, value in raw.items()}
+
+
+def _write_policy_audit_outbox(entries: dict[str, dict[str, Any]]) -> None:
+    save_json(POLICY_AUDIT_OUTBOX_PATH, entries)
+
+
+def _prepare_policy_audit_outbox(entry: dict[str, Any]) -> None:
+    operation_id = str(entry["operation_id"])
+    with exclusive_file_lock(POLICY_AUDIT_OUTBOX_PATH):
+        _prepare_policy_audit_outbox_unlocked(operation_id, entry)
+
+
+def _prepare_policy_audit_outbox_unlocked(operation_id: str, entry: dict[str, Any]) -> None:
+    entries = _load_policy_audit_outbox()
+    entries[operation_id] = entry
+    _write_policy_audit_outbox(entries)
+
+
+def _mark_policy_audit_outbox_applied(operation_id: str) -> None:
+    with exclusive_file_lock(POLICY_AUDIT_OUTBOX_PATH):
+        _mark_policy_audit_outbox_applied_unlocked(operation_id)
+
+
+def _mark_policy_audit_outbox_applied_unlocked(operation_id: str) -> None:
+    entries = _load_policy_audit_outbox()
+    entry = entries.get(operation_id)
+    if entry is None:
+        raise RuntimeError("策略审计待发记录意外丢失")
+    entry["state"] = "applied"
+    entries[operation_id] = entry
+    _write_policy_audit_outbox(entries)
+
+
+def _remove_policy_audit_outbox_entry(operation_id: str) -> None:
+    with exclusive_file_lock(POLICY_AUDIT_OUTBOX_PATH):
+        _remove_policy_audit_outbox_entry_unlocked(operation_id)
+
+
+def _remove_policy_audit_outbox_entry_unlocked(operation_id: str) -> None:
+    entries = _load_policy_audit_outbox()
+    if operation_id not in entries:
+        return
+    del entries[operation_id]
+    _write_policy_audit_outbox(entries)
+
+
+def _new_policy_audit_entry(
+    *,
+    resource: str,
+    policy_id: str,
+    before: dict[str, Any],
+    after: dict[str, Any],
+    operator: str,
+    comment: str,
+    expected_config: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "operation_id": uuid.uuid4().hex,
+        "resource": resource,
+        "policy_id": policy_id,
+        "before": deepcopy(before),
+        "after": deepcopy(after),
+        "operator": operator or "security-admin",
+        "comment": comment,
+        "expected_config": deepcopy(expected_config),
+        "state": "prepared",
+    }
+
+
+def _current_outbox_resource_config(resource: str) -> dict[str, Any] | None:
+    if resource == "policy_overrides":
+        return _load_policy_overrides(force_refresh=True, reject_invalid_existing=True)
+    if resource == "policy_settings":
+        return _load_policy_settings(force_refresh=True, reject_invalid_existing=True)
+    return None
+
+
+def recover_policy_audit_outbox() -> None:
+    """Replay durable policy audit entries left after a database write failure.
+
+    Runtime config becomes effective before its audit record is committed.  The
+    file-backed outbox makes that boundary restart-safe.  Only entries whose
+    intended configuration still matches the current file are replayed; a
+    mismatch remains visible for later reconciliation rather than inventing an
+    audit history for a superseded update.
+    """
+    with exclusive_file_lock(POLICY_AUDIT_OUTBOX_PATH):
+        entries = _load_policy_audit_outbox()
+        changed = False
+        for operation_id, entry in list(entries.items()):
+            resource = str(entry.get("resource") or "")
+            expected_config = entry.get("expected_config")
+            before = entry.get("before")
+            after = entry.get("after")
+            if not isinstance(expected_config, dict) or not isinstance(before, dict) or not isinstance(after, dict):
+                continue
+            current_config = _current_outbox_resource_config(resource)
+            state = str(entry.get("state") or "")
+            if state == "uncertain":
+                # Once a prepared write has been observed behind a newer
+                # configuration, a later coincidental value match is not proof
+                # that the original operation was applied.  Keep it for
+                # explicit reconciliation rather than manufacturing history.
+                continue
+            if current_config != expected_config:
+                # ``save_json`` can replace the config immediately before a
+                # process exits, leaving the outbox in ``prepared`` state.  A
+                # surviving writer may then supersede that real change.  A
+                # mismatch therefore cannot prove the prepared operation was
+                # never applied; preserve the evidence as uncertain.
+                if state == "prepared":
+                    entry["state"] = "uncertain"
+                    entries[operation_id] = entry
+                    changed = True
+                continue
+            try:
+                record_policy_version(
+                    policy_id=str(entry.get("policy_id") or ""),
+                    before=before,
+                    after=after,
+                    operator=str(entry.get("operator") or "security-admin"),
+                    comment=str(entry.get("comment") or ""),
+                    operation_id=operation_id,
+                )
+            except Exception:
+                # Database availability must not prevent a server from
+                # starting; retain the durable record for the next init.
+                continue
+            del entries[operation_id]
+            changed = True
+        if changed:
+            _write_policy_audit_outbox(entries)
 
 
 def _clamp_int(value: Any, min_value: int, max_value: int) -> int:
@@ -494,8 +669,28 @@ def update_policy(
     operator: str = "security-admin",
     comment: str = "",
 ) -> dict[str, Any]:
+    with _POLICY_CONFIG_LOCK:
+        # The outbox lock is the transaction-wide, cross-process mutex.  It
+        # prevents startup recovery from discarding a prepared entry between
+        # the config read and its atomic replacement.  Every writer takes locks
+        # in the same order (outbox, then resource) to avoid lock inversion.
+        with exclusive_file_lock(POLICY_AUDIT_OUTBOX_PATH):
+            with exclusive_file_lock(POLICY_OVERRIDES_PATH):
+                return _update_policy_unlocked(policy_id, updates, operator=operator, comment=comment)
+
+
+def _update_policy_unlocked(
+    policy_id: str,
+    updates: dict[str, Any],
+    *,
+    operator: str = "security-admin",
+    comment: str = "",
+) -> dict[str, Any]:
     policies = _load_json_list("policies.json")
-    overrides = _load_policy_overrides()
+    # Cross-process writers must discard any process-local snapshot while the
+    # file lock is held, then perform the complete read/merge/write sequence.
+    _invalidate_overrides_cache()
+    overrides = _load_policy_overrides(force_refresh=True, reject_invalid_existing=True)
     for policy in policies:
         if policy["id"] == policy_id:
             before = next(item for item in get_policies() if item["id"] == policy_id)
@@ -506,16 +701,43 @@ def update_policy(
             if "risk_controls" in clean_updates and not isinstance(clean_updates["risk_controls"], list):
                 clean_updates.pop("risk_controls")
             overrides[policy_id] = {**current_override, **clean_updates}
-            _save_policy_overrides(overrides)
             impacts = _load_json_dict("policy_impact.json")
             after = _enrich_policy({**policy, **overrides[policy_id]}, impacts)
-            record_policy_version(
+            entry = _new_policy_audit_entry(
+                resource="policy_overrides",
                 policy_id=policy_id,
                 before=before,
                 after=after,
                 operator=operator,
                 comment=comment or "策略配置更新",
+                expected_config=overrides,
             )
+            operation_id = str(entry["operation_id"])
+            _prepare_policy_audit_outbox_unlocked(operation_id, entry)
+            try:
+                _save_policy_overrides(overrides)
+            except Exception:
+                # A replace may have completed even when a later durability
+                # step reports an error.  Keep the prepared intent so startup
+                # recovery can compare it with disk, and ensure readers reload
+                # the actual file rather than a transaction-local object.
+                _invalidate_overrides_cache()
+                raise
+            _mark_policy_audit_outbox_applied_unlocked(operation_id)
+            try:
+                record_policy_version(
+                    policy_id=policy_id,
+                    before=before,
+                    after=after,
+                    operator=operator,
+                    comment=comment or "策略配置更新",
+                    operation_id=operation_id,
+                )
+            except Exception:
+                # The applied entry is deliberately retained for init_db() to
+                # replay after a transient audit-store failure.
+                raise
+            _remove_policy_audit_outbox_entry_unlocked(operation_id)
             return after
     raise KeyError(f"Policy not found: {policy_id}")
 
@@ -554,7 +776,19 @@ def get_policy_settings() -> dict[str, Any]:
 
 
 def update_policy_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    before = get_policy_settings()
+    with _POLICY_CONFIG_LOCK:
+        with exclusive_file_lock(POLICY_AUDIT_OUTBOX_PATH):
+            with exclusive_file_lock(POLICY_SETTINGS_PATH):
+                return _update_policy_settings_unlocked(updates)
+
+
+def _update_policy_settings_unlocked(updates: dict[str, Any]) -> dict[str, Any]:
+    _invalidate_settings_cache()
+    before = _load_policy_settings(force_refresh=True, reject_invalid_existing=True)
+    if production_security_profile():
+        before["require_agent_capability_registration"] = True
+        before["require_agent_model_registration"] = True
+        before["require_agent_context_registration"] = True
     settings = _normalize_policy_settings(
         {**before, **{key: value for key, value in updates.items() if key in DEFAULT_POLICY_SETTINGS}}
     )
@@ -562,14 +796,36 @@ def update_policy_settings(updates: dict[str, Any]) -> dict[str, Any]:
         settings["require_agent_capability_registration"] = True
         settings["require_agent_model_registration"] = True
         settings["require_agent_context_registration"] = True
-    _save_policy_settings(settings)
+    operator = str(updates.get("operator", "security-admin"))
+    comment = str(updates.get("comment", "运行阈值更新"))
+    entry = _new_policy_audit_entry(
+        resource="policy_settings",
+        policy_id="__runtime_settings__",
+        before=before,
+        after=settings,
+        operator=operator,
+        comment=comment,
+        expected_config=settings,
+    )
+    operation_id = str(entry["operation_id"])
+    _prepare_policy_audit_outbox_unlocked(operation_id, entry)
+    try:
+        _save_policy_settings(settings)
+    except Exception:
+        # Treat the write result as uncertain: retain the prepared intent and
+        # force subsequent reads to reflect the file that is actually on disk.
+        _invalidate_settings_cache()
+        raise
+    _mark_policy_audit_outbox_applied_unlocked(operation_id)
     record_policy_version(
         policy_id="__runtime_settings__",
         before=before,
         after=settings,
-        operator=str(updates.get("operator", "security-admin")),
-        comment=str(updates.get("comment", "运行阈值更新")),
+        operator=operator,
+        comment=comment,
+        operation_id=operation_id,
     )
+    _remove_policy_audit_outbox_entry_unlocked(operation_id)
     return settings
 
 

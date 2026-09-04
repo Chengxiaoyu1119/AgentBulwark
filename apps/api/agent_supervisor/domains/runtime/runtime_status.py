@@ -19,6 +19,8 @@ from apps.api.agent_supervisor.mcp_gateway.config import (
     gateway_enabled,
     gateway_guard_enabled,
     gateway_max_sessions,
+    gateway_max_subscriptions,
+    gateway_mrtr_timeout_seconds,
     gateway_network_mode,
     gateway_resource_limits,
     gateway_routes,
@@ -26,6 +28,7 @@ from apps.api.agent_supervisor.mcp_gateway.config import (
     gateway_timeout_seconds,
     upstream_command,
 )
+from apps.api.agent_supervisor.mcp_gateway.http_transport import LOG_LEVELS, MODERN_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS
 from apps.api.agent_supervisor.paths import MEMORY_DIR, OUTBOX_DIR, RUNTIME_DIR, SANDBOX_RUNTIME_DIR, WORKSPACE_DIR
 
 
@@ -101,6 +104,7 @@ def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict:
         "sandbox": {
             "labs_enabled": current_labs_enabled,
             "ready": WORKSPACE_DIR.exists() and OUTBOX_DIR.exists() and MEMORY_DIR.exists(),
+            "agent_runtime": _path_status(RUNTIME_DIR / "agents", "runtime/operational/agents"),
             "runtime": _path_status(SANDBOX_RUNTIME_DIR, "sandbox/runtime"),
             "workspace": _path_status(WORKSPACE_DIR, "sandbox/runtime/workspace"),
             "outbox": _path_status(OUTBOX_DIR, "sandbox/runtime/outbox"),
@@ -123,6 +127,21 @@ def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict:
             # production gateway capability, even if a stale environment flag
             # remains set.  Expose the effective posture, not the raw switch.
             "research_mode_allowed": research_mode_allowed,
+            "streaming": {
+                "supported": True,
+                "mode": "bounded-safety-window",
+                "safety_window_chars": max(
+                    64,
+                    min(
+                        int(os.getenv("AGENT_SUPERVISOR_PROXY_STREAM_SAFETY_WINDOW_CHARS", "256"))
+                        if os.getenv("AGENT_SUPERVISOR_PROXY_STREAM_SAFETY_WINDOW_CHARS", "256").isdigit()
+                        else 256,
+                        4096,
+                    ),
+                ),
+                "tool_calls_buffered_until_final_supervision": True,
+                "reasoning_buffered": True,
+            },
             "optimizer_enabled": _env_bool("AGENT_SUPERVISOR_PROXY_OPTIMIZER_ENABLED", True),
             "force_real_optimizer": _env_bool("AGENT_SUPERVISOR_PROXY_FORCE_REAL_OPTIMIZER", False),
             "force_real_target": _env_bool("AGENT_SUPERVISOR_PROXY_FORCE_REAL_TARGET", False),
@@ -152,6 +171,28 @@ def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict:
             "resource_limits": gateway_resource_limits(),
             "network_mode": gateway_network_mode(),
             "upstream_environment": "minimal-allowlist",
+            "transport": {
+                "mode": "streamable-http-dual-era",
+                "supported_versions": list(SUPPORTED_PROTOCOL_VERSIONS),
+                "modern_version": MODERN_PROTOCOL_VERSION,
+                "request_metadata": "protocolVersion+clientCapabilities required; clientInfo optional",
+                "server_discover": True,
+                "subscriptions_listen": True,
+                "max_subscriptions": gateway_max_subscriptions(),
+                "legacy_initialize_bridge": True,
+                "request_logs": {
+                    "opt_in": "io.modelcontextprotocol/logLevel",
+                    "levels": list(LOG_LEVELS),
+                    "lower_severity_filtered": True,
+                },
+                "mrtr": {
+                    "input_required": True,
+                    "request_state": "hmac-ttl-single-use",
+                    "request_state_secret_configured": bool(os.getenv("MCP_GATEWAY_REQUEST_STATE_SECRET", "").strip() or os.getenv("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "").strip()),
+                    "request_state_ttl_seconds": gateway_mrtr_timeout_seconds(),
+                    "request_state_replay_scope": "process",
+                },
+            },
             "session_isolation": {
                 "enabled": gateway_session_isolation(),
                 "scope": "agent+session" if gateway_session_isolation() else "gateway-shared",

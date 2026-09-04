@@ -15,11 +15,7 @@ from apps.api.agent_supervisor.domains.runtime.agent_credentials import (
 )
 from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
 
-# Roles are capability peers, not a single numeric hierarchy: an analyst may
-# inspect and write research artifacts but must not inherit executor side
-# effects, while an executor must not inherit analyst-only operations.  Keep
-# the grant relation explicit so a read-only observer can never satisfy an
-# execution requirement merely because both roles share a legacy numeric rank.
+# Roles are capability peers; keep grants explicit so observers never inherit execution rights.
 ROLE_GRANTS = {
     "observer": frozenset({"observer", "executor", "analyst", "admin"}),
     "executor": frozenset({"executor", "admin"}),
@@ -71,16 +67,19 @@ def current_security_role(
         if token and supplied and compare_digest(supplied, token):
             return role
 
+    shared_token = (os.getenv("AGENT_SUPERVISOR_API_TOKEN") or "").strip()
+    if shared_token and supplied and compare_digest(supplied, shared_token) and production_security_profile():
+        # Shared production credentials bootstrap an observer session, never a
+        # capability grant; keep this ahead of DEFAULT_ROLE.
+        return "observer"
+
     configured_default = (os.getenv("AGENT_SUPERVISOR_DEFAULT_ROLE") or "").strip().lower()
     if configured_default:
         return configured_default if configured_default in ROLE_ORDER else "observer"
 
-    # A protected loopback checkout is operated by the human who started it.
-    # Make its explicitly configured shared token useful without weakening a
-    # public deployment. Production keeps the same shared credential read-only;
-    # machine execution still requires a role-specific or Agent-bound token.
-    shared_token = (os.getenv("AGENT_SUPERVISOR_API_TOKEN") or "").strip()
-    if shared_token and supplied and compare_digest(supplied, shared_token) and not production_security_profile():
+    # In local loopback mode the shared token represents the human operator;
+    # production keeps that credential read-only.
+    if shared_token and supplied and compare_digest(supplied, shared_token):
         local_role = (os.getenv("AGENT_SUPERVISOR_LOCAL_OPERATOR_ROLE") or "admin").strip().lower()
         return local_role if local_role in {"observer", "analyst", "admin"} else "admin"
 
@@ -108,11 +107,13 @@ def require_any_role(roles: set[str], current_role: str) -> None:
         raise HTTPException(status_code=403, detail=f"当前角色 {current_role} 无权执行该操作，需要以下角色之一：{allowed}")
 
 
+def authenticated_operator(role: str) -> str:
+    return f"security-{role}"
+
+
 def require_agent_identity(agent_id: str, current_role: str, authenticated_agent_id: str | None) -> None:
     agent_credentials.require_agent_identity(agent_id, current_role, authenticated_agent_id)
 
 
-# Kept as a compatibility export for routers and integrations.  The route-scope
-# implementation lives under the runtime domain so the auth entrypoint remains
-# limited to identity and role resolution.
+# Compatibility export; the implementation lives under the runtime domain.
 from apps.api.agent_supervisor.domains.runtime.route_scope import restrict_executor_scope  # noqa: E402, F401

@@ -2,8 +2,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from apps.api.agent_supervisor.adapters.models.model_runtime_config import get_model_runtime_config, update_model_runtime_config
+from apps.api.agent_supervisor.adapters.models.model_runtime_config import (
+    PROFILE_IDS,
+    get_model_runtime_config,
+    update_model_runtime_config,
+)
 from apps.api.agent_supervisor.auth import (
+    authenticated_operator,
     current_agent_identity,
     current_security_role,
     require_api_token,
@@ -11,14 +16,21 @@ from apps.api.agent_supervisor.auth import (
     restrict_executor_scope,
 )
 from apps.api.agent_supervisor.domains.governance.tool_contract import SUPPORTED_TOOLS
+from apps.api.agent_supervisor.domains.runtime.agent_credentials import can_execute_managed_tools
 from apps.api.agent_supervisor.domains.runtime.lab_access import labs_enabled
+from apps.api.agent_supervisor.domains.runtime.mcp_access import mcp_access_capabilities
 from apps.api.agent_supervisor.domains.runtime.memory_governance import (
     memory_governance_snapshot,
     rollback_latest_memory,
     update_memory_status,
 )
 from apps.api.agent_supervisor.domains.runtime.runtime_status import build_runtime_status
-from apps.api.agent_supervisor.schemas.main_models import ModelRuntimeConfigUpdate, PolicySettingsUpdate, PolicyUpdate
+from apps.api.agent_supervisor.schemas.main_models import (
+    ModelProviderProbeRequest,
+    ModelRuntimeConfigUpdate,
+    PolicySettingsUpdate,
+    PolicyUpdate,
+)
 from apps.api.agent_supervisor.storage.data import (
     get_attack_surfaces,
     get_policies,
@@ -37,7 +49,7 @@ from apps.api.agent_supervisor.storage.database import (
     runtime_metrics_snapshot,
 )
 
-from ..adapters.models.model_adapter import provider_status
+from ..adapters.models.model_adapter import probe_provider, provider_status
 from ..services.package_service import load_competition_package_snapshot, write_competition_package_snapshot
 
 router = APIRouter(dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)])
@@ -47,7 +59,7 @@ def _require_analyst_access(role: str = Depends(current_security_role)) -> None:
     require_role("analyst", role)
 
 
-def _provider_status_for_role(role: str) -> list[dict[str, Any]]:
+def _provider_status_for_role(role: str, profile: str = "") -> list[dict[str, Any]]:
     """Return model readiness without leaking Provider routing topology.
 
     Observer credentials need model availability and names for the console, not
@@ -57,7 +69,7 @@ def _provider_status_for_role(role: str) -> list[dict[str, Any]]:
     status do not drift apart.
     """
 
-    statuses = provider_status()
+    statuses = provider_status(profile)
     if role in {"analyst", "admin"}:
         return statuses
     return [{key: value for key, value in item.items() if key != "endpoint"} for item in statuses]
@@ -259,7 +271,7 @@ def auth_context(
     agent_id: str | None = Depends(current_agent_identity),
 ) -> dict:
     can_generate = role in {"executor", "analyst", "admin"}
-    can_execute_managed_tools = role == "admin" or (role == "executor" and bool(agent_id))
+    mcp_capabilities = mcp_access_capabilities(role, agent_id)
     return {
         "role": role,
         "agent_id": agent_id,
@@ -269,7 +281,8 @@ def auth_context(
             "can_review_approval": role in {"admin", "analyst"},
             "can_execute_runtime": role in {"admin", "executor"},
             "can_generate": can_generate,
-            "can_execute_managed_tools": can_execute_managed_tools,
+            "can_execute_managed_tools": can_execute_managed_tools(role, agent_id),
+            **mcp_capabilities,
             "can_view": role in {"admin", "analyst", "observer"},
         },
     }
@@ -359,8 +372,9 @@ def update_policy_endpoint(
     role: str = Depends(current_security_role),
 ) -> dict:
     require_role("admin", role)
-    updates: dict[str, Any] = request.dict(exclude_none=True)
-    operator = str(updates.pop("operator", "security-admin"))
+    updates: dict[str, Any] = request.model_dump(exclude_none=True)
+    updates.pop("operator", None)
+    operator = authenticated_operator(role)
     comment = str(updates.pop("comment", ""))
     try:
         return update_policy(policy_id, updates, operator=operator, comment=comment)
@@ -413,7 +427,9 @@ def update_policy_settings_endpoint(
     role: str = Depends(current_security_role),
 ) -> dict:
     require_role("admin", role)
-    return update_policy_settings(request.dict(exclude_none=True))
+    updates = request.model_dump(exclude_none=True)
+    updates["operator"] = authenticated_operator(role)
+    return update_policy_settings(updates)
 
 
 @router.get("/api/policies/versions")
@@ -437,8 +453,14 @@ def policy_versions(
 
 
 @router.get("/api/models")
-def models(role: str = Depends(current_security_role)) -> list[dict]:
-    return _provider_status_for_role(role)
+def models(
+    profile: str | None = Query(default=None),
+    role: str = Depends(current_security_role),
+) -> list[dict[str, Any]]:
+    requested_profile = str(profile or "").strip().lower()
+    if requested_profile and requested_profile not in PROFILE_IDS:
+        raise HTTPException(status_code=400, detail="模型 profile 无效")
+    return _provider_status_for_role(role, requested_profile)
 
 
 @router.get("/api/model_config")
@@ -452,7 +474,17 @@ def update_model_config_endpoint(
     role: str = Depends(current_security_role),
 ) -> dict:
     require_role("admin", role)
-    return update_model_runtime_config(request.dict(exclude_none=True))
+    return update_model_runtime_config(request.model_dump(exclude_none=True))
+
+
+@router.post("/api/model_probe", dependencies=[Depends(_require_analyst_access)])
+def model_probe(request: ModelProviderProbeRequest) -> dict[str, Any]:
+    """Run one explicit real Provider connectivity and response-shape probe."""
+
+    try:
+        return probe_provider(profile=request.profile, provider_id=request.provider_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/api/runtime_status")
@@ -472,8 +504,9 @@ def runtime_status(
         "agent_id": agent_id or "",
         "identity_bound": bool(agent_id),
         "can_generate": role in {"executor", "analyst", "admin"},
-        "can_execute_managed_tools": role in {"executor", "admin"},
+        "can_execute_managed_tools": can_execute_managed_tools(role, agent_id),
         "can_view_console": role in {"observer", "analyst", "admin"},
+        **mcp_access_capabilities(role, agent_id),
     }
     return status
 
@@ -533,7 +566,7 @@ def memory_status_update(
         return update_memory_status(
             memory_id,
             str(request.get("status", "")),
-            operator=str(request.get("operator", "security-analyst")),
+            operator=authenticated_operator(role),
             agent_id=scoped_agent_id,
         )
     except KeyError as exc:
@@ -556,7 +589,7 @@ def memory_rollback_latest(
         str(body.get("agent_id") or "").strip() or None,
     )
     return rollback_latest_memory(
-        operator=str(body.get("operator", "security-analyst")),
+        operator=authenticated_operator(role),
         agent_id=scoped_agent_id,
     )
 

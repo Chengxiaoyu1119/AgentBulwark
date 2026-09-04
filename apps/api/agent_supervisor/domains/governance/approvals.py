@@ -133,15 +133,18 @@ def list_approval_reviews(
     selected_scope = _normalize_scope(scope, allow_all=True)
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT payload FROM approval_reviews ORDER BY rowid DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
-
-    reviews = [_restore_hash_state(json.loads(row["payload"])) for row in rows]
-    if selected_scope:
-        reviews = [item for item in reviews if item.get("scope") == selected_scope]
-    if selected_status:
-        reviews = [item for item in reviews if item.get("status") == selected_status]
+            "SELECT payload FROM approval_reviews ORDER BY rowid DESC",
+        )
+        reviews: list[dict[str, Any]] = []
+        for row in rows:
+            review = _restore_hash_state(json.loads(row["payload"]))
+            if selected_scope and review.get("scope") != selected_scope:
+                continue
+            if selected_status and review.get("status") != selected_status:
+                continue
+            reviews.append(review)
+            if len(reviews) >= limit:
+                break
 
     summary = _summary(reviews)
     return {

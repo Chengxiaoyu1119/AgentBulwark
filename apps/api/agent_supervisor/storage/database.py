@@ -8,8 +8,26 @@ from datetime import datetime, timezone
 from typing import Any
 
 from apps.api.agent_supervisor.paths import RUNTIME_DIR
+from apps.api.agent_supervisor.storage.json_store import decode_json_strict, encode_json_strict, exclusive_file_lock
 
 DB_PATH = RUNTIME_DIR / "agent_supervisor.sqlite3"
+MAX_QUERY_LIMIT = 5000
+
+
+def _bounded_limit(value: Any, *, default: int, maximum: int = MAX_QUERY_LIMIT) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError, OverflowError):
+        normalized = default
+    return max(1, min(normalized, maximum))
+
+
+def _decode_json_object(raw: Any) -> dict[str, Any] | None:
+    try:
+        payload = decode_json_strict(raw)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 @contextmanager
@@ -28,7 +46,7 @@ def get_connection() -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-def init_db() -> None:
+def _init_db_unlocked() -> None:
     with get_connection() as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute(
@@ -94,6 +112,18 @@ def init_db() -> None:
             """
         )
         _ensure_governance_tables(conn)
+    # Delayed import avoids the data -> database top-level dependency cycle.
+    # A failed replay remains durable in the outbox and must not stop startup.
+    from apps.api.agent_supervisor.storage.data import recover_policy_audit_outbox
+
+    recover_policy_audit_outbox()
+
+
+def init_db() -> None:
+    # SQLite busy_timeout does not reliably serialize simultaneous WAL setup
+    # or check-then-ALTER migrations across API worker processes.
+    with exclusive_file_lock(DB_PATH, timeout_seconds=30.0):
+        _init_db_unlocked()
 
 
 def _ensure_governance_tables(conn: sqlite3.Connection) -> None:
@@ -106,8 +136,19 @@ def _ensure_governance_tables(conn: sqlite3.Connection) -> None:
             comment TEXT NOT NULL,
             created_at TEXT NOT NULL,
             before_payload TEXT NOT NULL,
-            after_payload TEXT NOT NULL
+            after_payload TEXT NOT NULL,
+            operation_id TEXT NOT NULL DEFAULT ''
         )
+        """
+    )
+    policy_version_columns = {row["name"] for row in conn.execute("PRAGMA table_info(policy_versions)").fetchall()}
+    if "operation_id" not in policy_version_columns:
+        conn.execute("ALTER TABLE policy_versions ADD COLUMN operation_id TEXT NOT NULL DEFAULT ''")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_policy_versions_operation_id
+        ON policy_versions (operation_id)
+        WHERE operation_id <> ''
         """
     )
     conn.execute(
@@ -197,36 +238,53 @@ def _ensure_governance_tables(conn: sqlite3.Connection) -> None:
 def write_run(result: dict[str, Any], *, append_runtime_event: bool = True) -> None:
     """Persist one run snapshot and its audit rows.
 
-    Server-owned execution uses this function twice: once for a durable
-    pre-execution intent and once for the final observed result.  The intent
-    must not create a second, stale ``run`` event, so callers can defer the
-    append-only event until the final snapshot is known.
+    Server-owned execution uses this function twice.  The pre-execution intent
+    persists its audit row and execution claim, but deliberately does not enter
+    ``experiment_runs`` or publish a completed ``run`` event.  That table is
+    the completed-run source for product metrics; exposing a pending intent
+    there would turn an unobserved side effect into a false successful run.
+    The final observed result uses the default flag and replaces the same
+    durable audit/run identifiers before publishing one ``run`` event.
     """
+    # Encode every JSON column before opening the transaction.  This prevents a
+    # deep NaN/Infinity in a later audit row from leaving an earlier run row
+    # committed when serialization fails.
+    serialized_result = encode_json_strict(result, ensure_ascii=False)
+    serialized_logs = [encode_json_strict(log, ensure_ascii=False) for log in result["audit_logs"]]
+    serialized_runtime_event = encode_json_strict(
+        {
+            "run_id": result["run_id"],
+            "scenario_id": result.get("scenario", {}).get("id", ""),
+            "guard_enabled": result.get("guard_enabled", False),
+            "attack_success": result.get("attack_success", False),
+            "metrics": result.get("metrics", {}),
+        },
+        ensure_ascii=False,
+    )
     with get_connection() as conn:
         _ensure_governance_tables(conn)
-        if not append_runtime_event:
-            return
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO experiment_runs (
-                id, scenario_id, guard_enabled, attack_success, blocked_count,
-                asked_count, isolated_count, detection_latency_ms, created_at, payload
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                result["run_id"],
-                result["scenario"]["id"],
-                int(result["guard_enabled"]),
-                int(result["attack_success"]),
-                result["metrics"]["blocked_count"],
-                result["metrics"]["asked_count"],
-                result["metrics"]["isolated_count"],
-                result["metrics"]["detection_latency_ms"],
-                result["created_at"],
-                json.dumps(result, ensure_ascii=False),
-            ),
-        )
-        for log in result["audit_logs"]:
+        if append_runtime_event:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO experiment_runs (
+                    id, scenario_id, guard_enabled, attack_success, blocked_count,
+                    asked_count, isolated_count, detection_latency_ms, created_at, payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result["run_id"],
+                    result["scenario"]["id"],
+                    int(result["guard_enabled"]),
+                    int(result["attack_success"]),
+                    result["metrics"]["blocked_count"],
+                    result["metrics"]["asked_count"],
+                    result["metrics"]["isolated_count"],
+                    result["metrics"]["detection_latency_ms"],
+                    result["created_at"],
+                    serialized_result,
+                ),
+            )
+        for log, serialized_log in zip(result["audit_logs"], serialized_logs, strict=True):
             conn.execute(
                 """
                 INSERT OR REPLACE INTO audit_logs (
@@ -240,7 +298,7 @@ def write_run(result: dict[str, Any], *, append_runtime_event: bool = True) -> N
                     log["decision"],
                     log["risk_level"],
                     log["reason"],
-                    json.dumps(log, ensure_ascii=False),
+                    serialized_log,
                 ),
             )
         for alert in result["alerts"]:
@@ -260,26 +318,18 @@ def write_run(result: dict[str, Any], *, append_runtime_event: bool = True) -> N
                     alert["created_at"],
                 ),
             )
-        conn.execute(
-            """
-            INSERT INTO runtime_events (event_type, created_at, payload)
-            VALUES (?, ?, ?)
-            """,
-            (
-                "run",
-                result["created_at"],
-                json.dumps(
-                    {
-                        "run_id": result["run_id"],
-                        "scenario_id": result.get("scenario", {}).get("id", ""),
-                        "guard_enabled": result.get("guard_enabled", False),
-                        "attack_success": result.get("attack_success", False),
-                        "metrics": result.get("metrics", {}),
-                    },
-                    ensure_ascii=False,
+        if append_runtime_event:
+            conn.execute(
+                """
+                INSERT INTO runtime_events (event_type, created_at, payload)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    "run",
+                    result["created_at"],
+                    serialized_runtime_event,
                 ),
-            ),
-        )
+            )
 
 
 def append_runtime_event(
@@ -290,6 +340,7 @@ def append_runtime_event(
 ) -> dict[str, Any]:
     """Append an immutable runtime event to the existing event journal."""
     event_created_at = created_at or datetime.now(timezone.utc).isoformat()
+    serialized_payload = encode_json_strict(payload, ensure_ascii=False, sort_keys=True)
     with get_connection() as conn:
         _ensure_governance_tables(conn)
         cursor = conn.execute(
@@ -297,7 +348,7 @@ def append_runtime_event(
             INSERT INTO runtime_events (event_type, created_at, payload)
             VALUES (?, ?, ?)
             """,
-            (event_type, event_created_at, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            (event_type, event_created_at, serialized_payload),
         )
         event_id = int(cursor.lastrowid or 0)
     return {
@@ -314,7 +365,7 @@ def list_runtime_events(
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """Read the append-only runtime journal in newest-first order."""
-    bounded_limit = max(1, min(int(limit), 5000))
+    bounded_limit = _bounded_limit(limit, default=500)
     query = "SELECT id, event_type, created_at, payload FROM runtime_events"
     params: tuple[Any, ...]
     if event_type:
@@ -329,8 +380,8 @@ def list_runtime_events(
     events: list[dict[str, Any]] = []
     for row in rows:
         try:
-            payload = json.loads(row["payload"])
-        except (TypeError, json.JSONDecodeError):
+            payload = decode_json_strict(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
             payload = {"raw_payload": str(row["payload"])}
         events.append(
             {
@@ -354,6 +405,7 @@ def load_runtime_event_by_payload_id(event_type: str, key: str, value: str) -> d
             SELECT id, created_at, payload
             FROM runtime_events
             WHERE event_type = ?
+              AND json_valid(payload)
               AND json_extract(payload, '$.comparison_id') = ?
             ORDER BY id DESC
             LIMIT 1
@@ -363,8 +415,8 @@ def load_runtime_event_by_payload_id(event_type: str, key: str, value: str) -> d
     if row is None:
         return None
     try:
-        payload = json.loads(row["payload"])
-    except (TypeError, json.JSONDecodeError):
+        payload = decode_json_strict(row["payload"])
+    except (TypeError, ValueError, json.JSONDecodeError):
         return None
     if not isinstance(payload, dict) or str(payload.get("comparison_id", "")) != value:
         return None
@@ -393,6 +445,51 @@ def execution_receipts_for_audits(limit: int = 500) -> dict[str, dict[str, Any]]
     return receipts
 
 
+def execution_receipts_for_audit_ids(audit_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Load newest receipts for exactly the displayed audit identifiers.
+
+    The generic recent-event window is useful for aggregate metrics, but it is
+    not an evidence lookup: unrelated traffic can evict an older receipt from
+    that window.  This query follows the audit IDs currently being rendered and
+    is split into conservative batches for SQLite's host-parameter limit.
+    """
+    requested = sorted({str(value) for value in audit_ids if str(value)})
+    if not requested:
+        return {}
+    receipts: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(requested), 500):
+        batch = requested[start : start + 500]
+        placeholders = ", ".join("?" for _ in batch)
+        with get_connection() as conn:
+            _ensure_governance_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT id, created_at, payload
+                FROM runtime_events
+                WHERE event_type = 'execution-receipt'
+                  AND json_valid(payload)
+                  AND json_extract(payload, '$.audit_id') IN ({placeholders})
+                ORDER BY id DESC
+                """,
+                tuple(batch),
+            ).fetchall()
+        for row in rows:
+            try:
+                payload = decode_json_strict(row["payload"])
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if not isinstance(payload, dict):
+                continue
+            audit_id = str(payload.get("audit_id") or "")
+            if audit_id in batch and audit_id not in receipts:
+                receipts[audit_id] = {
+                    **payload,
+                    "event_id": int(row["id"]),
+                    "journal_created_at": row["created_at"],
+                }
+    return receipts
+
+
 def load_execution_receipt(audit_id: str) -> dict[str, Any] | None:
     """Load the persisted receipt for one audit without scanning a bounded list."""
     with get_connection() as conn:
@@ -402,6 +499,7 @@ def load_execution_receipt(audit_id: str) -> dict[str, Any] | None:
             SELECT id, created_at, payload
             FROM runtime_events
             WHERE event_type = 'execution-receipt'
+              AND json_valid(payload)
               AND json_extract(payload, '$.audit_id') = ?
             ORDER BY id DESC
             LIMIT 1
@@ -410,8 +508,8 @@ def load_execution_receipt(audit_id: str) -> dict[str, Any] | None:
         ).fetchall()
     for row in rows:
         try:
-            payload = json.loads(row["payload"])
-        except (TypeError, json.JSONDecodeError):
+            payload = decode_json_strict(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(payload, dict) or str(payload.get("audit_id", "")) != audit_id:
             continue
@@ -425,6 +523,7 @@ def load_execution_receipt(audit_id: str) -> dict[str, Any] | None:
 
 def persist_execution_receipt(payload: dict[str, Any]) -> dict[str, Any]:
     """Atomically append one receipt per audit and support exact idempotent retries."""
+    serialized_payload = encode_json_strict(payload, ensure_ascii=False, sort_keys=True)
     with get_connection() as conn:
         _ensure_governance_tables(conn)
         conn.execute("BEGIN IMMEDIATE")
@@ -438,8 +537,8 @@ def persist_execution_receipt(payload: dict[str, Any]) -> dict[str, Any]:
         ).fetchall()
         for row in rows:
             try:
-                existing = json.loads(row["payload"])
-            except (TypeError, json.JSONDecodeError):
+                existing = decode_json_strict(row["payload"])
+            except (TypeError, ValueError, json.JSONDecodeError):
                 continue
             if not isinstance(existing, dict):
                 continue
@@ -476,7 +575,7 @@ def persist_execution_receipt(payload: dict[str, Any]) -> dict[str, Any]:
             """,
             (
                 str(payload["created_at"]),
-                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                serialized_payload,
             ),
         )
         return {
@@ -619,7 +718,7 @@ def load_gateway_execution_claim(audit_id: str) -> dict[str, Any] | None:
 
 def list_gateway_execution_claims(limit: int = 200) -> list[dict[str, Any]]:
     """Return durable gateway execution states for operator reconciliation."""
-    bounded_limit = max(1, min(int(limit), 1000))
+    bounded_limit = _bounded_limit(limit, default=200, maximum=1000)
     with get_connection() as conn:
         _ensure_governance_tables(conn)
         rows = conn.execute(
@@ -635,6 +734,34 @@ def list_gateway_execution_claims(limit: int = 200) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def gateway_execution_claims_for_audit_ids(audit_ids: set[str]) -> dict[str, dict[str, Any]]:
+    """Load execution claims for exactly the displayed audit identifiers."""
+    requested = sorted({str(value) for value in audit_ids if str(value)})
+    if not requested:
+        return {}
+    claims: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(requested), 500):
+        batch = requested[start : start + 500]
+        placeholders = ", ".join("?" for _ in batch)
+        with get_connection() as conn:
+            _ensure_governance_tables(conn)
+            rows = conn.execute(
+                f"""
+                SELECT audit_id, claim_id, agent_id, session_id, tool_call_hash,
+                       status, created_at, completed_at, receipt_id
+                FROM gateway_execution_claims
+                WHERE audit_id IN ({placeholders})
+                """,
+                tuple(batch),
+            ).fetchall()
+        for row in rows:
+            item = dict(row)
+            audit_id = str(item.get("audit_id") or "")
+            if audit_id:
+                claims[audit_id] = item
+    return claims
+
+
 def persist_execution_receipt_use(payload: dict[str, Any]) -> dict[str, Any]:
     """Atomically claim one OpenAI proxy tool receipt for one request.
 
@@ -648,6 +775,7 @@ def persist_execution_receipt_use(payload: dict[str, Any]) -> dict[str, Any]:
     request_hash = str(payload.get("request_hash") or "")
     if not audit_id or not request_hash:
         raise ValueError("回执消费记录缺少 audit_id 或 request_hash")
+    serialized_payload = encode_json_strict(payload, ensure_ascii=False, sort_keys=True)
     with get_connection() as conn:
         _ensure_governance_tables(conn)
         conn.execute("BEGIN IMMEDIATE")
@@ -656,6 +784,7 @@ def persist_execution_receipt_use(payload: dict[str, Any]) -> dict[str, Any]:
             SELECT id, created_at, payload
             FROM runtime_events
             WHERE event_type = ?
+              AND json_valid(payload)
               AND json_extract(payload, '$.audit_id') = ?
             ORDER BY id DESC
             LIMIT 1
@@ -664,8 +793,8 @@ def persist_execution_receipt_use(payload: dict[str, Any]) -> dict[str, Any]:
         ).fetchall()
         for row in rows:
             try:
-                existing = json.loads(row["payload"])
-            except (TypeError, json.JSONDecodeError):
+                existing = decode_json_strict(row["payload"])
+            except (TypeError, ValueError, json.JSONDecodeError):
                 continue
             if not isinstance(existing, dict):
                 continue
@@ -697,7 +826,7 @@ def persist_execution_receipt_use(payload: dict[str, Any]) -> dict[str, Any]:
             INSERT INTO runtime_events (event_type, created_at, payload)
             VALUES (?, ?, ?)
             """,
-            (event_type, created_at, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+            (event_type, created_at, serialized_payload),
         )
         return {
             "event_id": int(cursor.lastrowid or 0),
@@ -711,13 +840,25 @@ def persist_execution_receipt_use(payload: dict[str, Any]) -> dict[str, Any]:
 
 def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Add receipt state to response copies without mutating the hashed audit log."""
-    receipts = execution_receipts_for_audits(limit=max(500, len(logs) * 3 or 500))
+    audit_ids = {str(log.get("id") or "") for log in logs if log.get("id")}
+    receipts = execution_receipts_for_audit_ids(audit_ids)
+    claims = gateway_execution_claims_for_audit_ids(audit_ids)
     enriched: list[dict[str, Any]] = []
     for log in logs:
         copy = dict(log)
-        receipt = receipts.get(str(log.get("id", "")))
+        audit_id = str(log.get("id", ""))
+        receipt = receipts.get(audit_id)
+        claim = claims.get(audit_id)
         copy["execution_receipt"] = receipt
-        if receipt:
+        if claim and str(claim.get("status") or "") == "unknown":
+            # An uncertain execution claim means the side effect may already
+            # have happened even when a receipt row exists.  Reconciliation
+            # status therefore takes precedence over the apparent receipt so
+            # operators do not treat the call as safely retryable.
+            copy["execution_status"] = "unknown"
+            copy["execution_target"] = str(log.get("execution_target") or "unknown")
+            copy["gateway_execution_claim_status"] = "unknown"
+        elif receipt:
             copy["execution_status"] = str(receipt.get("status"))
             copy["execution_target"] = str(receipt.get("execution_target"))
         elif str(log.get("execution_status") or "") in {"pending", "unknown", "failed"}:
@@ -740,12 +881,13 @@ def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> lis
 
 
 def latest_runs(limit: int = 20) -> list[dict[str, Any]]:
+    bounded_limit = _bounded_limit(limit, default=20)
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT payload FROM experiment_runs ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            (bounded_limit,),
         ).fetchall()
-    return [json.loads(row["payload"]) for row in rows]
+    return [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
 
 
 def latest_scenario_run_pairs(scenario_ids: list[str]) -> list[dict[str, Any]]:
@@ -773,29 +915,31 @@ def latest_scenario_run_pairs(scenario_ids: list[str]) -> list[dict[str, Any]]:
     """
     with get_connection() as conn:
         rows = conn.execute(query, tuple(requested_ids)).fetchall()
-    return [json.loads(row["payload"]) for row in rows]
+    return [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
 
 
 def load_run(run_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute("SELECT payload FROM experiment_runs WHERE id = ?", (run_id,)).fetchone()
-    return json.loads(row["payload"]) if row else None
+    return _decode_json_object(row["payload"]) if row else None
 
 
 def latest_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
+    bounded_limit = _bounded_limit(limit, default=100)
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT payload FROM audit_logs ORDER BY rowid DESC LIMIT ?",
-            (limit,),
+            (bounded_limit,),
         ).fetchall()
-    return enrich_audit_logs_with_execution_receipts([json.loads(row["payload"]) for row in rows])
+    logs = [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
+    return enrich_audit_logs_with_execution_receipts(logs)
 
 
 def load_audit_log(audit_id: str) -> dict[str, Any] | None:
     """Load the original immutable audit payload without response enrichment."""
     with get_connection() as conn:
         row = conn.execute("SELECT payload FROM audit_logs WHERE id = ?", (audit_id,)).fetchone()
-    return json.loads(row["payload"]) if row else None
+    return _decode_json_object(row["payload"]) if row else None
 
 
 def load_gateway_request_audit_logs(
@@ -823,7 +967,8 @@ def load_gateway_request_audit_logs(
             """
             SELECT payload
             FROM audit_logs
-            WHERE json_extract(payload, '$.source_app') = ?
+            WHERE json_valid(payload)
+              AND json_extract(payload, '$.source_app') = ?
               AND json_extract(payload, '$.stage_context.request_id') = ?
             ORDER BY rowid ASC
             """,
@@ -833,8 +978,8 @@ def load_gateway_request_audit_logs(
     result: list[dict[str, Any]] = []
     for row in rows:
         try:
-            payload = json.loads(row["payload"])
-        except (TypeError, json.JSONDecodeError):
+            payload = decode_json_strict(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(payload, dict):
             continue
@@ -867,26 +1012,38 @@ def latest_gateway_audit_logs(
     caller's view.
     """
 
-    bounded_limit = max(1, min(int(limit), 5000))
+    bounded_limit = _bounded_limit(limit, default=2000)
+    normalized_agent_id = str(agent_id or "")
+    normalized_session_id = str(session_id or "")
+    predicates = [
+        "json_valid(payload)",
+        "json_extract(payload, '$.source_app') = ?",
+    ]
+    parameters: list[Any] = ["openai-compatible-proxy"]
+    if normalized_agent_id:
+        predicates.append("json_extract(payload, '$.agent_id') = ?")
+        parameters.append(normalized_agent_id)
+    if normalized_session_id:
+        predicates.append("json_extract(payload, '$.stage_context.session_id') = ?")
+        parameters.append(normalized_session_id)
+    parameters.append(bounded_limit)
     with get_connection() as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT payload
             FROM audit_logs
-            WHERE json_extract(payload, '$.source_app') = ?
+            WHERE {" AND ".join(predicates)}
             ORDER BY rowid DESC
             LIMIT ?
             """,
-            ("openai-compatible-proxy", bounded_limit),
+            tuple(parameters),
         ).fetchall()
 
     result: list[dict[str, Any]] = []
-    normalized_agent_id = str(agent_id or "")
-    normalized_session_id = str(session_id or "")
     for row in rows:
         try:
-            payload = json.loads(row["payload"])
-        except (TypeError, json.JSONDecodeError):
+            payload = decode_json_strict(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(payload, dict):
             continue
@@ -925,7 +1082,8 @@ def load_gateway_request_audit_events(
             """
             SELECT payload
             FROM audit_logs
-            WHERE json_extract(payload, '$.source_app') = ?
+            WHERE json_valid(payload)
+              AND json_extract(payload, '$.source_app') = ?
               AND json_extract(payload, '$.stage_context.request_id') = ?
             ORDER BY rowid ASC
             """,
@@ -937,8 +1095,8 @@ def load_gateway_request_audit_events(
     normalized_session_id = str(session_id or "")
     for row in rows:
         try:
-            payload = json.loads(row["payload"])
-        except (TypeError, json.JSONDecodeError):
+            payload = decode_json_strict(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
             continue
         if not isinstance(payload, dict):
             continue
@@ -966,11 +1124,12 @@ def load_audit_logs_by_conversation_ids(conversation_ids: set[str]) -> list[dict
             f"""
             SELECT payload
             FROM audit_logs
-            WHERE json_extract(payload, '$.conversation_id') IN ({placeholders})
+            WHERE json_valid(payload)
+              AND json_extract(payload, '$.conversation_id') IN ({placeholders})
             """,
             tuple(requested),
         ).fetchall()
-    return [json.loads(row["payload"]) for row in rows]
+    return [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
 
 
 def record_policy_version(
@@ -980,23 +1139,42 @@ def record_policy_version(
     after: dict[str, Any],
     operator: str = "security-admin",
     comment: str = "",
+    operation_id: str = "",
 ) -> dict[str, Any]:
     created_at = datetime.now(timezone.utc).isoformat()
+    serialized_before = encode_json_strict(before, ensure_ascii=False)
+    serialized_after = encode_json_strict(after, ensure_ascii=False)
     with get_connection() as conn:
         _ensure_governance_tables(conn)
+        if operation_id:
+            existing = conn.execute(
+                "SELECT id, created_at FROM policy_versions WHERE operation_id = ?", (operation_id,)
+            ).fetchone()
+            if existing is not None:
+                return {
+                    "id": existing["id"],
+                    "policy_id": policy_id,
+                    "operator": operator or "security-admin",
+                    "comment": comment,
+                    "created_at": existing["created_at"],
+                    "before": before,
+                    "after": after,
+                    "operation_id": operation_id,
+                }
         cursor = conn.execute(
             """
             INSERT INTO policy_versions (
-                policy_id, operator, comment, created_at, before_payload, after_payload
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                policy_id, operator, comment, created_at, before_payload, after_payload, operation_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 policy_id,
                 operator or "security-admin",
                 comment,
                 created_at,
-                json.dumps(before, ensure_ascii=False),
-                json.dumps(after, ensure_ascii=False),
+                serialized_before,
+                serialized_after,
+                operation_id,
             ),
         )
     return {
@@ -1007,10 +1185,12 @@ def record_policy_version(
         "created_at": created_at,
         "before": before,
         "after": after,
+        "operation_id": operation_id,
     }
 
 
 def list_policy_versions(policy_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    bounded_limit = _bounded_limit(limit, default=100)
     query = """
         SELECT id, policy_id, operator, comment, created_at, before_payload, after_payload
         FROM policy_versions
@@ -1018,38 +1198,50 @@ def list_policy_versions(policy_id: str | None = None, limit: int = 100) -> list
     params: tuple[Any, ...]
     if policy_id:
         query += " WHERE policy_id = ?"
-        params = (policy_id, limit)
+        params = (policy_id, bounded_limit)
     else:
-        params = (limit,)
+        params = (bounded_limit,)
     query += " ORDER BY id DESC LIMIT ?"
     with get_connection() as conn:
         _ensure_governance_tables(conn)
         rows = conn.execute(query, params).fetchall()
-    return [
-        {
-            "id": row["id"],
-            "policy_id": row["policy_id"],
-            "operator": row["operator"],
-            "comment": row["comment"],
-            "created_at": row["created_at"],
-            "before": json.loads(row["before_payload"]),
-            "after": json.loads(row["after_payload"]),
-        }
-        for row in rows
-    ]
+    versions: list[dict[str, Any]] = []
+    for row in rows:
+        before = _decode_json_object(row["before_payload"])
+        after = _decode_json_object(row["after_payload"])
+        if before is None or after is None:
+            continue
+        versions.append(
+            {
+                "id": row["id"],
+                "policy_id": row["policy_id"],
+                "operator": row["operator"],
+                "comment": row["comment"],
+                "created_at": row["created_at"],
+                "before": before,
+                "after": after,
+            }
+        )
+    return versions
 
 
-def runtime_metrics_snapshot(limit: int = 500) -> dict[str, Any]:
-    runs = latest_runs(limit)
-    audit_logs = latest_audit_logs(limit)
+def runtime_metrics_snapshot(limit: Any = 500) -> dict[str, Any]:
+    bounded_limit = _bounded_limit(limit, default=500)
+    runs = latest_runs(bounded_limit)
+    audit_logs = latest_audit_logs(bounded_limit)
     with get_connection() as conn:
         _ensure_governance_tables(conn)
         review_rows = conn.execute(
             "SELECT status, risk_level, reviewed_at FROM approval_reviews ORDER BY rowid DESC LIMIT ?",
-            (limit,),
+            (bounded_limit,),
         ).fetchall()
         policy_version_count = conn.execute("SELECT COUNT(*) AS count FROM policy_versions").fetchone()["count"]
-    receipt_map = execution_receipts_for_audits(limit=max(limit, 500))
+    # Metrics must describe the same bounded audit window shown to the caller.
+    # Resolve those audit IDs exactly instead of widening a generic recent-event
+    # scan to 500, which both violated small limits and could still miss an old
+    # receipt after unrelated traffic.
+    audit_ids = {str(log.get("id") or "") for log in audit_logs if log.get("id")}
+    receipt_map = execution_receipts_for_audit_ids(audit_ids)
     latencies = [
         float(run.get("metrics", {}).get("detection_latency_ms", 0))
         for run in runs
@@ -1073,7 +1265,7 @@ def runtime_metrics_snapshot(limit: int = 500) -> dict[str, Any]:
     resolved_reviews = sum(1 for row in review_rows if row["status"] in {"已批准", "已驳回"})
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "window": {"run_limit": limit, "audit_limit": limit},
+        "window": {"run_limit": bounded_limit, "audit_limit": bounded_limit},
         "summary": {
             "run_count": len(runs),
             "controlled_count": len(controlled),

@@ -15,6 +15,10 @@ from apps.api.agent_supervisor.domains.runtime.security_profile import (
     SECURITY_PROFILE_ENV,
     production_security_profile,
 )
+from apps.api.agent_supervisor.mcp_gateway.config import (
+    gateway_enabled,
+    validate_gateway_request_state_configuration,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
 
@@ -88,6 +92,8 @@ def configure_server_security(host: str) -> None:
     # launches force the stricter registration defaults unless the operator
     # explicitly selected a profile.
     os.environ.setdefault(SECURITY_PROFILE_ENV, "local" if loopback else "production")
+    if gateway_enabled():
+        validate_gateway_request_state_configuration()
     # An explicit production profile is a deployment contract, even when the
     # socket is bound to loopback for a smoke test or reverse-proxy sidecar.
     # Do not let the bind address silently downgrade authentication and audit

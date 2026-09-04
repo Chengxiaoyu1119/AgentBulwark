@@ -191,6 +191,7 @@ def _runtime_evidence_snapshot(*, force_real: bool | None = None) -> dict[str, A
         },
         "evaluation_contract": {
             "initial_tool_choice": "auto",
+            "max_initial_provider_attempts": 2,
             "max_model_tool_steps": MAX_MODEL_TOOL_STEPS,
             "max_model_tool_calls_per_round": MAX_MODEL_TOOL_CALLS_PER_ROUND,
         },
@@ -212,6 +213,8 @@ def build_real_model_evaluation(*, force_real: bool = True) -> dict[str, Any]:
     latencies = [item["supervisor_latency_ms"] for item in results if item["supervisor_latency_ms"] is not None]
     provider_modes = sorted({f"{item['provider']} / {item['mode']}" for item in results})
     provider_failures = [failure for item in results for failure in item.get("provider_failures", [])]
+    provider_call_count = sum(int(item.get("provider_call_count") or 0) for item in results)
+    tool_plan_retry_count = sum(int(item.get("tool_plan_retry_count") or 0) for item in results)
     fallback_results = [item for item in results if item["mode"] == "fallback"]
     real_api_results = [item for item in results if item["mode"] == "real-api"]
     valid_real_api_results = [item for item in real_api_results if item.get("real_model_evidence_valid")]
@@ -306,6 +309,8 @@ def build_real_model_evaluation(*, force_real: bool = True) -> dict[str, Any]:
             ),
             "fallback_case_count": len(fallback_results),
             "provider_failure_count": len(provider_failures),
+            "provider_call_count": provider_call_count,
+            "tool_plan_retry_count": tool_plan_retry_count,
             "strict_provider_mode": bool(force_real),
             "strict_provider_selector": strict_provider_selection("target"),
             "strict_provider_selection_resolved": bool(
@@ -806,6 +811,10 @@ def _run_case(case: dict[str, Any], *, force_real: bool, evaluation_id: str) -> 
         },
         "output_filter": output_filter,
         "model_chain": model_chain,
+        "tool_plan_attempts": plan.get("tool_plan_attempts", []),
+        "provider_call_count": int(plan.get("provider_call_count") or 0),
+        "tool_plan_retry_count": int(plan.get("tool_plan_retry_count") or 0),
+        "tool_plan_usage_totals": plan.get("tool_plan_usage_totals", {}),
         "provider_failures": provider_failures,
         "evaluation_agent": evaluation_binding,
     }

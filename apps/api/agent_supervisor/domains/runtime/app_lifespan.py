@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from apps.api.agent_supervisor.domains.reports.gateway_evidence import initialize_gateway_runtime_evidence
+from apps.api.agent_supervisor.domains.runtime.runtime_backup import clear_runtime_active, mark_runtime_active
 from apps.api.agent_supervisor.domains.runtime.server_security import (
     configure_server_security,
     configured_bind_host,
@@ -21,10 +22,11 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
     # ``uvicorn ... --host`` starts, so a public socket cannot bypass the
     # token/HMAC checks simply by skipping the repository launcher.
     configure_server_security(configured_bind_host())
-    initialize_gateway_runtime_evidence()
-    init_db()
-    init_sandbox()
+    runtime_marker = mark_runtime_active()
     try:
+        initialize_gateway_runtime_evidence()
+        init_db()
+        init_sandbox()
         yield
     finally:
         # The MCP stdio gateway and optional semantic detector own subprocesses
@@ -35,3 +37,4 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 
         reset_gateway()
         reset_semantic_detector()
+        clear_runtime_active(runtime_marker)

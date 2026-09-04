@@ -28,7 +28,7 @@ from apps.api.agent_supervisor.paths import (
     FIXTURE_WORKSPACE_DIR,
     MEMORY_DIR,
     OUTBOX_DIR,
-    SANDBOX_RUNTIME_DIR,
+    RUNTIME_DIR,
     WORKSPACE_DIR,
 )
 
@@ -80,6 +80,14 @@ DEFAULT_COMMAND_WSL_DISTRO = "Ubuntu"
 COMMAND_CONTAINER_MEMORY = "128m"
 COMMAND_CONTAINER_CPUS = "0.5"
 COMMAND_TIMEOUT_SECONDS = 5
+# Registered probes still start a fresh Python interpreter.  A two-second
+# budget is enough on an idle workstation but becomes flaky under coverage,
+# Windows Defender scans, or a busy single-machine deployment.  Keep the
+# timeout bounded while aligning it with the container executor budget so a
+# valid probe is not misreported as an attack failure merely because process
+# startup was slow.
+REGISTERED_COMMAND_TIMEOUT_SECONDS = COMMAND_TIMEOUT_SECONDS
+DOCKER_RUN_DAEMON_ERROR_EXIT_CODE = 125
 WORKSPACE_FLUSH_WAIT_SECONDS = 0.15
 
 
@@ -128,7 +136,11 @@ def default_sandbox_paths(agent_id: str | None = None) -> SandboxPaths:
     """
 
     if agent_id:
-        root = SANDBOX_RUNTIME_DIR / "agents" / _agent_sandbox_namespace(agent_id)
+        # Identity-bound side effects are operational state, just like their
+        # audit rows and execution receipts. Keeping them below RUNTIME_DIR
+        # lets a deployment volume preserve the complete execution state when
+        # the application container is replaced.
+        root = RUNTIME_DIR / "agents" / _agent_sandbox_namespace(agent_id)
         return SandboxPaths(
             workspace=root / "workspace",
             outbox=root / "outbox",
@@ -664,6 +676,16 @@ def _execute_code_command(command: str, paths: SandboxPaths) -> dict[str, Any]:
         return _command_not_executed(f"Docker 命令启动失败：{exc}")
 
     output = _command_output(completed.stdout, completed.stderr)
+    # Docker reserves exit code 125 for failures before the configured
+    # container command starts (for example a missing local image while
+    # --pull=never is enforced, an invalid mount, or a daemon-side rejection).
+    # Reporting that state as executed creates a false side-effect receipt and
+    # makes an unavailable executor indistinguishable from an application
+    # command that genuinely ran and failed. Exit codes 126/127 and all other
+    # values remain real container-command outcomes.
+    if completed.returncode == DOCKER_RUN_DAEMON_ERROR_EXIT_CODE:
+        detail = output[:300] or "docker run 在容器命令启动前失败"
+        return _command_not_executed(f"Docker 未启动隔离容器：{detail}")
     return {
         "executed": True,
         "sandboxed": True,
@@ -836,7 +858,7 @@ def _run_registered_command(command_args: list[str], paths: SandboxPaths) -> dic
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=2,
+            timeout=REGISTERED_COMMAND_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as exc:
         return {
@@ -848,7 +870,10 @@ def _run_registered_command(command_args: list[str], paths: SandboxPaths) -> dic
             "script_sha256": script_digest,
             "exit_code": None,
             "timed_out": True,
-            "output": f"登记程序执行超时。\n{_command_output(exc.stdout, exc.stderr)}".strip()[:2000],
+            "output": (
+                f"登记程序执行超时（{REGISTERED_COMMAND_TIMEOUT_SECONDS} 秒）。\n"
+                f"{_command_output(exc.stdout, exc.stderr)}"
+            ).strip()[:2000],
         }
     except OSError as exc:
         return _command_not_executed(f"登记程序启动失败：{exc}")

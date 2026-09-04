@@ -290,3 +290,8 @@ class ModelProfileRuntimeConfigUpdate(BaseModel):
 class ModelRuntimeConfigUpdate(BaseModel):
     real_api_enabled: bool | None = None
     profiles: dict[ModelProfileId, ModelProfileRuntimeConfigUpdate] | None = None
+
+
+class ModelProviderProbeRequest(BaseModel):
+    profile: ModelProfileId = "target"
+    provider_id: ModelProviderId
