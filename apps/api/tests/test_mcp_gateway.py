@@ -8,6 +8,7 @@ import os
 import statistics
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from time import perf_counter
@@ -16,15 +17,20 @@ from unittest.mock import Mock, patch
 
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision
 from apps.api.agent_supervisor.mcp_gateway.config import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MAX_TIMEOUT_SECONDS,
+    MIN_TIMEOUT_SECONDS,
     _split_command,
     gateway_allow_side_effect_notifications,
     gateway_guard_enabled,
     gateway_network_mode,
     gateway_resource_limits_enabled,
     gateway_session_isolation,
+    gateway_timeout_seconds,
 )
 from apps.api.agent_supervisor.mcp_gateway.gateway import McpGateway, reset_gateway
 from apps.api.agent_supervisor.mcp_gateway.interceptor import build_blocked_result, inspect_tools_call
+from apps.api.agent_supervisor.mcp_gateway.router import _uri_matches_template
 from apps.api.agent_supervisor.mcp_gateway.upstream import StdioMcpUpstream, StdioUpstreamError, _build_upstream_env
 
 FIXTURE_SERVER = Path(__file__).resolve().parent / "fixtures" / "mcp_echo_server.py"
@@ -129,6 +135,179 @@ class McpCommandConfigTest(unittest.TestCase):
             self.assertEqual(gateway_network_mode(), "reject-unpinned")
             self.assertTrue(gateway_resource_limits_enabled())
 
+    def test_gateway_timeout_is_finite_and_bounded(self) -> None:
+        cases = (
+            ("-1", MIN_TIMEOUT_SECONDS),
+            ("0", MIN_TIMEOUT_SECONDS),
+            ("0.05", MIN_TIMEOUT_SECONDS),
+            ("0.1", MIN_TIMEOUT_SECONDS),
+            ("301", MAX_TIMEOUT_SECONDS),
+            ("1000000", MAX_TIMEOUT_SECONDS),
+            ("nan", DEFAULT_TIMEOUT_SECONDS),
+            ("inf", DEFAULT_TIMEOUT_SECONDS),
+            ("-inf", DEFAULT_TIMEOUT_SECONDS),
+            ("not-a-number", DEFAULT_TIMEOUT_SECONDS),
+        )
+        for raw, expected in cases:
+            with self.subTest(raw=raw), patch.dict(
+                os.environ,
+                {"MCP_GATEWAY_TIMEOUT_SECONDS": raw},
+                clear=False,
+            ):
+                self.assertEqual(gateway_timeout_seconds(), expected)
+
+
+class McpUriTemplateTest(unittest.TestCase):
+    def test_terminal_literal_is_exact_but_variable_span_stays_general(self) -> None:
+        template = "foo/{id}/bar"
+        self.assertTrue(_uri_matches_template("foo/x/y/中文?part=1/bar", template))
+        self.assertTrue(_uri_matches_template("foo/x/bar/y/bar", template))
+        self.assertTrue(_uri_matches_template("foo/x/bar/bar", template))
+        self.assertFalse(_uri_matches_template("foo/x/bar/evil", template))
+
+    def test_trailing_variable_consumes_remaining_uri(self) -> None:
+        self.assertTrue(_uri_matches_template("foo/x/y", "foo/{id}"))
+
+
+class StdioUpstreamRequestTest(unittest.TestCase):
+    """验证 stdio 请求失败时原始异常可见且请求状态得到清理。"""
+
+    def test_start_failure_is_not_masked_by_cleanup(self) -> None:
+        upstream = StdioMcpUpstream(["missing-mcp-server"])
+        self.addCleanup(upstream.close)
+        startup_error = StdioUpstreamError("上游启动失败")
+
+        with patch.object(upstream, "_ensure_started", side_effect=startup_error):
+            with self.assertRaises(StdioUpstreamError) as caught:
+                upstream.request("ping", {})
+
+        self.assertIs(caught.exception, startup_error)
+        self.assertEqual(upstream._inflight_capture, {})
+        self.assertEqual(upstream._server_request_events, {})
+        self.assertEqual(upstream._notification_sinks, {})
+
+    def test_reader_pipe_failures_wake_waiter_with_explicit_error(self) -> None:
+        class RaisingStdout:
+            def __init__(self, error: Exception) -> None:
+                self.error = error
+
+            def readline(self, _size: int) -> str:
+                raise self.error
+
+            def close(self) -> None:
+                return None
+
+        class ExitedProcess:
+            stdin = None
+            stderr = None
+
+            def __init__(self, error: Exception) -> None:
+                self.stdout = RaisingStdout(error)
+
+            def poll(self) -> int:
+                return 1
+
+        cases = (
+            (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"), "有效 UTF-8"),
+            (OSError("pipe closed"), "输出管道失败"),
+        )
+        for error, expected in cases:
+            with self.subTest(error=type(error).__name__):
+                upstream = StdioMcpUpstream(["unused-mcp-server"])
+                upstream._proc = cast(Any, ExitedProcess(error))
+                upstream._reader_loop()
+                with self.assertRaisesRegex(StdioUpstreamError, expected):
+                    upstream._wait_response(1, 0.1)
+                upstream.close()
+
+    def test_server_request_is_queued_only_when_its_owner_is_unambiguous(self) -> None:
+        class OneLineStdout:
+            def __init__(self, line: str) -> None:
+                self.line = line
+                self.read = False
+
+            def readline(self, _size: int) -> str:
+                if self.read:
+                    return ""
+                self.read = True
+                return self.line
+
+            def close(self) -> None:
+                return None
+
+        class ExitedProcess:
+            stdin = None
+            stderr = None
+
+            def __init__(self, line: str) -> None:
+                self.stdout = OneLineStdout(line)
+
+            def poll(self) -> int:
+                return 1
+
+        line = json.dumps({"jsonrpc": "2.0", "id": "server-1", "method": "sampling/createMessage"}) + "\n"
+        unique = StdioMcpUpstream(["unused-mcp-server"])
+        unique._proc = cast(Any, ExitedProcess(line))
+        unique._inflight_capture[7] = True
+        unique._reader_loop()
+        self.assertEqual(unique._server_request_events[7][0]["id"], "server-1")
+        unique.close()
+
+        for inflight in ({1: True, 2: True}, {1: True, 2: False}):
+            with self.subTest(inflight=inflight):
+                upstream = StdioMcpUpstream(["unused-mcp-server"])
+                upstream._proc = cast(Any, ExitedProcess(line))
+                upstream._inflight_capture.update(inflight)
+                upstream._reader_loop()
+                self.assertIn("无法安全归属", upstream._reader_error)
+                self.assertTrue(upstream._upstream_closed)
+                self.assertEqual(upstream._server_request_events, {})
+                with self.assertRaisesRegex(StdioUpstreamError, "无法安全归属"):
+                    upstream._wait_response(1, 0.1)
+                upstream.close()
+
+    def test_write_failure_preserves_error_and_cleans_registered_request(self) -> None:
+        upstream = StdioMcpUpstream(["unused-mcp-server"])
+        self.addCleanup(upstream.close)
+        write_error = StdioUpstreamError("上游写入失败")
+
+        with patch.object(upstream, "_ensure_started"), patch.object(upstream, "_write_line", side_effect=write_error):
+            with self.assertRaises(StdioUpstreamError) as caught:
+                upstream.request("ping", {}, notification_sink=lambda _message: None)
+
+        self.assertIs(caught.exception, write_error)
+        self.assertEqual(upstream._inflight_capture, {})
+        self.assertEqual(upstream._server_request_events, {})
+        self.assertEqual(upstream._notification_sinks, {})
+
+    def test_raw_pipe_write_error_is_converged_to_stdio_upstream_error(self) -> None:
+        class BrokenStdin:
+            def write(self, _value: str) -> int:
+                raise BrokenPipeError("closed")
+
+            def flush(self) -> None:
+                return None
+
+            def close(self) -> None:
+                return None
+
+        class ExitedProcess:
+            stdin = BrokenStdin()
+            stdout = None
+            stderr = None
+
+            def poll(self) -> None:
+                return None
+
+        upstream = StdioMcpUpstream(["unused-mcp-server"])
+        upstream._proc = cast(Any, ExitedProcess())
+        with patch("apps.api.agent_supervisor.mcp_gateway.upstream._terminate_process_tree"):
+            with self.assertRaisesRegex(StdioUpstreamError, "写入上游 MCP 管道失败"):
+                upstream._write_line({"jsonrpc": "2.0", "method": "ping", "params": {"text": "中文"}})
+        self.assertTrue(upstream._upstream_closed)
+        self.assertIn("写入上游 MCP 管道失败", upstream._reader_error)
+        upstream._proc = None
+
 
 class InterceptorTest(unittest.TestCase):
     def test_benign_standard_capability_call_is_allowed(self) -> None:
@@ -226,6 +405,28 @@ class GatewayProxyTest(unittest.TestCase):
         self.assertNotIn("secret-value", visible)
         self.assertIn("error_hash", visible)
         self.assertIn("MCP Gateway 上游请求失败", visible)
+
+    def test_model_metadata_is_not_forwarded_to_legacy_stdio_upstream(self) -> None:
+        with patch.object(self.upstream, "request", wraps=self.upstream.request) as request_spy:
+            _handle(self.gateway, _request("tools/list"))
+            response = _handle(
+                self.gateway,
+                _request(
+                    "tools/call",
+                    {
+                        "name": "file.read",
+                        "arguments": {"path": "public/readme.md"},
+                        "_meta": {
+                            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                            "io.modelcontextprotocol/clientInfo": {"name": "modern", "version": "1"},
+                        },
+                    },
+                )
+            )
+        self.assertFalse(response["result"]["isError"])
+        forwarded_params = request_spy.call_args_list[-1].args[1]
+        self.assertNotIn("_meta", forwarded_params)
+        self.assertEqual(forwarded_params["name"], "file.read")
 
     def test_handle_rejects_unbounded_or_control_protocol_identifiers(self) -> None:
         with self.assertRaisesRegex(ValueError, "method"):
@@ -638,6 +839,265 @@ class McpSessionIsolationTest(unittest.TestCase):
         self.assertTrue(first.router.default.closed)
         self.assertEqual(gateway.session_pool_status()["active_sessions"], 1)
         self.assertEqual(gateway.session_pool_status()["max_sessions"], 1)
+
+    def test_active_subscription_lease_prevents_session_eviction(self) -> None:
+        from apps.api.agent_supervisor.mcp_gateway.router import UpstreamRouter
+
+        gateway = McpGateway(
+            router=UpstreamRouter(cast(Any, {"default": self._SessionAwareUpstream("base")})),
+            audit_enabled=False,
+            session_isolation=True,
+            max_sessions=1,
+        )
+        self.addCleanup(gateway.close)
+        gateway._session_gateway("agent-a", "session-a")
+        gateway.pin_session(agent_id="agent-a", session_id="session-a")
+
+        self.assertEqual(gateway.session_pool_status()["leased_sessions"], 1)
+        with self.assertRaisesRegex(ValueError, "活动订阅"):
+            gateway._session_gateway("agent-b", "session-b")
+
+        gateway.unpin_session(agent_id="agent-a", session_id="session-a")
+        gateway._session_gateway("agent-b", "session-b")
+        self.assertEqual(gateway.session_pool_status()["leased_sessions"], 0)
+        self.assertEqual(gateway.session_pool_status()["active_sessions"], 1)
+
+    def test_active_request_lease_prevents_session_eviction(self) -> None:
+        from apps.api.agent_supervisor.mcp_gateway.router import UpstreamRouter
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        class SlowUpstream(McpSessionIsolationTest._SessionAwareUpstream):
+            def clone(self) -> "SlowUpstream":
+                return SlowUpstream(f"{self.label}-clone")
+
+            def request(self, method: str, params: dict | None = None, **kwargs: object) -> dict:
+                if method == "initialize":
+                    entered.set()
+                    release.wait(timeout=2)
+                return super().request(method, params, **kwargs)
+
+        gateway = McpGateway(
+            router=UpstreamRouter(cast(Any, {"default": SlowUpstream("base")})),
+            audit_enabled=False,
+            session_isolation=True,
+            max_sessions=1,
+        )
+        self.addCleanup(gateway.close)
+        errors: list[BaseException] = []
+
+        def run_first() -> None:
+            try:
+                gateway.handle(_request("initialize", {}, request_id="slow"), agent_id="a", session_id="s1")
+            except BaseException as exc:  # pragma: no cover - assertion below surfaces it
+                errors.append(exc)
+
+        worker = threading.Thread(target=run_first)
+        worker.start()
+        self.assertTrue(entered.wait(timeout=1))
+        try:
+            with self.assertRaisesRegex(ValueError, "活动订阅或请求"):
+                gateway.handle(_request("initialize", {}, request_id="other"), agent_id="b", session_id="s2")
+        finally:
+            release.set()
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        gateway.handle(_request("initialize", {}, request_id="other"), agent_id="b", session_id="s2")
+        self.assertEqual(gateway.session_pool_status()["leased_sessions"], 0)
+
+    def test_cancelled_modern_discovery_reaches_upstream_and_releases_lease(self) -> None:
+        from apps.api.agent_supervisor.mcp_gateway.router import UpstreamRouter
+
+        class SlowDiscoveryUpstream(McpSessionIsolationTest._SessionAwareUpstream):
+            def __init__(
+                self,
+                label: str,
+                target_method: str,
+                result_key: str,
+                entered: threading.Event,
+                release: threading.Event,
+                saw_cancel: threading.Event,
+            ) -> None:
+                super().__init__(label)
+                self.target_method = target_method
+                self.result_key = result_key
+                self.entered = entered
+                self.release = release
+                self.saw_cancel = saw_cancel
+
+            def clone(self) -> "SlowDiscoveryUpstream":
+                return SlowDiscoveryUpstream(
+                    f"{self.label}-clone",
+                    self.target_method,
+                    self.result_key,
+                    self.entered,
+                    self.release,
+                    self.saw_cancel,
+                )
+
+            def request(self, method: str, params: dict | None = None, **kwargs: object) -> dict:
+                if method != self.target_method:
+                    return super().request(method, params, **kwargs)
+                upstream_cancel = kwargs.get("cancel_event")
+                self.entered.set()
+                while not self.release.wait(timeout=0.01):
+                    if isinstance(upstream_cancel, threading.Event) and upstream_cancel.is_set():
+                        self.saw_cancel.set()
+                        raise StdioUpstreamError("MCP 请求已取消。")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": kwargs.get("client_id"),
+                    "result": {self.result_key: []},
+                }
+
+        def run_request(
+            current_gateway: McpGateway,
+            current_method: str,
+            current_cancel_event: threading.Event,
+            current_errors: list[BaseException],
+        ) -> None:
+            try:
+                current_gateway.handle(
+                    _request(current_method, {}, request_id=f"slow-{current_method}"),
+                    agent_id="a",
+                    session_id="s1",
+                    modern=True,
+                    cancel_event=current_cancel_event,
+                )
+            except BaseException as exc:  # pragma: no cover - assertion below surfaces it
+                current_errors.append(exc)
+
+        result_keys = {
+            "tools/list": "tools",
+            "resources/list": "resources",
+            "resources/templates/list": "resourceTemplates",
+            "prompts/list": "prompts",
+        }
+        for method, result_key in result_keys.items():
+            with self.subTest(method=method):
+                entered = threading.Event()
+                release = threading.Event()
+                saw_cancel = threading.Event()
+                cancel_event = threading.Event()
+
+                gateway = McpGateway(
+                    router=UpstreamRouter(
+                        cast(
+                            Any,
+                            {
+                                "default": SlowDiscoveryUpstream(
+                                    "base",
+                                    method,
+                                    result_key,
+                                    entered,
+                                    release,
+                                    saw_cancel,
+                                )
+                            },
+                        )
+                    ),
+                    audit_enabled=False,
+                    session_isolation=True,
+                    max_sessions=1,
+                )
+                errors: list[BaseException] = []
+
+                worker = threading.Thread(target=run_request, args=(gateway, method, cancel_event, errors))
+                worker.start()
+                self.assertTrue(entered.wait(timeout=1))
+                cancel_event.set()
+                worker.join(timeout=0.5)
+                finished_after_cancel = not worker.is_alive()
+                leased_after_cancel = gateway.session_pool_status()["leased_sessions"]
+                release.set()
+                worker.join(timeout=2)
+                gateway.close()
+
+                self.assertTrue(finished_after_cancel)
+                self.assertTrue(saw_cancel.is_set())
+                self.assertEqual(leased_after_cancel, 0)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(len(errors), 1)
+                self.assertIsInstance(errors[0], StdioUpstreamError)
+
+    def test_mrtr_pending_lease_prevents_session_eviction_between_round_trips(self) -> None:
+        from apps.api.agent_supervisor.mcp_gateway.router import UpstreamRouter
+
+        class PendingUpstream(McpSessionIsolationTest._SessionAwareUpstream):
+            def clone(self) -> "PendingUpstream":
+                return PendingUpstream(f"{self.label}-clone")
+
+            def request(self, method: str, params: dict | None = None, **kwargs: object) -> dict:
+                if method != "tools/call" or not kwargs.get("capture_server_requests"):
+                    return super().request(method, params, **kwargs)
+                handler = cast(Any, kwargs["server_request_handler"])
+                answer = handler(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "pending-input",
+                        "method": "sampling/createMessage",
+                        "params": {"messages": []},
+                    }
+                )
+                if answer is None:
+                    raise StdioUpstreamError("pending call closed")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": kwargs.get("client_id"),
+                    "result": {"content": [{"type": "text", "text": "done"}], "isError": False},
+                }
+
+        gateway = McpGateway(
+            router=UpstreamRouter(cast(Any, {"default": PendingUpstream("base")})),
+            audit_enabled=False,
+            session_isolation=True,
+            max_sessions=1,
+        )
+        self.addCleanup(gateway.close)
+        first = gateway.handle(
+            _request(
+                "tools/call",
+                {
+                    "name": "file.read",
+                    "arguments": {"path": "public/readme.md"},
+                    "_meta": {},
+                },
+                request_id="pending-round-1",
+            ),
+            agent_id="a",
+            session_id="s1",
+            modern=True,
+            client_capabilities={"sampling": {}},
+        )
+        assert first is not None
+        self.assertEqual(first["result"]["resultType"], "input_required")
+        with self.assertRaisesRegex(ValueError, "活动订阅或请求"):
+            gateway.handle(_request("initialize", {}, request_id="other"), agent_id="b", session_id="s2")
+        self.assertEqual(gateway.session_pool_status()["leased_sessions"], 1)
+        request_state = first["result"]["requestState"]
+        resumed = gateway.handle(
+            _request(
+                "tools/call",
+                {
+                    "name": "file.read",
+                    "arguments": {"path": "public/readme.md"},
+                    "_meta": {},
+                    "inputResponses": {"pending-input": {"model": "fixture"}},
+                    "requestState": request_state,
+                },
+                request_id="pending-round-2",
+            ),
+            agent_id="a",
+            session_id="s1",
+            modern=True,
+            client_capabilities={"sampling": {}},
+        )
+        assert resumed is not None
+        self.assertFalse(resumed["result"]["isError"])
+        self.assertEqual(gateway.session_pool_status()["leased_sessions"], 0)
+        gateway.handle(_request("initialize", {}, request_id="other"), agent_id="b", session_id="s2")
 
     def test_context_inventory_uses_the_isolated_child_and_binds_session_hash(self) -> None:
         from apps.api.agent_supervisor.mcp_gateway.router import UpstreamRouter
@@ -2549,7 +3009,11 @@ class SupervisionLatencyTest(unittest.TestCase):
     """M-04 验收：单次监督决策开销 p95 < 10ms。"""
 
     def test_interceptor_overhead_p95_under_10ms(self) -> None:
+        if sys.gettrace() is not None:
+            self.skipTest("覆盖率或调试插桩会扭曲微基准；请运行 npm run api:perf 完成独立性能验收")
         params = {"name": "file.read", "arguments": {"path": "public/readme.md"}}
+        for _ in range(50):
+            inspect_tools_call(params)
         durations: list[float] = []
         for _ in range(300):
             start = perf_counter()

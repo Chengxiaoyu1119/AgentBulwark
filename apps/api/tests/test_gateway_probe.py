@@ -22,6 +22,7 @@ from apps.api.agent_supervisor.commands.cli import (
     cmd_mcp_probe,
 )
 from apps.api.agent_supervisor.domains.reports.gateway_evidence import (
+    GATEWAY_EVIDENCE_SOURCE_FILES,
     gateway_code_fingerprint,
     gateway_evidence_fingerprint,
     gateway_evidence_snapshot,
@@ -547,6 +548,65 @@ class GatewayProbeTests(unittest.TestCase):
         self.assertNotIn("mcp_server.py --token", dumped)
         self.assertEqual(first["mcp_config"]["MCP_GATEWAY_UPSTREAM_COMMAND"]["configured"], True)
         self.assertEqual(len(first["mcp_config"]["MCP_GATEWAY_UPSTREAM_COMMAND"]["sha256"]), 64)
+
+    def test_gateway_evidence_binds_modern_mcp_contract_and_effective_posture(self) -> None:
+        required_sources = {
+            "apps/api/agent_supervisor/commands/cli.py",
+            "apps/api/agent_supervisor/domains/reports/readiness_checks.py",
+            "apps/api/agent_supervisor/domains/runtime/mcp_access.py",
+            "apps/api/agent_supervisor/mcp_gateway/http_transport.py",
+            "apps/api/agent_supervisor/mcp_gateway/mrtr.py",
+            "apps/api/agent_supervisor/mcp_gateway/subscriptions.py",
+        }
+        self.assertTrue(required_sources.issubset(set(GATEWAY_EVIDENCE_SOURCE_FILES)))
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AGENT_SUPERVISOR_SECURITY_PROFILE": "local",
+                "MCP_GATEWAY_UPSTREAM_COMMAND": "python mcp_server.py",
+                "MCP_GATEWAY_GUARD_ENABLED": "true",
+                "MCP_GATEWAY_ALLOW_SIDE_EFFECT_NOTIFICATIONS": "false",
+                "MCP_GATEWAY_NETWORK_MODE": "reject-unpinned",
+                "MCP_GATEWAY_SESSION_ISOLATION": "true",
+                "MCP_GATEWAY_MAX_SESSIONS": "64",
+                "MCP_GATEWAY_MAX_SUBSCRIPTIONS": "32",
+                "MCP_GATEWAY_MRTR_TIMEOUT_SECONDS": "180",
+                "MCP_GATEWAY_REQUEST_STATE_SECRET": "s" * 48,
+            },
+            clear=False,
+        ):
+            secure = gateway_evidence_snapshot()
+            secure_fingerprint = gateway_source_fingerprint(secure)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "AGENT_SUPERVISOR_SECURITY_PROFILE": "local",
+                "MCP_GATEWAY_UPSTREAM_COMMAND": "python mcp_server.py",
+                "MCP_GATEWAY_GUARD_ENABLED": "false",
+                "MCP_GATEWAY_ALLOW_SIDE_EFFECT_NOTIFICATIONS": "true",
+                "MCP_GATEWAY_NETWORK_MODE": "allow-unpinned",
+                "MCP_GATEWAY_SESSION_ISOLATION": "false",
+                "MCP_GATEWAY_MAX_SESSIONS": "16",
+                "MCP_GATEWAY_MAX_SUBSCRIPTIONS": "8",
+                "MCP_GATEWAY_MRTR_TIMEOUT_SECONDS": "60",
+                "MCP_GATEWAY_REQUEST_STATE_SECRET": "",
+                "AGENT_SUPERVISOR_AUDIT_HMAC_KEY": "",
+            },
+            clear=False,
+        ):
+            downgraded = gateway_evidence_snapshot()
+            downgraded_fingerprint = gateway_source_fingerprint(downgraded)
+
+        self.assertNotEqual(secure_fingerprint, downgraded_fingerprint)
+        self.assertEqual(secure["mcp_config"]["effective"]["guard_enabled"], True)
+        self.assertEqual(secure["mcp_config"]["effective"]["session_isolation"], True)
+        self.assertEqual(secure["mcp_config"]["effective"]["request_state_key_source"], "explicit")
+        self.assertEqual(downgraded["mcp_config"]["effective"]["guard_enabled"], False)
+        self.assertEqual(downgraded["mcp_config"]["effective"]["session_isolation"], False)
+        self.assertEqual(downgraded["mcp_config"]["effective"]["request_state_key_source"], "ephemeral")
+        self.assertNotIn("s" * 48, json.dumps(secure, ensure_ascii=False))
 
     def test_gateway_contract_requires_explicit_provider_fact(self) -> None:
         request_hash = "a" * 64

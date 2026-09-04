@@ -15,7 +15,9 @@ from apps.api.agent_supervisor.domains.runtime.gateway_execution import GatewayE
 from apps.api.agent_supervisor.domains.runtime.tools import SandboxPaths
 from apps.api.agent_supervisor.main import app
 from apps.api.agent_supervisor.storage.database import (
+    latest_audit_logs,
     list_runtime_events,
+    load_audit_log,
     load_gateway_execution_claim,
 )
 from apps.api.agent_supervisor.storage.database import (
@@ -938,6 +940,57 @@ class GatewayExecutionTests(unittest.TestCase):
             first.json()["execution_receipt"]["receipt_hash"],
         )
 
+    def test_server_owned_runtime_execute_stops_before_side_effect_when_intent_persistence_fails(self) -> None:
+        nonce = uuid4().hex
+        payload = {
+            "conversation_id": f"managed-intent-failure-session-{nonce}",
+            "agent_id": f"managed-intent-failure-agent-{nonce}",
+            "agent_role": "executor",
+            "source_app": "managed-agent",
+            "model_input": "读取公开说明",
+            "model_output": "准备读取公开说明",
+            "tool_call": {
+                "tool": "file.read",
+                "arguments": {"path": "public/项目说明.md"},
+            },
+        }
+        with (
+            patch(
+                "apps.api.agent_supervisor.domains.runtime.events.write_run",
+                side_effect=RuntimeError("simulated intent persistence outage"),
+            ),
+            patch("apps.api.agent_supervisor.domains.runtime.events.execute_tool") as execute_tool,
+        ):
+            response = self.client.post("/api/runtime/execute", json=payload)
+
+        self.assertEqual(response.status_code, 409, response.text)
+        execute_tool.assert_not_called()
+        audit_id = "runtime-" + hashlib.sha256(
+            json.dumps(
+                {
+                    "conversation_id": payload["conversation_id"],
+                    "agent_id": payload["agent_id"],
+                    "agent_role": payload["agent_role"],
+                    "source_app": payload["source_app"],
+                    "model_input": payload["model_input"],
+                    "model_output": payload["model_output"],
+                    "tool_call": payload["tool_call"],
+                    "context_sources": [],
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        claim = load_gateway_execution_claim(audit_id)
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim["status"], "unknown")
+        events = list_runtime_events(event_type="server-execution-uncertain", limit=20)
+        matching = [event for event in events if event.get("payload", {}).get("audit_id") == audit_id]
+        self.assertTrue(matching)
+        self.assertEqual(matching[0]["payload"]["phase"], "intent-persistence")
+
     def test_server_owned_runtime_execute_freezes_unknown_after_result_persistence_failure(self) -> None:
         calls = 0
         nonce = uuid4().hex
@@ -1009,6 +1062,14 @@ class GatewayExecutionTests(unittest.TestCase):
         self.assertIsNotNone(claim)
         assert claim is not None
         self.assertEqual(claim["status"], "unknown")
+        intent = load_audit_log(audit_id)
+        self.assertIsNotNone(intent)
+        assert intent is not None
+        self.assertEqual(intent["execution_status"], "pending")
+        self.assertEqual(intent["execution_evidence"], "server-owned-pending")
+        enriched_intent = next(item for item in latest_audit_logs(200) if item.get("id") == audit_id)
+        self.assertEqual(enriched_intent["execution_status"], "unknown")
+        self.assertEqual(enriched_intent["gateway_execution_claim_status"], "unknown")
         events = list_runtime_events(event_type="server-execution-uncertain", limit=20)
         self.assertTrue(any(item.get("payload", {}).get("audit_id") == audit_id for item in events))
 

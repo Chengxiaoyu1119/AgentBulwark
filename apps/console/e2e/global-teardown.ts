@@ -1,4 +1,3 @@
-import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -16,5 +15,7 @@ export default async function globalTeardown() {
   ) {
     throw new Error(`拒绝清理非 E2E 临时目录：${resolved}`);
   }
-  await rm(resolved, { recursive: true, force: true });
+  // Directory removal is owned by run-e2e.mjs after Playwright has stopped
+  // every webServer process. Removing it here deadlocks with the API's live
+  // Windows maintenance-lock handle because global teardown runs first.
 }

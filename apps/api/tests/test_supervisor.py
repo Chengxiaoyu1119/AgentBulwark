@@ -101,6 +101,7 @@ class ApiTokenAuthTest(unittest.TestCase):
                 "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
                 "AGENT_SUPERVISOR_SECURITY_PROFILE": "production",
                 "AGENT_SUPERVISOR_API_TOKEN": "shared-token",
+                "AGENT_SUPERVISOR_DEFAULT_ROLE": "admin",
             },
             clear=True,
         ):
@@ -151,6 +152,19 @@ class ServerSecurityTest(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             configure_server_security("127.0.0.1")
             self.assertEqual(os.environ["AGENT_SUPERVISOR_AUTH_DISABLED"], "true")
+
+    def test_enabled_mcp_rejects_short_request_state_secret_during_startup(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MCP_GATEWAY_ENABLED": "true",
+                "MCP_GATEWAY_UPSTREAM_COMMAND": "fixture-server",
+                "MCP_GATEWAY_REQUEST_STATE_SECRET": "short-secret",
+            },
+            clear=True,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "MCP_GATEWAY_REQUEST_STATE_SECRET.*32"):
+                configure_server_security("127.0.0.1")
 
     def test_explicit_production_profile_is_not_downgraded_by_loopback_bind(self):
         with patch.dict(

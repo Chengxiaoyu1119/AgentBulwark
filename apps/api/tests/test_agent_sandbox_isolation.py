@@ -6,7 +6,7 @@ from pathlib import Path
 
 from apps.api.agent_supervisor.domains.attacks.target_lab import target_lab_snapshot
 from apps.api.agent_supervisor.domains.runtime.tools import SandboxPaths, default_sandbox_paths, execute_tool, init_sandbox
-from apps.api.agent_supervisor.paths import FIXTURE_WORKSPACE_DIR
+from apps.api.agent_supervisor.paths import FIXTURE_WORKSPACE_DIR, RUNTIME_DIR
 
 
 class AgentSandboxIsolationTests(unittest.TestCase):
@@ -20,6 +20,7 @@ class AgentSandboxIsolationTests(unittest.TestCase):
         self.assertNotEqual(first.target_state, second.target_state)
         self.assertIn("agents", first.workspace.parts)
         self.assertNotIn("agent-a", str(first.workspace))
+        self.assertTrue(first.workspace.is_relative_to(RUNTIME_DIR))
         self.assertFalse(first.seed_fixtures)
 
     def test_identity_bound_sandbox_does_not_copy_regression_secrets(self) -> None:

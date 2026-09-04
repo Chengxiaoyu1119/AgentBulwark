@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import unittest
 
-from apps.api.agent_supervisor.domains.attacks.penetration_lab import list_learning_scenarios, run_learning_attack
+from apps.api.agent_supervisor.domains.attacks.penetration_lab import (
+    _compromised_assets,
+    list_learning_scenarios,
+    run_learning_attack,
+)
 
 
 class PenetrationLearningLabTests(unittest.TestCase):
@@ -40,6 +44,14 @@ class PenetrationLearningLabTests(unittest.TestCase):
                 self.assertIn(result["guarded"]["decision"], {"拒绝", "询问", "隔离"})
                 self.assertTrue(result["summary"]["compromised_assets"])
                 self.assertEqual(result["scenario"]["tool"], scenario["tool"])
+
+    def test_tool_hijack_asset_survives_empty_probe_output(self) -> None:
+        assets = _compromised_assets(
+            "",
+            tool_call={"tool": "code.run", "arguments": {"command": "python --payload powershell -enc <redacted>"}},
+        )
+
+        self.assertIn("危险命令载荷", assets)
 
 
 if __name__ == "__main__":

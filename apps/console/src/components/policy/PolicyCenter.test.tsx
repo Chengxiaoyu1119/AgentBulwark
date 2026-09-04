@@ -73,7 +73,7 @@ describe('PolicyCenter', () => {
 
     expect(screen.getByText('防护策略中心')).toBeInTheDocument();
     expect(await screen.findByText('业务安全边界')).toBeInTheDocument();
-    expect(screen.getByText('Agent 工具最小权限')).toBeInTheDocument();
+    expect(await screen.findByText('Agent 工具最小权限')).toBeInTheDocument();
     expect(screen.getByText('记忆治理')).toBeInTheDocument();
   });
 });

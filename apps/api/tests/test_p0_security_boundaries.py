@@ -22,6 +22,7 @@ from apps.api.agent_supervisor.domains.governance.tool_contract import (
     resolve_public_redirect_chain,
 )
 from apps.api.agent_supervisor.domains.runtime import tools
+from apps.api.agent_supervisor.domains.runtime.agent_credentials import can_execute_managed_tools
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event, stream_runtime_events
 from apps.api.agent_supervisor.main import MAX_REQUEST_BODY_BYTES, app
 from apps.api.agent_supervisor.schemas.main_models import AgentToolEvent, BatchAgentToolEvents
@@ -58,6 +59,14 @@ class RuntimeEndpointBoundaryTests(TestCase):
             self.assertFalse(snapshot["initialized"])
             self.assertEqual(snapshot["version"], "")
             self.assertEqual(snapshot["state_path"], "sandbox/runtime/target_lab/missing-target-state.json")
+
+    def test_managed_tool_capability_requires_admin_or_bound_executor(self) -> None:
+        self.assertTrue(can_execute_managed_tools("admin", None))
+        self.assertTrue(can_execute_managed_tools("executor", "runtime-agent"))
+        self.assertFalse(can_execute_managed_tools("executor", None))
+        self.assertFalse(can_execute_managed_tools("executor", "   "))
+        self.assertFalse(can_execute_managed_tools("analyst", "runtime-agent"))
+        self.assertFalse(can_execute_managed_tools("observer", "runtime-agent"))
 
     def test_runtime_and_lab_roles_are_separated(self) -> None:
         fake_result = {"decision": "允许", "policy_id": "test", "reason": "test"}
@@ -248,6 +257,87 @@ class RuntimeEndpointBoundaryTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         decide_review.assert_not_called()
+
+    def test_policy_audit_actor_comes_from_authenticated_role(self) -> None:
+        with (
+            patch.dict(os.environ, self.security_env, clear=False),
+            patch(
+                "apps.api.agent_supervisor.routers.core.update_policy_settings",
+                return_value={"anomaly_review_threshold": 60},
+            ) as update_settings,
+            patch(
+                "apps.api.agent_supervisor.routers.core.update_policy",
+                return_value={"id": "path-boundary", "enabled": False},
+            ) as update_policy,
+            TestClient(app) as client,
+        ):
+            settings_response = client.patch(
+                "/api/policy_settings",
+                json={
+                    "anomaly_review_threshold": 60,
+                    "operator": "forged-client-actor",
+                    "comment": "settings review",
+                },
+                headers={"Authorization": "Bearer admin-token"},
+            )
+            policy_response = client.patch(
+                "/api/policies/path-boundary",
+                json={
+                    "enabled": False,
+                    "operator": "forged-client-actor",
+                    "comment": "policy review",
+                },
+                headers={"Authorization": "Bearer admin-token"},
+            )
+
+        self.assertEqual(settings_response.status_code, 200)
+        self.assertEqual(policy_response.status_code, 200)
+        self.assertEqual(update_settings.call_args.args[0]["operator"], "security-admin")
+        self.assertEqual(update_policy.call_args.kwargs["operator"], "security-admin")
+
+    def test_governance_audit_actor_comes_from_authenticated_role(self) -> None:
+        with (
+            patch.dict(os.environ, self.security_env, clear=False),
+            patch(
+                "apps.api.agent_supervisor.routers.core.update_memory_status",
+                return_value={"updated": True},
+            ) as update_memory,
+            patch(
+                "apps.api.agent_supervisor.routers.core.rollback_latest_memory",
+                return_value={"updated": True},
+            ) as rollback_memory,
+            patch(
+                "apps.api.agent_supervisor.routers.evaluations.decide_approval_review",
+                return_value={"id": "review-1", "status": "已批准"},
+            ) as decide_review,
+            TestClient(app) as client,
+        ):
+            memory_response = client.patch(
+                "/api/memory_governance/memory-1",
+                json={"status": "approved", "operator": "forged-client-actor"},
+                headers={"Authorization": "Bearer analyst-token"},
+            )
+            rollback_response = client.post(
+                "/api/memory_governance/rollback_latest",
+                json={"operator": "forged-client-actor"},
+                headers={"Authorization": "Bearer analyst-token"},
+            )
+            decision_response = client.post(
+                "/api/approvals/review-1/decision",
+                json={
+                    "action": "approve",
+                    "operator": "forged-client-actor",
+                    "comment": "reviewed",
+                },
+                headers={"Authorization": "Bearer analyst-token"},
+            )
+
+        self.assertEqual(memory_response.status_code, 200)
+        self.assertEqual(rollback_response.status_code, 200)
+        self.assertEqual(decision_response.status_code, 200)
+        self.assertEqual(update_memory.call_args.kwargs["operator"], "security-analyst")
+        self.assertEqual(rollback_memory.call_args.kwargs["operator"], "security-analyst")
+        self.assertEqual(decide_review.call_args.kwargs["operator"], "security-analyst")
 
     def test_model_runtime_config_rejects_misspelled_profile_and_provider(self) -> None:
         with (
@@ -487,6 +577,8 @@ class RuntimeEndpointBoundaryTests(TestCase):
         self.assertEqual(context_response.json()["role"], "executor")
         self.assertEqual(context_response.json()["agent_id"], "runtime-agent")
         self.assertTrue(context_response.json()["permissions"]["can_execute_runtime"])
+        self.assertTrue(context_response.json()["permissions"]["can_use_mcp"])
+        self.assertTrue(context_response.json()["permissions"]["can_execute_mcp_tools"])
         self.assertEqual(overview_response.status_code, 403)
 
     def test_runtime_status_exposes_effective_identity_without_provider_topology(self) -> None:
@@ -506,6 +598,8 @@ class RuntimeEndpointBoundaryTests(TestCase):
         self.assertEqual(executor_context["agent_id"], "runtime-agent")
         self.assertTrue(executor_context["identity_bound"])
         self.assertTrue(executor_context["can_generate"])
+        self.assertTrue(executor_context["can_use_mcp"])
+        self.assertTrue(executor_context["can_execute_mcp_tools"])
         self.assertNotIn("endpoint", executor.json()["models"]["target"][0])
 
         self.assertEqual(observer.status_code, 200)
@@ -513,6 +607,35 @@ class RuntimeEndpointBoundaryTests(TestCase):
         self.assertEqual(observer_context["role"], "observer")
         self.assertFalse(observer_context["identity_bound"])
         self.assertFalse(observer_context["can_generate"])
+        self.assertFalse(observer_context["can_use_mcp"])
+        self.assertFalse(observer_context["can_execute_mcp_tools"])
+
+    def test_runtime_status_does_not_advertise_managed_execution_for_unbound_executor(self) -> None:
+        environment = {
+            **self.security_env,
+            "AGENT_SUPERVISOR_SECURITY_PROFILE": "local",
+            "AGENT_SUPERVISOR_API_TOKEN_EXECUTOR": "shared-executor-token",
+            "AGENT_SUPERVISOR_ALLOW_SHARED_EXECUTOR_TOKEN": "true",
+        }
+        with patch.dict(os.environ, environment, clear=False), TestClient(app) as client:
+            response = client.get(
+                "/api/runtime_status",
+                headers={"Authorization": "Bearer shared-executor-token"},
+            )
+            auth_context = client.get(
+                "/api/auth/context",
+                headers={"Authorization": "Bearer shared-executor-token"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(auth_context.status_code, 200)
+        context = response.json()["security_context"]
+        self.assertEqual(context["role"], "executor")
+        self.assertFalse(context["identity_bound"])
+        self.assertFalse(context["can_execute_managed_tools"])
+        self.assertTrue(context["can_use_mcp"])
+        self.assertTrue(context["can_execute_mcp_tools"])
+        self.assertFalse(auth_context.json()["permissions"]["can_execute_managed_tools"])
 
     def test_runtime_status_reports_production_server_observed_receipt_invariant(self) -> None:
         environment = {
@@ -561,6 +684,42 @@ class RuntimeEndpointBoundaryTests(TestCase):
         self.assertNotIn("endpoint", observer_overview.json()["models"][0])
         self.assertEqual(admin_overview.status_code, 200)
         self.assertEqual(admin_overview.json()["models"][0]["endpoint"], provider_rows[0]["endpoint"])
+
+    def test_model_status_accepts_known_profile_and_rejects_unknown_profile(self) -> None:
+        profile_rows = {
+            "target": [{"profile": "target", "provider": "deepseek", "configured": True, "model": "target-model", "endpoint": "https://target.example", "mode": "real-api"}],
+            "optimizer": [{"profile": "optimizer", "provider": "zhipu", "configured": False, "model": "optimizer-model", "endpoint": "https://optimizer.example", "mode": "simulated"}],
+        }
+
+        def status_for_profile(profile: str = "") -> list[dict]:
+            return profile_rows.get(profile, [{"profile": profile or "global", "provider": "deepseek", "configured": False, "model": "global-model", "endpoint": "https://global.example", "mode": "simulated"}])
+
+        with (
+            patch.dict(os.environ, self.security_env, clear=False),
+            patch("apps.api.agent_supervisor.routers.core.provider_status", side_effect=status_for_profile) as status,
+            TestClient(app) as client,
+        ):
+            observer = client.get(
+                "/api/models?profile=target",
+                headers={"Authorization": "Bearer observer-token"},
+            )
+            admin = client.get(
+                "/api/models?profile=optimizer",
+                headers={"Authorization": "Bearer admin-token"},
+            )
+            invalid = client.get(
+                "/api/models?profile=unknown",
+                headers={"Authorization": "Bearer admin-token"},
+            )
+
+        self.assertEqual(observer.status_code, 200)
+        self.assertEqual(observer.json()[0]["profile"], "target")
+        self.assertNotIn("endpoint", observer.json()[0])
+        self.assertEqual(admin.status_code, 200)
+        self.assertEqual(admin.json()[0]["profile"], "optimizer")
+        self.assertEqual(admin.json()[0]["endpoint"], "https://optimizer.example")
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(status.call_count, 2)
 
     def test_observer_policy_config_hides_mcp_context_allowlist_contents(self) -> None:
         settings = {

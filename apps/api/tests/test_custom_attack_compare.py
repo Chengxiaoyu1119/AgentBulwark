@@ -580,6 +580,46 @@ class CustomAttackCompareTests(unittest.TestCase):
         self.assertEqual(docker_args[-1], "printf custom-output")
         self.assertTrue(result["summary"]["exposed_without_guard"])
 
+    @patch("apps.api.agent_supervisor.domains.runtime.tools.shutil.which", return_value="docker")
+    @patch("apps.api.agent_supervisor.domains.runtime.tools.subprocess.run")
+    def test_docker_daemon_run_failure_is_not_reported_as_execution(self, run, _which) -> None:
+        run.side_effect = [
+            type("Result", (), {"returncode": 0, "stdout": "29.0", "stderr": ""})(),
+            type(
+                "Result",
+                (),
+                {
+                    "returncode": 125,
+                    "stdout": "",
+                    "stderr": "docker: Error response from daemon: No such image: python:3.12-alpine",
+                },
+            )(),
+            type("Result", (), {"returncode": 0, "stdout": "29.0", "stderr": ""})(),
+            type(
+                "Result",
+                (),
+                {
+                    "returncode": 125,
+                    "stdout": "",
+                    "stderr": "docker: Error response from daemon: No such image: python:3.12-alpine",
+                },
+            )(),
+        ]
+        result = run_custom_attack_compare(
+            {
+                "payload": "run caller command",
+                "tool": "code.run",
+                "command": "printf custom-output",
+            }
+        )
+
+        tool_output = result["without_guard"]["audit_log"]["tool_output"]
+        self.assertFalse(tool_output["executed"])
+        self.assertEqual(tool_output["executor"], "unavailable")
+        self.assertIsNone(tool_output["exit_code"])
+        self.assertEqual(result["receipts"]["without_guard"]["status"], "not_executed")
+        self.assertFalse(result["summary"]["exposed_without_guard"])
+
 
 if __name__ == "__main__":
     unittest.main()

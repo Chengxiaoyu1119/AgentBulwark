@@ -69,6 +69,8 @@ describe('GatewayPanel', () => {
     });
 
     render(<GatewayPanel />);
+    expect(await screen.findByText('防护已配置')).toBeInTheDocument();
+    expect(screen.queryByText('防护运行中')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
     await userEvent.click(screen.getByRole('button', { name: '发送到网关' }));
 
@@ -111,13 +113,32 @@ describe('GatewayPanel', () => {
     );
   });
 
-  it('keeps comparison and MCP debug tools out of the primary protection surface', () => {
+  it('keeps comparison diagnostics out while exposing MCP as an explicit protection channel', async () => {
     vi.mocked(request).mockResolvedValue({});
     render(<GatewayPanel />);
     expect(screen.queryByRole('button', { name: '运行同请求对照' })).not.toBeInTheDocument();
     expect(screen.queryByText('MCP JSON-RPC 实际入口')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '接入应用' })).toBeInTheDocument();
     expect(screen.getByText('实时请求')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('tab', { name: 'MCP 工具' }));
+
+    expect(await screen.findByText('MCP JSON-RPC 实际入口')).toBeInTheDocument();
+    expect(screen.getByText('MCP 上游待配置')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '复制 MCP 地址' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '接入应用' })).not.toBeInTheDocument();
+  });
+
+  it('surfaces runtime status failures instead of showing an unexplained waiting state', async () => {
+    vi.mocked(request).mockImplementation(async (path) => {
+      if (path === '/api/runtime_status') throw new Error('运行状态接口暂时不可用');
+      return {};
+    });
+
+    render(<GatewayPanel />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('运行状态读取失败');
+    expect(screen.getByRole('alert')).toHaveTextContent('运行状态接口暂时不可用');
   });
 
   it('adds the managed server execution contract when the switch is enabled', async () => {
@@ -165,7 +186,9 @@ describe('GatewayPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
 
     expect(await screen.findByRole('switch')).toBeDisabled();
-    expect(screen.getByText(/当前身份可生成模型响应，但没有服务端工具执行权限/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/当前身份可以生成模型响应；绑定 Agent 的 executor 或 admin 凭证可开启服务端工具执行/)
+    ).toBeInTheDocument();
   });
 
   it('executes an allowed Provider tool call through the server and can replay the receipt', async () => {

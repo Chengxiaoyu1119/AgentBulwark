@@ -77,6 +77,31 @@ class ApprovalScopeTest(unittest.TestCase):
             "operational",
         )
 
+    def test_scope_filter_is_applied_before_the_result_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            runtime_dir = Path(temp_dir)
+            with (
+                patch.object(database, "RUNTIME_DIR", runtime_dir),
+                patch.object(database, "DB_PATH", runtime_dir / "approval-scope-limit.sqlite3"),
+            ):
+                database.init_db()
+                operational_review = create_approval_review(
+                    _event("operational"),
+                    _supervisor_result("audit-operational"),
+                )
+                for index in range(3):
+                    create_approval_review(
+                        _event(f"demo-{index}"),
+                        _supervisor_result(f"audit-demo-{index}"),
+                        review_scope="demo",
+                    )
+
+                operational_reviews = list_approval_reviews(limit=1, scope="operational")
+
+        assert operational_review is not None
+        self.assertEqual(operational_reviews["summary"]["total"], 1)
+        self.assertEqual(operational_reviews["reviews"][0]["id"], operational_review["id"])
+
 
 def _event(suffix: str) -> dict[str, object]:
     return {

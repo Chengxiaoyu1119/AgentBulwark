@@ -74,7 +74,10 @@ class ReadinessCliTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (root / ".env.example").write_text("AGENT_SUPERVISOR_AUTH_DISABLED=false\n", encoding="utf-8")
-            with patch("apps.api.agent_supervisor.domains.reports.readiness.REPO_ROOT", root):
+            with (
+                patch("apps.api.agent_supervisor.domains.reports.readiness.REPO_ROOT", root),
+                patch.dict("os.environ", {}, clear=True),
+            ):
                 result = _deployment_security_for_readiness()
 
             self.assertTrue(result["auth_enabled"])

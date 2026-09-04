@@ -1,7 +1,15 @@
+import concurrent.futures
 import json
+import math
 import os
+import sqlite3
+import subprocess
+import sys
 import tempfile
+import threading
+import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -36,7 +44,9 @@ from apps.api.agent_supervisor.domains.reports.readiness_checks import (
 )
 from apps.api.agent_supervisor.domains.runtime import memory_governance
 from apps.api.agent_supervisor.storage import data as policy_data
+from apps.api.agent_supervisor.storage import database
 from apps.api.agent_supervisor.storage.data import DEFAULT_POLICY_SETTINGS
+from apps.api.agent_supervisor.storage.json_store import save_json
 
 
 class SupervisorPolicyBranchTest(unittest.TestCase):
@@ -661,6 +671,9 @@ class PolicyDataTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             override_path = Path(tmp) / "policy_overrides.json"
             with patch.object(policy_data, "POLICY_OVERRIDES_PATH", override_path):
+                override_path.write_bytes(b"\xff\xfe\x00")
+                self.assertEqual(policy_data._load_policy_overrides(), {})
+
                 override_path.write_text("{", encoding="utf-8")
                 self.assertEqual(policy_data._load_policy_overrides(), {})
 
@@ -675,6 +688,486 @@ class PolicyDataTest(unittest.TestCase):
                     policy_data._load_policy_overrides(),
                     {"alpha": {"enabled": False, "description": "custom"}},
                 )
+
+    def test_policy_settings_invalid_encoding_falls_back_and_atomic_save_cleans_temp(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "policy_settings.json"
+            with patch.object(policy_data, "POLICY_SETTINGS_PATH", settings_path):
+                settings_path.write_bytes(b"\xff\xfe\x00")
+                policy_data._invalidate_settings_cache()
+                fallback = policy_data.get_policy_settings()
+                policy_data._save_policy_settings({"anomaly_review_threshold": 61})
+                persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+                temporary_files = list(settings_path.parent.glob("*.tmp"))
+
+        self.assertEqual(fallback["anomaly_review_threshold"], 55)
+        self.assertEqual(persisted["anomaly_review_threshold"], 61)
+        self.assertEqual(temporary_files, [])
+
+    def test_strict_json_save_keeps_previous_policy_file_when_non_finite_value_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "policy_settings.json"
+            settings_path.write_text('{"anomaly_review_threshold": 61}', encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                save_json(settings_path, {"anomaly_review_threshold": math.nan})
+
+            persisted = settings_path.read_text(encoding="utf-8")
+            temporary_files = list(settings_path.parent.glob("*.tmp"))
+
+        self.assertEqual(persisted, '{"anomaly_review_threshold": 61}')
+        self.assertEqual(temporary_files, [])
+
+    def test_policy_writes_reject_corrupt_existing_runtime_files_without_replacing_them(self):
+        cases = (
+            ("policy_overrides", "policy_overrides.json"),
+            ("policy_settings", "policy_settings.json"),
+            ("policy_audit_outbox", "policy_audit_outbox.json"),
+        )
+        for resource, filename in cases:
+            with self.subTest(resource=resource), tempfile.TemporaryDirectory(prefix=f"corrupt-{resource}-") as temporary:
+                runtime_dir = Path(temporary)
+                overrides_path = runtime_dir / "policy_overrides.json"
+                settings_path = runtime_dir / "policy_settings.json"
+                outbox_path = runtime_dir / "policy_audit_outbox.json"
+                target_path = runtime_dir / filename
+                original = b'{"preserve":'
+                target_path.write_bytes(original)
+
+                with (
+                    patch.object(policy_data, "POLICY_OVERRIDES_PATH", overrides_path),
+                    patch.object(policy_data, "POLICY_SETTINGS_PATH", settings_path),
+                    patch.object(policy_data, "POLICY_AUDIT_OUTBOX_PATH", outbox_path),
+                    patch.object(policy_data, "record_policy_version"),
+                ):
+                    policy_data._invalidate_overrides_cache()
+                    policy_data._invalidate_settings_cache()
+                    with self.assertRaises(ValueError):
+                        if resource == "policy_overrides":
+                            policy_data.update_policy("path-boundary", {"enabled": False})
+                        else:
+                            policy_data.update_policy_settings({"anomaly_review_threshold": 61})
+
+                self.assertEqual(target_path.read_bytes(), original)
+
+    def test_policy_writes_reject_unreadable_existing_runtime_files_without_replacing_them(self):
+        cases = (
+            ("policy_overrides", "policy_overrides.json"),
+            ("policy_settings", "policy_settings.json"),
+            ("policy_audit_outbox", "policy_audit_outbox.json"),
+        )
+        original_read_text = Path.read_text
+        for resource, filename in cases:
+            with self.subTest(resource=resource), tempfile.TemporaryDirectory(prefix=f"unreadable-{resource}-") as temporary:
+                runtime_dir = Path(temporary)
+                overrides_path = runtime_dir / "policy_overrides.json"
+                settings_path = runtime_dir / "policy_settings.json"
+                outbox_path = runtime_dir / "policy_audit_outbox.json"
+                target_path = runtime_dir / filename
+                original = b"{}"
+                target_path.write_bytes(original)
+
+                def deny_target(
+                    path: Path, *args: Any, denied_path: Path = target_path, **kwargs: Any
+                ) -> str:
+                    if path == denied_path:
+                        raise PermissionError(f"injected unreadable runtime file: {path.name}")
+                    return original_read_text(path, *args, **kwargs)
+
+                with (
+                    patch.object(policy_data, "POLICY_OVERRIDES_PATH", overrides_path),
+                    patch.object(policy_data, "POLICY_SETTINGS_PATH", settings_path),
+                    patch.object(policy_data, "POLICY_AUDIT_OUTBOX_PATH", outbox_path),
+                    patch.object(policy_data, "record_policy_version"),
+                    patch.object(Path, "read_text", deny_target),
+                ):
+                    policy_data._invalidate_overrides_cache()
+                    policy_data._invalidate_settings_cache()
+                    with self.assertRaises(PermissionError):
+                        if resource == "policy_overrides":
+                            policy_data.update_policy("path-boundary", {"enabled": False})
+                        else:
+                            policy_data.update_policy_settings({"anomaly_review_threshold": 61})
+
+                self.assertEqual(target_path.read_bytes(), original)
+
+    def test_policy_writes_keep_missing_runtime_file_defaults(self):
+        with tempfile.TemporaryDirectory(prefix="missing-policy-runtime-") as temporary:
+            runtime_dir = Path(temporary)
+            overrides_path = runtime_dir / "policy_overrides.json"
+            settings_path = runtime_dir / "policy_settings.json"
+            outbox_path = runtime_dir / "policy_audit_outbox.json"
+            with (
+                patch.object(policy_data, "POLICY_OVERRIDES_PATH", overrides_path),
+                patch.object(policy_data, "POLICY_SETTINGS_PATH", settings_path),
+                patch.object(policy_data, "POLICY_AUDIT_OUTBOX_PATH", outbox_path),
+                patch.object(policy_data, "record_policy_version"),
+            ):
+                policy_data._invalidate_overrides_cache()
+                policy_data._invalidate_settings_cache()
+                settings = policy_data.update_policy_settings({"anomaly_review_threshold": 61})
+                updated_policy = policy_data.update_policy("path-boundary", {"enabled": False})
+
+            self.assertEqual(settings["anomaly_review_threshold"], 61)
+            self.assertFalse(updated_policy["enabled"])
+            self.assertTrue(settings_path.exists())
+            self.assertTrue(overrides_path.exists())
+
+    def test_policy_updates_serialize_the_read_modify_write_section(self):
+        active_writers = 0
+        max_active_writers = 0
+        state_lock = threading.Lock()
+
+        def fake_save(_: dict[str, dict[str, Any]]) -> None:
+            nonlocal active_writers, max_active_writers
+            with state_lock:
+                active_writers += 1
+                max_active_writers = max(max_active_writers, active_writers)
+            time.sleep(0.02)
+            with state_lock:
+                active_writers -= 1
+
+        with (
+            patch.object(policy_data, "_load_json_list", return_value=[{"id": "policy-a", "enabled": True}]),
+            patch.object(policy_data, "_load_json_dict", return_value={}),
+            patch.object(policy_data, "_load_policy_overrides", return_value={}),
+            patch.object(policy_data, "get_policies", return_value=[{"id": "policy-a", "enabled": True}]),
+            patch.object(policy_data, "_save_policy_overrides", side_effect=fake_save),
+            patch.object(policy_data, "record_policy_version"),
+            concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor,
+        ):
+            futures = [
+                executor.submit(policy_data.update_policy, "policy-a", {"enabled": bool(index % 2)})
+                for index in range(4)
+            ]
+            [future.result() for future in futures]
+
+        self.assertEqual(max_active_writers, 1)
+
+    def test_policy_updates_from_two_processes_preserve_both_changes(self):
+        """The runtime file lock must cover read-modify-write across processes."""
+        repo_root = Path(__file__).resolve().parents[3]
+        worker = """
+import os
+import sys
+import time
+from pathlib import Path
+
+from apps.api.agent_supervisor.storage import data
+
+gate = Path(os.environ[\"POLICY_UPDATE_GATE\"])
+name, policy_id, description = sys.argv[1:4]
+original_save = data._save_policy_overrides
+
+def delayed_save(overrides):
+    time.sleep(0.25)
+    original_save(overrides)
+
+data._save_policy_overrides = delayed_save
+(gate / f\"ready-{name}\").write_text(\"ready\", encoding=\"utf-8\")
+deadline = time.monotonic() + 15
+while not (gate / \"go\").exists():
+    if time.monotonic() >= deadline:
+        raise RuntimeError(\"test start barrier timed out\")
+    time.sleep(0.01)
+data.update_policy(policy_id, {\"description\": description}, operator=f\"process-{name}\")
+"""
+        with tempfile.TemporaryDirectory(prefix="policy-cross-process-") as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime"
+            gate = root / "gate"
+            gate.mkdir()
+            environment = os.environ.copy()
+            environment["AGENT_SUPERVISOR_RUNTIME_DIR"] = str(runtime)
+            environment["POLICY_UPDATE_GATE"] = str(gate)
+            environment["PYTHONPATH"] = os.pathsep.join(
+                [str(repo_root), environment.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep)
+            workers = [
+                ("one", "path-boundary", "cross-process-path"),
+                ("two", "dangerous-command", "cross-process-command"),
+            ]
+            processes = [
+                subprocess.Popen(
+                    [sys.executable, "-c", worker, *arguments],
+                    cwd=repo_root,
+                    env=environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                for arguments in workers
+            ]
+            try:
+                deadline = time.monotonic() + 15
+                while len(list(gate.glob("ready-*"))) < len(processes) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertEqual(len(list(gate.glob("ready-*"))), len(processes))
+                (gate / "go").write_text("go", encoding="utf-8")
+                outcomes = [process.communicate(timeout=20) for process in processes]
+            finally:
+                for process in processes:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait(timeout=5)
+
+            for process, (stdout, stderr) in zip(processes, outcomes, strict=True):
+                self.assertEqual(process.returncode, 0, f"stdout={stdout}\nstderr={stderr}")
+            overrides = json.loads((runtime / "policy_overrides.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(overrides["path-boundary"]["description"], "cross-process-path")
+        self.assertEqual(overrides["dangerous-command"]["description"], "cross-process-command")
+
+    def test_policy_audit_outbox_recovers_after_audit_write_failure_on_restart(self):
+        with tempfile.TemporaryDirectory(prefix="policy-audit-recovery-") as temporary:
+            runtime_dir = Path(temporary)
+            overrides_path = runtime_dir / "policy_overrides.json"
+            settings_path = runtime_dir / "policy_settings.json"
+            outbox_path = runtime_dir / "policy_audit_outbox.json"
+            with (
+                patch.object(database, "RUNTIME_DIR", runtime_dir),
+                patch.object(database, "DB_PATH", runtime_dir / "policy-audit.sqlite3"),
+                patch.object(policy_data, "RUNTIME_DIR", runtime_dir),
+                patch.object(policy_data, "POLICY_OVERRIDES_PATH", overrides_path),
+                patch.object(policy_data, "POLICY_SETTINGS_PATH", settings_path),
+                patch.object(policy_data, "POLICY_AUDIT_OUTBOX_PATH", outbox_path),
+            ):
+                database.init_db()
+                policy_data._invalidate_overrides_cache()
+                policy_data._invalidate_settings_cache()
+                with patch.object(policy_data, "record_policy_version", side_effect=RuntimeError("database unavailable")):
+                    with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+                        policy_data.update_policy("path-boundary", {"enabled": False}, operator="recovery-test")
+
+                self.assertFalse(policy_data.get_policies()[0]["enabled"])
+                self.assertTrue(outbox_path.exists())
+                self.assertTrue(json.loads(outbox_path.read_text(encoding="utf-8")))
+
+                # ``init_db`` is the production startup hook.  A new process has
+                # fresh in-memory caches, then replays the durable file outbox.
+                policy_data._invalidate_overrides_cache()
+                policy_data._invalidate_settings_cache()
+                database.init_db()
+                versions = database.list_policy_versions("path-boundary", limit=10)
+                recovered_outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(versions), 1)
+        self.assertFalse(versions[0]["after"]["enabled"])
+        self.assertEqual(recovered_outbox, {})
+
+    def test_policy_settings_outbox_recovers_after_audit_write_failure_on_restart(self):
+        with tempfile.TemporaryDirectory(prefix="policy-settings-audit-recovery-") as temporary:
+            runtime_dir = Path(temporary)
+            settings_path = runtime_dir / "policy_settings.json"
+            outbox_path = runtime_dir / "policy_audit_outbox.json"
+            with (
+                patch.object(database, "RUNTIME_DIR", runtime_dir),
+                patch.object(database, "DB_PATH", runtime_dir / "policy-audit.sqlite3"),
+                patch.object(policy_data, "RUNTIME_DIR", runtime_dir),
+                patch.object(policy_data, "POLICY_OVERRIDES_PATH", runtime_dir / "policy_overrides.json"),
+                patch.object(policy_data, "POLICY_SETTINGS_PATH", settings_path),
+                patch.object(policy_data, "POLICY_AUDIT_OUTBOX_PATH", outbox_path),
+            ):
+                database.init_db()
+                policy_data._invalidate_settings_cache()
+                with patch.object(policy_data, "record_policy_version", side_effect=RuntimeError("database unavailable")):
+                    with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+                        policy_data.update_policy_settings(
+                            {
+                                "anomaly_review_threshold": 63,
+                                "operator": "settings-recovery-test",
+                            }
+                        )
+
+                self.assertEqual(policy_data.get_policy_settings()["anomaly_review_threshold"], 63)
+                self.assertTrue(json.loads(outbox_path.read_text(encoding="utf-8")))
+
+                policy_data._invalidate_settings_cache()
+                database.init_db()
+                versions = database.list_policy_versions("__runtime_settings__", limit=10)
+                recovered_outbox = json.loads(outbox_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(len(versions), 1)
+        self.assertEqual(versions[0]["after"]["anomaly_review_threshold"], 63)
+        self.assertEqual(recovered_outbox, {})
+
+    def test_policy_override_save_failure_keeps_disk_state_and_durable_intent(self):
+        with tempfile.TemporaryDirectory(prefix="policy-cache-save-failure-") as temporary:
+            runtime_dir = Path(temporary)
+            overrides_path = runtime_dir / "policy_overrides.json"
+            outbox_path = runtime_dir / "policy_audit_outbox.json"
+            overrides_path.write_text(
+                json.dumps({"path-boundary": {"enabled": True}}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            real_save_json = policy_data.save_json
+
+            def fail_override_save(path: Path, payload: Any) -> None:
+                if path == overrides_path:
+                    raise OSError("injected policy override write failure")
+                real_save_json(path, payload)
+
+            with (
+                patch.object(policy_data, "POLICY_OVERRIDES_PATH", overrides_path),
+                patch.object(policy_data, "POLICY_AUDIT_OUTBOX_PATH", outbox_path),
+                patch.object(policy_data, "save_json", side_effect=fail_override_save),
+                patch.object(policy_data, "record_policy_version") as record_version,
+            ):
+                policy_data._invalidate_overrides_cache()
+                with self.assertRaisesRegex(OSError, "injected policy override write failure"):
+                    policy_data.update_policy("path-boundary", {"enabled": False})
+
+                persisted = json.loads(overrides_path.read_text(encoding="utf-8"))
+                observed = next(item for item in policy_data.get_policies() if item["id"] == "path-boundary")
+                pending = json.loads(outbox_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(persisted["path-boundary"]["enabled"])
+        self.assertTrue(observed["enabled"])
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(next(iter(pending.values()))["state"], "prepared")
+        record_version.assert_not_called()
+
+    def test_runtime_policy_caches_do_not_expose_mutable_internal_objects(self):
+        with tempfile.TemporaryDirectory(prefix="policy-cache-isolation-") as temporary:
+            runtime_dir = Path(temporary)
+            overrides_path = runtime_dir / "policy_overrides.json"
+            settings_path = runtime_dir / "policy_settings.json"
+            overrides_path.write_text(
+                json.dumps(
+                    {"path-boundary": {"enabled": True, "risk_controls": ["original-control"]}},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "agent_tool_allowlists": {"agent-a": ["file.read"]},
+                        "sensitive_path_markers": ["secret"],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with (
+                patch.object(policy_data, "POLICY_OVERRIDES_PATH", overrides_path),
+                patch.object(policy_data, "POLICY_SETTINGS_PATH", settings_path),
+            ):
+                policy_data._invalidate_overrides_cache()
+                policy_data._invalidate_settings_cache()
+                overrides = policy_data._load_policy_overrides()
+                settings = policy_data._load_policy_settings()
+                overrides["path-boundary"]["risk_controls"].append("caller-mutation")
+                settings["agent_tool_allowlists"]["agent-a"].append("mail.send")
+                settings["sensitive_path_markers"].append("caller-marker")
+
+                reloaded_overrides = policy_data._load_policy_overrides()
+                reloaded_settings = policy_data._load_policy_settings()
+
+        self.assertEqual(reloaded_overrides["path-boundary"]["risk_controls"], ["original-control"])
+        self.assertEqual(reloaded_settings["agent_tool_allowlists"]["agent-a"], ["file.read"])
+        self.assertEqual(reloaded_settings["sensitive_path_markers"], ["secret"])
+
+    def test_superseded_prepared_outbox_entry_is_retained_as_uncertain(self):
+        repo_root = Path(__file__).resolve().parents[3]
+        crash_worker = """
+import os
+from apps.api.agent_supervisor.storage import data, database
+
+database.init_db()
+data._mark_policy_audit_outbox_applied_unlocked = lambda _operation_id: os._exit(73)
+data.update_policy_settings({"anomaly_review_threshold": 61, "operator": "crashed-writer"})
+"""
+        superseding_worker = """
+from apps.api.agent_supervisor.storage import data
+
+data.update_policy_settings({"anomaly_review_threshold": 62, "operator": "surviving-writer"})
+"""
+        recovery_worker = """
+from apps.api.agent_supervisor.storage import database
+
+database.init_db()
+"""
+        with tempfile.TemporaryDirectory(prefix="policy-prepared-crash-") as temporary:
+            runtime_dir = Path(temporary)
+            environment = os.environ.copy()
+            environment["AGENT_SUPERVISOR_RUNTIME_DIR"] = str(runtime_dir)
+            environment["PYTHONPATH"] = os.pathsep.join(
+                [str(repo_root), environment.get("PYTHONPATH", "")]
+            ).rstrip(os.pathsep)
+
+            crashed = subprocess.run(
+                [sys.executable, "-X", "utf8", "-c", crash_worker],
+                cwd=repo_root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(crashed.returncode, 73, crashed.stderr)
+            committed_after_crash = json.loads(
+                (runtime_dir / "policy_settings.json").read_text(encoding="utf-8")
+            )
+            prepared_after_crash = json.loads(
+                (runtime_dir / "policy_audit_outbox.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(committed_after_crash["anomaly_review_threshold"], 61)
+            self.assertEqual(len(prepared_after_crash), 1)
+            self.assertEqual(next(iter(prepared_after_crash.values()))["state"], "prepared")
+
+            superseded = subprocess.run(
+                [sys.executable, "-X", "utf8", "-c", superseding_worker],
+                cwd=repo_root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(superseded.returncode, 0, superseded.stderr)
+            recovered = subprocess.run(
+                [sys.executable, "-X", "utf8", "-c", recovery_worker],
+                cwd=repo_root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+
+            retained = json.loads((runtime_dir / "policy_audit_outbox.json").read_text(encoding="utf-8"))
+            with closing(sqlite3.connect(runtime_dir / "agent_supervisor.sqlite3")) as connection:
+                audited_operators = [
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT operator FROM policy_versions ORDER BY id ASC"
+                    ).fetchall()
+                ]
+
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(next(iter(retained.values()))["state"], "uncertain")
+        self.assertEqual(audited_operators, ["surviving-writer"])
+
+    def test_non_finite_policy_update_does_not_write_config_outbox_or_audit(self):
+        with tempfile.TemporaryDirectory(prefix="policy-strict-transaction-") as temporary:
+            runtime_dir = Path(temporary)
+            overrides_path = runtime_dir / "policy_overrides.json"
+            outbox_path = runtime_dir / "policy_audit_outbox.json"
+            with (
+                patch.object(policy_data, "POLICY_OVERRIDES_PATH", overrides_path),
+                patch.object(policy_data, "POLICY_AUDIT_OUTBOX_PATH", outbox_path),
+                patch.object(policy_data, "record_policy_version") as record_version,
+            ):
+                policy_data._invalidate_overrides_cache()
+                with self.assertRaises(ValueError):
+                    policy_data.update_policy("path-boundary", {"description": math.nan})
+
+                self.assertFalse(overrides_path.exists())
+                self.assertFalse(outbox_path.exists())
+                record_version.assert_not_called()
 
     def test_unknown_policy_is_disabled(self):
         self.assertFalse(policy_data.is_policy_enabled("missing-policy"))

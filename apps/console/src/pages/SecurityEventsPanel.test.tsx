@@ -1,9 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ApprovalReview, ApprovalReviewList } from '../types';
-import { decideApprovalReview, fetchApprovalReviews } from '../api';
+import type { ApprovalReview, ApprovalReviewList, AuthContext, AuditLog, ExecutionInventory } from '../types';
 import { request } from '../app/apiRequest';
+import {
+  decideApprovalReview,
+  fetchApprovalReviews,
+  fetchAuditLogs,
+  fetchExecutionInventory
+} from '../app/operationalApi';
 import { SecurityEventsPanel } from './SecurityEventsPanel';
 
 vi.mock('../app/apiRequest', () => ({
@@ -14,19 +19,12 @@ vi.mock('../app/apiRequest', () => ({
   )
 }));
 
-vi.mock('../api', async () => {
-  const actual = await vi.importActual<typeof import('../api')>('../api');
-  return {
-    ...actual,
-    fetchAuditLogs: vi.fn().mockResolvedValue([]),
-    fetchApprovalReviews: vi.fn(),
-    decideApprovalReview: vi.fn(),
-    subscribeRuntimeEvents: vi.fn(
-      (_onEvent, signal: AbortSignal) =>
-        new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }))
-    )
-  };
-});
+vi.mock('../app/operationalApi', () => ({
+  fetchAuditLogs: vi.fn().mockResolvedValue([]),
+  fetchExecutionInventory: vi.fn(),
+  fetchApprovalReviews: vi.fn(),
+  decideApprovalReview: vi.fn()
+}));
 
 const trace = {
   request_id: 'gateway-review-request',
@@ -54,6 +52,49 @@ const trace = {
     }
   ]
 };
+
+const authContext: AuthContext = {
+  role: 'analyst',
+  agent_id: null,
+  permissions: {
+    can_edit_policy: false,
+    can_review_approval: true,
+    can_execute_runtime: false,
+    can_view: true
+  }
+};
+
+function executionInventory(status: 'completed' | 'unknown' = 'completed'): ExecutionInventory {
+  return {
+    generated_at: '2026-08-23T10:00:00Z',
+    summary: {
+      total: 1,
+      completed: status === 'completed' ? 1 : 0,
+      failed: 0,
+      not_executed: 0,
+      decision_followed: 1,
+      control_verified: 1,
+      caller_declared: 0,
+      server_observed: 1,
+      signed: 1,
+      gateway_unknown: status === 'unknown' ? 1 : 0
+    },
+    receipts: [],
+    gateway_execution_claims: [
+      {
+        audit_id: 'audit-uncertain-1',
+        claim_id: 'claim-uncertain-1',
+        agent_id: 'e2e-agent',
+        session_id: 'uncertain-session',
+        tool_call_hash: 'c'.repeat(64),
+        status,
+        created_at: '2026-08-23T10:00:00Z',
+        completed_at: '2026-08-23T10:00:01Z',
+        receipt_id: ''
+      }
+    ]
+  };
+}
 
 function approval(status: ApprovalReview['status']): ApprovalReview {
   return {
@@ -119,6 +160,8 @@ describe('SecurityEventsPanel', () => {
       if (path === '/api/gateway/traces/gateway-review-request') return trace;
       throw new Error(`unexpected request: ${path}`);
     });
+    vi.mocked(fetchAuditLogs).mockReset();
+    vi.mocked(fetchAuditLogs).mockResolvedValue([]);
     vi.mocked(fetchApprovalReviews).mockReset();
     vi.mocked(fetchApprovalReviews).mockImplementation(async () => queue(approvalStatus));
     vi.mocked(decideApprovalReview).mockReset();
@@ -126,11 +169,13 @@ describe('SecurityEventsPanel', () => {
       approvalStatus = '已批准';
       return { updated: true, review: approval(approvalStatus), summary: queue(approvalStatus).summary };
     });
+    vi.mocked(fetchExecutionInventory).mockReset();
+    vi.mocked(fetchExecutionInventory).mockResolvedValue(executionInventory());
   });
 
   it('moves from a questioning trace to the matching operational review and approves it', async () => {
     const user = userEvent.setup();
-    render(<SecurityEventsPanel />);
+    render(<SecurityEventsPanel authContext={authContext} />);
 
     expect(await screen.findByRole('tab', { name: '风险事件' })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByRole('tab', { name: '待人工复核（1）' })).toBeInTheDocument();
@@ -143,6 +188,9 @@ describe('SecurityEventsPanel', () => {
     expect(screen.getByText('mail.send')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '批准恢复' }));
+    expect(decideApprovalReview).not.toHaveBeenCalled();
+    expect(screen.getByText('批准后允许 Agent 恢复执行？')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /确\s*认/ }));
 
     expect(decideApprovalReview).toHaveBeenCalledWith(
       'review-1',
@@ -151,5 +199,31 @@ describe('SecurityEventsPanel', () => {
     );
     expect((await screen.findAllByText('已批准')).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('等待Agent恢复')).toBeInTheDocument();
+  });
+
+  it('clears the previous audit snapshot when a live refresh fails', async () => {
+    vi.mocked(fetchAuditLogs).mockReset();
+    vi.mocked(fetchAuditLogs).mockResolvedValueOnce([{} as AuditLog]);
+    render(<SecurityEventsPanel authContext={authContext} />);
+
+    expect(await screen.findByRole('tab', { name: '执行审计（1）' })).toBeInTheDocument();
+    vi.mocked(fetchAuditLogs).mockRejectedValueOnce(new Error('审计服务暂时不可用'));
+    await userEvent.click(screen.getByRole('button', { name: '刷新事件' }));
+
+    expect(await screen.findByText('审计服务暂时不可用')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '执行审计（0）' })).toBeInTheDocument();
+  });
+
+  it('surfaces unknown side-effect claims as operator reconciliation work', async () => {
+    vi.mocked(fetchExecutionInventory).mockResolvedValue(executionInventory('unknown'));
+    render(<SecurityEventsPanel authContext={authContext} />);
+
+    const auditTab = await screen.findByRole('tab', { name: '执行审计（0 · 待核查 1）' });
+    await userEvent.click(auditTab);
+
+    expect(await screen.findByText('工具副作用状态不确定，禁止自动重试')).toBeInTheDocument();
+    expect(screen.getByText('audit-uncertain-1')).toBeInTheDocument();
+    expect(screen.getByText('待核查状态')).toBeInTheDocument();
+    expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(1);
   });
 });

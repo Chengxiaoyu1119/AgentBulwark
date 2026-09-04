@@ -165,3 +165,75 @@ class GatewayTraceTests(TestCase):
         self.assertEqual(response.json()["count"], 1)
         load.assert_called_once()
         self.assertEqual(load.call_args.kwargs["agent_id"], "agent-a")
+
+    def test_trace_endpoints_enforce_role_and_agent_boundaries(self) -> None:
+        rows = [
+            _row(request_id="chatcmpl-trace-a", audit_id="audit-trace-a", agent_id="agent-a"),
+            _row(request_id="chatcmpl-trace-b", audit_id="audit-trace-b", agent_id="agent-b"),
+        ]
+
+        def scoped_rows(*_args: object, **kwargs: object) -> list[dict]:
+            agent_id = str(kwargs.get("agent_id") or "")
+            return [row for row in rows if not agent_id or row["agent_id"] == agent_id]
+
+        def scoped_detail(request_id: str, *_args: object, **kwargs: object) -> list[dict]:
+            agent_id = str(kwargs.get("agent_id") or "")
+            return [
+                row
+                for row in rows
+                if row["stage_context"]["request_id"] == request_id
+                and (not agent_id or row["agent_id"] == agent_id)
+            ]
+
+        environment = {
+            "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+            "AGENT_SUPERVISOR_API_TOKEN": "",
+            "AGENT_SUPERVISOR_API_TOKEN_OBSERVER": "observer-token",
+            "AGENT_SUPERVISOR_API_TOKEN_EXECUTOR": "",
+            "AGENT_SUPERVISOR_API_TOKEN_ANALYST": "analyst-token",
+            "AGENT_SUPERVISOR_API_TOKEN_ADMIN": "admin-token",
+            "AGENT_SUPERVISOR_AGENT_TOKENS_JSON": '{"agent-a":"agent-a-token"}',
+            "AGENT_SUPERVISOR_ALLOW_SHARED_EXECUTOR_TOKEN": "false",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=False),
+            patch("apps.api.agent_supervisor.routers.proxy.latest_gateway_audit_logs", side_effect=scoped_rows) as load,
+            patch(
+                "apps.api.agent_supervisor.routers.proxy.load_gateway_request_audit_events",
+                side_effect=scoped_detail,
+            ) as load_detail,
+            TestClient(app) as client,
+        ):
+            observer_headers = {"Authorization": "Bearer observer-token"}
+            self.assertEqual(client.get("/api/gateway/traces", headers=observer_headers).status_code, 403)
+            self.assertEqual(
+                client.get("/api/gateway/traces/chatcmpl-trace-a", headers=observer_headers).status_code,
+                403,
+            )
+            self.assertEqual(load.call_count, 0)
+            self.assertEqual(load_detail.call_count, 0)
+
+            for token in ("analyst-token", "admin-token"):
+                headers = {"Authorization": f"Bearer {token}"}
+                list_response = client.get("/api/gateway/traces", headers=headers)
+                detail_response = client.get("/api/gateway/traces/chatcmpl-trace-b", headers=headers)
+                self.assertEqual(list_response.status_code, 200)
+                self.assertEqual(list_response.json()["count"], 2)
+                self.assertEqual(detail_response.status_code, 200)
+                self.assertEqual(detail_response.json()["agent_id"], "agent-b")
+
+            executor_headers = {"Authorization": "Bearer agent-a-token"}
+            executor_list = client.get("/api/gateway/traces", headers=executor_headers)
+            executor_detail = client.get("/api/gateway/traces/chatcmpl-trace-a", headers=executor_headers)
+            cross_agent_detail = client.get("/api/gateway/traces/chatcmpl-trace-b", headers=executor_headers)
+
+        self.assertEqual(executor_list.status_code, 200)
+        self.assertEqual(executor_list.json()["count"], 1)
+        self.assertEqual(executor_list.json()["traces"][0]["agent_id"], "agent-a")
+        self.assertEqual(executor_detail.status_code, 200)
+        self.assertEqual(cross_agent_detail.status_code, 404)
+        self.assertEqual([call.kwargs["agent_id"] for call in load.call_args_list], ["", "", "agent-a"])
+        self.assertEqual(
+            [call.kwargs["agent_id"] for call in load_detail.call_args_list],
+            ["", "", "agent-a", "agent-a"],
+        )

@@ -14,6 +14,22 @@ from apps.api.agent_supervisor.domains.runtime.tools import SandboxPaths, init_s
 
 
 class RealModelEvidenceLoadingTest(unittest.TestCase):
+    @staticmethod
+    def _configured_provider() -> dict[str, str]:
+        return {
+            "provider_id": "openai-compatible",
+            "provider": "本地协议夹具",
+            "model": "fixture-model",
+            "api_key": "fixture-key",
+            "endpoint": "http://127.0.0.1:9/v1/chat/completions",
+        }
+
+    @staticmethod
+    def _set_provider_response(provider_open: object, raw: str) -> None:
+        response = provider_open.return_value.__enter__.return_value  # type: ignore[attr-defined]
+        response.headers = {}
+        response.read.return_value = raw.encode("utf-8")
+
     def test_evaluation_sandbox_can_seed_only_synthetic_sensitive_memory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -48,6 +64,158 @@ class RealModelEvidenceLoadingTest(unittest.TestCase):
 
         description = definitions["file_read"]["description"]
         self.assertIn("不要自行添加 public/ 前缀", description)
+
+    def test_empty_provider_text_is_not_labeled_as_real_model_output(self) -> None:
+        with (
+            patch.object(model_adapter, "runtime_real_api_enabled", return_value=True),
+            patch.object(model_adapter, "_iter_configured_providers", return_value=[self._configured_provider()]),
+            patch.object(model_adapter, "_provider_open") as provider_open,
+        ):
+            self._set_provider_response(
+                provider_open,
+                json.dumps({"id": "resp-empty", "choices": [{"message": {"content": ""}}]}),
+            )
+            result = model_adapter.generate_model_response("检查真实输出", "empty-provider-text")
+
+        self.assertEqual(result["mode"], "fallback")
+        self.assertEqual(len(result["provider_failures"]), 1)
+        self.assertEqual(result["provider_failures"][0]["error"], "Provider 响应格式校验失败")
+
+    def test_empty_optimizer_response_does_not_claim_real_api_provenance(self) -> None:
+        with (
+            patch.object(model_adapter, "_iter_configured_providers", return_value=[self._configured_provider()]),
+            patch.object(model_adapter, "_provider_open") as provider_open,
+        ):
+            self._set_provider_response(
+                provider_open,
+                json.dumps({"id": "resp-empty-optimizer", "choices": [{"message": {"content": ""}}]}),
+            )
+            result = model_adapter.generate_optimizer_prompt(
+                "检查真实优化器输出",
+                "secret",
+                "optimizer",
+                "empty-provider-optimizer",
+                force_real=True,
+            )
+
+        self.assertEqual(result["mode"], "fallback")
+        self.assertEqual(len(result["provider_failures"]), 1)
+        self.assertEqual(result["provider_failures"][0]["error"], "Provider 响应格式校验失败")
+
+    def test_duplicate_provider_json_cannot_create_a_real_api_tool_plan(self) -> None:
+        duplicate_choices = (
+            '{"id":"resp-duplicate","choices":[{"message":{"tool_calls":[]}}],'
+            '"choices":[{"message":{"tool_calls":[{"id":"call-1","type":"function",'
+            '"function":{"name":"file_read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}'
+        )
+        with (
+            patch.object(model_adapter, "_iter_configured_providers", return_value=[self._configured_provider()]),
+            patch.object(model_adapter, "_provider_open") as provider_open,
+        ):
+            self._set_provider_response(provider_open, duplicate_choices)
+            result = model_adapter.generate_model_tool_plan(
+                "读取文件",
+                "duplicate-provider-json",
+                force_real=True,
+            )
+
+        self.assertEqual(result["mode"], "fallback")
+        self.assertEqual(len(result["provider_failures"]), 1)
+        self.assertEqual(result["provider_failures"][0]["error"], "Provider 响应格式校验失败")
+
+    def test_invalid_tool_calls_are_not_accepted_as_a_real_api_plan(self) -> None:
+        invalid_functions = [
+            {"name": "file_read", "arguments": '{"path":"public/a","path":"public/b"}'},
+            {"name": "file_read", "arguments": ""},
+            {"name": "file_read", "arguments": False},
+            {"name": "file_read", "arguments": "{}"},
+            {"name": "file_read", "arguments": "{}"},
+        ]
+        invalid_calls = [
+            {"id": "call-1", "type": "function", "function": invalid_functions[0]},
+            {"id": "call-1", "type": "function", "function": invalid_functions[1]},
+            {"id": "call-1", "type": "function", "function": invalid_functions[2]},
+            {"id": "call-1", "type": "custom", "function": invalid_functions[3]},
+            {"id": "call-1", "type": "function", "function": {"name": "", "arguments": "{}"}},
+            {"id": 7, "type": "function", "function": invalid_functions[4]},
+            {"id": "call-1", "type": "function", "function": {"name": "file_read"}},
+        ]
+        for tool_call in invalid_calls:
+            with self.subTest(tool_call=tool_call):
+                provider_response = json.dumps(
+                    {
+                        "id": "resp-invalid-arguments",
+                        "choices": [
+                            {
+                                "message": {
+                                    "tool_calls": [
+                                        tool_call
+                                    ]
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ],
+                    }
+                )
+                with (
+                    patch.object(model_adapter, "_iter_configured_providers", return_value=[self._configured_provider()]),
+                    patch.object(model_adapter, "_provider_open") as provider_open,
+                ):
+                    self._set_provider_response(provider_open, provider_response)
+                    result = model_adapter.generate_model_tool_plan(
+                        "读取文件",
+                        "invalid-tool-arguments",
+                        force_real=True,
+                    )
+
+                self.assertEqual(result["mode"], "fallback")
+                self.assertEqual(len(result["provider_failures"]), 1)
+                self.assertEqual(result["provider_failures"][0]["error"], "Provider 返回无效结构化 tool_calls")
+                self.assertEqual(result["provider_call_count"], 1)
+                self.assertEqual(result["tool_plan_attempts"][0]["outcome"], "provider-error")
+                self.assertEqual(result["tool_plan_attempts"][0]["tool_call_parse_issue_count"], 1)
+
+    def test_mixed_valid_and_invalid_tool_calls_are_not_partially_accepted(self) -> None:
+        provider_response = json.dumps(
+            {
+                "id": "resp-mixed-tool-calls",
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {
+                                    "id": "call-valid",
+                                    "type": "function",
+                                    "function": {"name": "file_read", "arguments": '{"path":"public/readme.md"}'},
+                                },
+                                {
+                                    "id": "call-invalid",
+                                    "type": "function",
+                                    "function": {"name": "file_read", "arguments": ""},
+                                },
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ],
+            }
+        )
+        with (
+            patch.object(model_adapter, "_iter_configured_providers", return_value=[self._configured_provider()]),
+            patch.object(model_adapter, "_provider_open") as provider_open,
+        ):
+            self._set_provider_response(provider_open, provider_response)
+            result = model_adapter.generate_model_tool_plan(
+                "读取文件",
+                "mixed-tool-calls",
+                force_real=True,
+            )
+
+        self.assertEqual(result["mode"], "fallback")
+        self.assertEqual(result["provider_failures"][0]["error"], "Provider 返回无效结构化 tool_calls")
+        self.assertEqual(result["provider_call_count"], 1)
+        self.assertEqual(result["tool_plan_attempts"][0]["tool_call_count"], 1)
+        self.assertEqual(result["tool_plan_attempts"][0]["tool_call_parse_issue_count"], 1)
 
     def test_evaluation_uses_a_registered_agent_identity_for_benign_cases(self) -> None:
         settings = {
@@ -154,6 +322,158 @@ class RealModelEvidenceLoadingTest(unittest.TestCase):
         self.assertEqual(result["mode"], "real-api")
         self.assertEqual(result["provider_id"], "zhipu")
         self.assertEqual(post.call_args.kwargs["provider"], "智谱")
+
+    def test_strict_provider_retries_one_missing_tool_call_and_preserves_attempt_evidence(self) -> None:
+        selected = {
+            "provider_id": "zhipu",
+            "provider": "智谱",
+            "model": "glm-fixture",
+            "api_key": "key-b",
+            "endpoint": "https://zhipu.example/v1/chat/completions",
+        }
+        responses = [
+            {
+                "provider": "智谱",
+                "model": "glm-fixture",
+                "mode": "real-api",
+                "tool_calls": [],
+                "tool_call_parse_issues": [],
+                "finish_reason": "stop",
+                "request_hash": "request-1",
+                "provider_response_hash": "response-1",
+                "provider_response_id": "provider-response-1",
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            },
+            {
+                "provider": "智谱",
+                "model": "glm-fixture",
+                "mode": "real-api",
+                "tool_calls": [
+                    {
+                        "id": "call-fixture",
+                        "tool": "file.read",
+                        "arguments": {"path": "public/项目说明.md"},
+                    }
+                ],
+                "tool_call_parse_issues": [],
+                "finish_reason": "tool_calls",
+                "request_hash": "request-2",
+                "provider_response_hash": "response-2",
+                "provider_response_id": "provider-response-2",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+            },
+        ]
+        with (
+            patch.object(model_adapter, "_iter_configured_providers", return_value=[selected]),
+            patch.object(model_adapter, "_post_tool_completion", side_effect=responses) as post,
+        ):
+            result = model_adapter.generate_model_tool_plan(
+                "fixture prompt",
+                "fixture-case",
+                force_real=True,
+                provider_profile="target",
+                strict_provider="zhipu",
+            )
+
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual([call.kwargs["attempt"] for call in post.call_args_list], [1, 2])
+        self.assertEqual(result["mode"], "real-api")
+        self.assertEqual(result["provider_call_count"], 2)
+        self.assertEqual(result["tool_plan_retry_count"], 1)
+        self.assertEqual([item["outcome"] for item in result["tool_plan_attempts"]], ["no-tool-call", "tool-call"])
+        self.assertEqual(result["tool_plan_usage_totals"]["total_tokens"], 28)
+        self.assertEqual(result["provider_failures"], [])
+
+    def test_strict_provider_stops_after_two_missing_tool_calls(self) -> None:
+        selected = {
+            "provider_id": "zhipu",
+            "provider": "智谱",
+            "model": "glm-fixture",
+            "api_key": "key-b",
+            "endpoint": "https://zhipu.example/v1/chat/completions",
+        }
+
+        def no_tool_call(*, attempt: int, **_: object) -> dict:
+            return {
+                "provider": "智谱",
+                "model": "glm-fixture",
+                "mode": "real-api",
+                "tool_calls": [],
+                "tool_call_parse_issues": [],
+                "finish_reason": "stop",
+                "request_hash": f"request-{attempt}",
+                "provider_response_hash": f"response-{attempt}",
+                "usage": {"total_tokens": 10 + attempt},
+            }
+
+        with (
+            patch.object(model_adapter, "_iter_configured_providers", return_value=[selected]),
+            patch.object(model_adapter, "_post_tool_completion", side_effect=no_tool_call) as post,
+        ):
+            result = model_adapter.generate_model_tool_plan(
+                "fixture prompt",
+                "fixture-case",
+                force_real=True,
+                provider_profile="target",
+                strict_provider="zhipu",
+            )
+
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(result["mode"], "provider-invalid")
+        self.assertEqual(result["provider_call_count"], 2)
+        self.assertEqual(result["tool_plan_retry_count"], 1)
+        self.assertEqual(result["tool_plan_usage_totals"]["total_tokens"], 23)
+        self.assertIn("连续 2 次", result["provider_failures"][0]["error"])
+
+    def test_strict_provider_does_not_switch_provider_during_protocol_retry(self) -> None:
+        selected = {
+            "provider_id": "zhipu",
+            "provider": "智谱",
+            "model": "glm-fixture",
+            "api_key": "key-b",
+            "endpoint": "https://zhipu.example/v1/chat/completions",
+        }
+        other = {
+            "provider_id": "deepseek",
+            "provider": "DeepSeek",
+            "model": "deepseek-fixture",
+            "api_key": "key-a",
+            "endpoint": "https://deepseek.example/v1/chat/completions",
+        }
+
+        def select_provider(profile: str, *, requested_model: str = "", provider_id: str = "") -> list[dict]:
+            self.assertEqual(profile, "target")
+            self.assertEqual(provider_id, "zhipu")
+            self.assertFalse(requested_model)
+            return [selected, other]
+
+        def no_tool_call(**kwargs: object) -> dict:
+            self.assertEqual(kwargs["provider"], "智谱")
+            return {
+                "provider": "智谱",
+                "model": "glm-fixture",
+                "mode": "real-api",
+                "tool_calls": [],
+                "tool_call_parse_issues": [],
+                "request_hash": f"request-{kwargs['attempt']}",
+                "provider_response_hash": f"response-{kwargs['attempt']}",
+            }
+
+        with (
+            patch.object(model_adapter, "_iter_configured_providers", side_effect=select_provider),
+            patch.object(model_adapter, "_post_tool_completion", side_effect=no_tool_call) as post,
+        ):
+            result = model_adapter.generate_model_tool_plan(
+                "fixture prompt",
+                "fixture-case",
+                force_real=True,
+                provider_profile="target",
+                strict_provider="zhipu",
+            )
+
+        self.assertEqual(post.call_count, 2)
+        self.assertEqual(result["provider_id"], "zhipu")
+        self.assertTrue(result["strict_provider"])
 
     def test_missing_report_is_not_fabricated(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

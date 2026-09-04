@@ -22,6 +22,21 @@ function auditLog(index: number): AuditLog {
 }
 
 describe('AuditLogList', () => {
+  it('exposes audit records as native keyboard-operable buttons', async () => {
+    const user = userEvent.setup();
+    const onSelectLog = vi.fn();
+    render(<AuditLogList logs={[auditLog(0)]} selectedLogId="audit-0" onSelectLog={onSelectLog} />);
+
+    const auditButton = screen.getByRole('button', { name: /audit-tool-0/ });
+    expect(auditButton.tagName).toBe('BUTTON');
+    expect(auditButton).toHaveAttribute('aria-pressed', 'true');
+
+    auditButton.focus();
+    await user.keyboard('{Enter}');
+
+    expect(onSelectLog).toHaveBeenCalledWith('audit-0');
+  });
+
   it('paginates large audit sets and keeps record selection available', async () => {
     const user = userEvent.setup();
     const onSelectLog = vi.fn();

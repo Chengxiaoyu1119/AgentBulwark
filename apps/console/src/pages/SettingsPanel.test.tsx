@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPanel } from './SettingsPanel';
 import type { Overview } from '../types';
@@ -8,12 +9,7 @@ const apiMocks = vi.hoisted(() => ({
     version: '1.0',
     examples: [],
     event_contract: { required_fields: ['agent_id'], recommended_fields: [], safe_default: 'deny' }
-  })
-}));
-
-vi.mock('../api', () => ({
-  fetchAttackCaseDataset: vi.fn().mockResolvedValue(null),
-  fetchAgentIntegrationBundle: apiMocks.fetchAgentIntegrationBundle,
+  }),
   fetchAuthContext: vi.fn().mockResolvedValue({ role: 'admin', permissions: { can_edit_policy: true } }),
   fetchPolicyConfig: vi.fn().mockResolvedValue({
     settings: {
@@ -27,8 +23,6 @@ vi.mock('../api', () => ({
       agent_tool_allowlists: {}
     }
   }),
-  fetchCompetitionReadiness: vi.fn().mockResolvedValue(null),
-  fetchDemoDrill: vi.fn().mockResolvedValue(null),
   fetchModelConfig: vi.fn().mockResolvedValue({
     real_api_enabled: true,
     real_api_enabled_source: 'runtime',
@@ -43,15 +37,33 @@ vi.mock('../api', () => ({
       global: { provider_priority: ['deepseek', 'zhipu'], model_overrides: {} }
     }
   }),
-  runDemoDrill: vi.fn(),
-  runExternalAgentDemo: vi.fn(),
-  updateModelConfig: vi.fn(),
-  updatePolicySettings: vi.fn(),
-  writeCompetitionReadiness: vi.fn(),
-  writeOpenClawPluginPackage: vi.fn(),
-  writeOpenClawPluginValidation: vi.fn(),
-  evaluateSupervisorEvent: vi.fn(),
-  evaluateSupervisorBatch: vi.fn()
+  fetchModelStatuses: vi.fn().mockImplementation((profile: string) =>
+    Promise.resolve([
+      {
+        profile,
+        provider: 'deepseek',
+        configured: false,
+        model: 'deepseek-chat',
+        mode: 'simulated'
+      }
+    ])
+  ),
+  probeModelProvider: vi.fn(),
+  updateModelConfig: vi.fn()
+}));
+
+vi.mock('../app/governanceApi', () => ({
+  fetchAgentIntegrationBundle: apiMocks.fetchAgentIntegrationBundle,
+  fetchAuthContext: apiMocks.fetchAuthContext,
+  fetchPolicyConfig: apiMocks.fetchPolicyConfig,
+  updatePolicySettings: vi.fn()
+}));
+
+vi.mock('../app/operationalApi', () => ({
+  fetchModelConfig: apiMocks.fetchModelConfig,
+  fetchModelStatuses: apiMocks.fetchModelStatuses,
+  probeModelProvider: apiMocks.probeModelProvider,
+  updateModelConfig: apiMocks.updateModelConfig
 }));
 
 const overview = {
@@ -92,6 +104,27 @@ const overview = {
 describe('SettingsPanel', () => {
   beforeEach(() => {
     apiMocks.fetchAgentIntegrationBundle.mockClear();
+    apiMocks.fetchAuthContext.mockReset();
+    apiMocks.fetchAuthContext.mockResolvedValue({ role: 'admin', permissions: { can_edit_policy: true } });
+    apiMocks.fetchModelConfig.mockClear();
+    apiMocks.fetchModelStatuses.mockReset();
+    apiMocks.fetchModelStatuses.mockImplementation((profile: string) =>
+      Promise.resolve([
+        {
+          profile,
+          provider: 'deepseek',
+          configured: false,
+          model: 'deepseek-chat',
+          mode: 'simulated'
+        }
+      ])
+    );
+    apiMocks.probeModelProvider.mockReset();
+    apiMocks.updateModelConfig.mockReset();
+    apiMocks.updateModelConfig.mockImplementation(async (payload) => ({
+      ...(await apiMocks.fetchModelConfig()),
+      ...payload
+    }));
   });
 
   it('renders the settings shell and primary tabs', async () => {
@@ -111,5 +144,153 @@ describe('SettingsPanel', () => {
     expect(await screen.findByText('接入契约')).toBeInTheDocument();
     expect(screen.queryByText('OpenClaw')).not.toBeInTheDocument();
     expect(screen.queryByText('闭环复现实验')).not.toBeInTheDocument();
+  });
+
+  it('keeps independent settings surfaces available when one read fails', async () => {
+    apiMocks.fetchAgentIntegrationBundle.mockRejectedValueOnce(new Error('接入契约服务暂时不可用'));
+    render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(await screen.findByText('接入契约读取失败')).toBeInTheDocument();
+    expect(screen.getByText('部分设置读取失败')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('tab', { name: '模型连接' }));
+    expect(await screen.findByText('模型连接配置状态')).toBeInTheDocument();
+  });
+
+  it('disables model writes for read-only operators instead of sending a guaranteed 403', async () => {
+    const user = userEvent.setup();
+    apiMocks.fetchAuthContext.mockResolvedValueOnce({ role: 'observer', permissions: { can_edit_policy: false } });
+    render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+
+    await user.click(await screen.findByRole('tab', { name: '模型连接' }));
+    expect(await screen.findByText('当前角色只有查看权限')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存模型连接' })).toBeDisabled();
+  });
+
+  it('describes discovered credentials as configured rather than network-verified', async () => {
+    const configuredOverview: Overview = {
+      ...overview,
+      models: [
+        {
+          provider: 'deepseek',
+          configured: true,
+          model: 'deepseek-chat',
+          mode: 'real-api',
+          endpoint: 'https://provider.example/v1'
+        }
+      ]
+    };
+    render(<SettingsPanel overview={configuredOverview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '模型连接' }));
+
+    expect((await screen.findAllByText('凭证已配置')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('真实可用')).not.toBeInTheDocument();
+    expect(screen.queryByText('已接入真实 API')).not.toBeInTheDocument();
+  });
+
+  it('renders credential state from each profile instead of reusing global overview status', async () => {
+    apiMocks.fetchModelStatuses.mockImplementation((profile: string) =>
+      Promise.resolve([
+        {
+          profile,
+          provider: profile === 'target' ? 'deepseek' : 'zhipu',
+          configured: profile === 'target',
+          model: profile === 'target' ? 'target-model' : 'optimizer-model',
+          mode: profile === 'target' ? 'real-api' : 'simulated'
+        }
+      ])
+    );
+    render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '模型连接' }));
+    const statusCards = Array.from(document.querySelectorAll<HTMLElement>('.zh-settings-profile-status'));
+    const targetStatus = statusCards.find((card) => card.textContent?.includes('主模型'));
+    const optimizerStatus = statusCards.find((card) => card.textContent?.includes('副模型'));
+    expect(targetStatus).toHaveTextContent('凭证已配置');
+    expect(optimizerStatus).toHaveTextContent('凭证未配置');
+    expect(apiMocks.fetchModelStatuses).toHaveBeenCalledWith('target');
+    expect(apiMocks.fetchModelStatuses).toHaveBeenCalledWith('optimizer');
+    expect(apiMocks.fetchModelStatuses).toHaveBeenCalledWith('global');
+  });
+
+  it('keeps permissions unknown when the authorization context read fails', async () => {
+    apiMocks.fetchAuthContext.mockRejectedValueOnce(new Error('权限上下文暂时不可用'));
+    render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+
+    await userEvent.setup().click(await screen.findByRole('tab', { name: '模型连接' }));
+
+    expect(await screen.findByText(/权限上下文暂时不可用/)).toBeInTheDocument();
+    expect(screen.queryByText('当前角色只有查看权限')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存模型连接' })).toBeDisabled();
+  });
+
+  it('reports a saved model configuration separately from a failed overview refresh', async () => {
+    const refresh = vi.fn().mockRejectedValue(new Error('总览服务暂时不可用'));
+    render(<SettingsPanel overview={overview} refresh={refresh} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '模型连接' }));
+    await user.click(screen.getByRole('button', { name: '保存模型连接' }));
+
+    expect(await screen.findByText('模型连接已保存。')).toBeInTheDocument();
+    expect(screen.getByText(/模型连接已保存，但总览刷新失败/)).toBeInTheDocument();
+    expect(screen.queryByText('模型连接保存失败。')).not.toBeInTheDocument();
+  });
+
+  it('runs an explicit Provider probe and renders its result separately from configuration', async () => {
+    apiMocks.fetchAuthContext.mockResolvedValueOnce({
+      role: 'analyst',
+      permissions: { can_edit_policy: false, can_review_approval: true }
+    });
+    apiMocks.probeModelProvider.mockResolvedValueOnce({
+      schema_version: 'agent-supervisor.provider-probe.v1',
+      profile: 'target',
+      provider_id: 'deepseek',
+      provider: 'DeepSeek',
+      status: 'healthy',
+      configured: true,
+      model: 'deepseek-chat',
+      latency_ms: 42.5,
+      endpoint_scope: 'external-provider'
+    });
+    render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '模型连接' }));
+    await user.click(screen.getAllByRole('button', { name: '检测连接' })[0]);
+
+    expect(await screen.findByText('DeepSeek 连接探针通过')).toBeInTheDocument();
+    expect(screen.getByText(/延迟：42.5 ms/)).toBeInTheDocument();
+    expect(apiMocks.probeModelProvider).toHaveBeenCalledWith({ profile: 'target', provider_id: 'deepseek' });
+  });
+
+  it('locks model fields while a save response is pending', async () => {
+    let resolveSave: ((value: Awaited<ReturnType<typeof apiMocks.fetchModelConfig>>) => void) | undefined;
+    apiMocks.updateModelConfig.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSave = resolve;
+        })
+    );
+    render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('tab', { name: '模型连接' }));
+    await user.click(screen.getByRole('button', { name: '保存模型连接' }));
+
+    expect(screen.getByRole('switch')).toBeDisabled();
+    expect(screen.getAllByRole('combobox').every((input) => input.hasAttribute('disabled'))).toBe(true);
+
+    resolveSave?.(await apiMocks.fetchModelConfig());
+    expect(await screen.findByText('模型连接已保存。')).toBeInTheDocument();
+  });
+
+  it('retries only failed settings reads without discarding successful sections', async () => {
+    apiMocks.fetchAgentIntegrationBundle.mockRejectedValueOnce(new Error('接入契约服务暂时不可用'));
+    render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
+
+    expect(await screen.findByText('接入契约读取失败')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: '重试失败项' }));
+
+    expect(await screen.findByText('1.0')).toBeInTheDocument();
+    expect(screen.queryByText('接入契约读取失败')).not.toBeInTheDocument();
+    expect(apiMocks.fetchModelConfig).toHaveBeenCalledTimes(1);
   });
 });

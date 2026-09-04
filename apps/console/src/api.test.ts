@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  fetchAlerts,
+  fetchAuditLogs,
+  fetchApprovalReviews,
+  fetchHealth,
   fetchOverview,
+  fetchPolicies,
   fetchReport,
+  fetchScenarios,
   setAuthTokenProvider,
   subscribeRuntimeEvents,
   writeOpenClawPluginValidation
@@ -16,6 +22,22 @@ afterEach(() => {
 });
 
 describe('api client', () => {
+  it('keeps the production approval queue scoped to operational records', async () => {
+    const response = { reviews: [], summary: {} };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
+      ok: true,
+      json: async () => response
+    } as Response);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchApprovalReviews('待复核', 20);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/approvals?status=%E5%BE%85%E5%A4%8D%E6%A0%B8&scope=operational&limit=20',
+      expect.any(Object)
+    );
+  });
+
   it('fetches JSON with the shared request wrapper', async () => {
     const overview = {
       attack_surfaces: [],
@@ -46,14 +68,10 @@ describe('api client', () => {
     expect((init?.headers as Headers).get('Content-Type')).toBeNull();
   });
 
-  it('returns an empty offline overview instead of fabricated runtime evidence', async () => {
+  it('surfaces an offline overview failure instead of fabricating runtime evidence', async () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(new Error('offline')));
 
-    const overview = await fetchOverview();
-
-    expect(overview.summary.surface_count).toBe(0);
-    expect(overview.models).toEqual([]);
-    expect(overview.recent_runs).toEqual([]);
+    await expect(fetchOverview()).rejects.toMatchObject({ code: 'network_error', path: '/api/overview' });
   });
 
   it('does not hide authorization failures behind fallback data', async () => {
@@ -71,6 +89,49 @@ describe('api client', () => {
       status: 403,
       body: 'forbidden'
     });
+  });
+
+  it('turns FastAPI error envelopes into readable operator messages', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => JSON.stringify({ detail: 'Invalid or missing API token' })
+    } as Response);
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchHealth()).rejects.toMatchObject({
+      code: 'http_error',
+      status: 401,
+      message: 'Invalid or missing API token',
+      body: JSON.stringify({ detail: 'Invalid or missing API token' })
+    });
+  });
+
+  it('keeps validation details readable without exposing a synthetic fallback result', async () => {
+    const body = JSON.stringify({ detail: [{ loc: ['body', 'model'], msg: 'Field required' }] });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue({ ok: false, status: 422, text: async () => body } as Response)
+    );
+
+    await expect(fetchAuditLogs()).rejects.toMatchObject({ message: 'body.model: Field required', body });
+  });
+
+  it('does not replace audit or alert read failures with empty live evidence', async () => {
+    vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(new Error('offline')));
+
+    await expect(fetchAuditLogs()).rejects.toMatchObject({ code: 'network_error', path: '/api/audit_logs?limit=100' });
+    await expect(fetchAlerts()).rejects.toMatchObject({ code: 'network_error', path: '/api/alerts?limit=100' });
+  });
+
+  it('fails closed when historical policy or scenario catalogs are unavailable', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchScenarios()).rejects.toMatchObject({ code: 'network_error', path: '/api/scenarios' });
+    await expect(fetchPolicies()).rejects.toMatchObject({ code: 'network_error', path: '/api/policies' });
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 
   it('uses an abort signal for report loading', async () => {
@@ -151,6 +212,30 @@ describe('api client', () => {
     }
   });
 
+  it('invalidates the operator session when a protected artifact returns 401', async () => {
+    const popup = { close: vi.fn(), location: { href: '' } } as unknown as Window;
+    const openMock = vi.spyOn(window, 'open').mockReturnValue(popup);
+    const invalidation = vi.fn();
+    window.addEventListener(authInvalidEvent, invalidation);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<typeof fetch>().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: async () => JSON.stringify({ detail: 'Invalid or missing API token' })
+      } as Response)
+    );
+
+    try {
+      await expect(openAuthenticatedResource('/api/readiness')).rejects.toMatchObject({ status: 401 });
+      expect(invalidation).toHaveBeenCalledOnce();
+      expect(popup.close).toHaveBeenCalledOnce();
+    } finally {
+      window.removeEventListener(authInvalidEvent, invalidation);
+      openMock.mockRestore();
+    }
+  });
+
   it('throws a structured ApiError for non-fallback API failures', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
       ok: false,
@@ -196,11 +281,7 @@ describe('api client', () => {
   });
 
   it('requests OpenClaw runtime validation when writing plugin validation evidence', async () => {
-    const validation = {
-      validation: {
-        overall_status: 'runtime-validated'
-      }
-    };
+    const validation = { validation: { overall_status: 'runtime-validated' } };
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
       ok: true,
       json: async () => validation

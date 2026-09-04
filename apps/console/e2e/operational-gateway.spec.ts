@@ -29,6 +29,24 @@ async function sendGatewayRequest(page: Page, payload?: Record<string, unknown>)
   return (await response.json()) as { agent_supervisor?: Record<string, unknown> };
 }
 
+async function sendStreamingGatewayRequest(page: Page, payload: Record<string, unknown>) {
+  if ((await page.getByRole('button', { name: '发送到网关' }).count()) === 0) {
+    await page.getByRole('button', { name: '验证防护' }).click();
+  }
+  await page
+    .getByRole('textbox', { name: '网关请求 JSON' })
+    .fill(JSON.stringify({ ...payload, stream: true }, null, 2));
+  const responsePromise = page.waitForResponse(
+    (response) => response.url().endsWith('/v1/chat/completions') && response.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: '发送到网关' }).click();
+  const response = await responsePromise;
+  expect(response.status()).toBe(200);
+  expect(response.headers()['content-type']).toContain('text/event-stream');
+  await expect(page.getByText('安全流实时预览')).toBeVisible();
+  await expect(page.getByText('已完成')).toBeVisible();
+}
+
 async function providerRequestCount(page: Page) {
   const response = await page.request.get(PROVIDER_STATS_URL);
   expect(response.ok()).toBeTruthy();
@@ -36,6 +54,22 @@ async function providerRequestCount(page: Page) {
 }
 
 test.describe.serial('运营网关黑盒验收', () => {
+  test('320x480 登录失败后仍可滚动到全部操作按钮', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 480 });
+    await page.goto('/#/gateway');
+    await page.getByRole('textbox', { name: '运行 Token' }).fill('wrong-token');
+    await page.getByRole('button', { name: '验证并进入' }).click();
+    await expect(page.getByText('凭证未通过校验，请检查后重新输入。')).toBeVisible();
+
+    const authPage = page.locator('.zh-auth-page');
+    await expect(authPage).toHaveCSS('overflow-y', 'auto');
+    const retryButton = page.getByRole('button', { name: '重新检测后端' });
+    await retryButton.scrollIntoViewIfNeeded();
+    const buttonBox = await retryButton.boundingBox();
+    expect(buttonBox).not.toBeNull();
+    expect((buttonBox?.y ?? 0) + (buttonBox?.height ?? 0)).toBeLessThanOrEqual(480);
+  });
+
   test('冷启动只访问公开状态，错误凭证、只读权限和会话失效都有明确反馈', async ({ page }) => {
     const bootstrapApiPaths: string[] = [];
     page.on('request', (request) => {
@@ -46,18 +80,40 @@ test.describe.serial('运营网关黑盒验收', () => {
     await page.goto('/#/gateway');
     await expect(page.getByRole('heading', { name: '连接安全控制台' })).toBeVisible();
     await expect(page.getByText('后端在线')).toBeVisible();
+    await expect(page.locator('.zh-auth-page')).toHaveCSS('display', 'flex');
     expect([...new Set(bootstrapApiPaths)]).toEqual(['/api/public/status']);
 
     await page.getByRole('textbox', { name: '运行 Token' }).fill('wrong-token');
     await page.getByRole('button', { name: '验证并进入' }).click();
     await expect(page.getByText('凭证未通过校验，请检查后重新输入。')).toBeVisible();
 
+    await page.getByRole('textbox', { name: '运行 Token' }).fill(EXECUTOR_TOKEN);
+    await page.getByRole('button', { name: '验证并进入' }).click();
+    await expect(page.getByText(/当前凭证用于 Agent 运行，不具备控制台查看权限/)).toBeVisible();
+    await expect(page.getByRole('heading', { name: '连接安全控制台' })).toBeVisible();
+
     await page.getByRole('textbox', { name: '运行 Token' }).fill(OBSERVER_TOKEN);
     await page.getByRole('button', { name: '验证并进入' }).click();
     await expect(page.getByRole('heading', { name: '请求防护' })).toBeVisible();
+    const productionStyleBoundary = await page.evaluate(() => {
+      const cssText = Array.from(document.styleSheets)
+        .flatMap((sheet) => Array.from(sheet.cssRules, (rule) => rule.cssText))
+        .join('\n');
+      const mainContent = document.querySelector<HTMLElement>('.zh-main-content');
+      return {
+        hasOperationalSelector: cssText.includes('.zh-product-page'),
+        hasExperimentSelector: cssText.includes('.zh-attack-lab'),
+        mainOverflowY: mainContent ? getComputedStyle(mainContent).overflowY : ''
+      };
+    });
+    expect(productionStyleBoundary).toEqual({
+      hasOperationalSelector: true,
+      hasExperimentSelector: false,
+      mainOverflowY: 'auto'
+    });
     await page.getByRole('button', { name: '验证防护' }).click();
     await expect(page.getByRole('button', { name: '发送到网关' })).toBeDisabled();
-    await expect(page.getByText('当前凭证只有观测权限，不能发起模型请求。')).toBeVisible();
+    await expect(page.getByText('当前凭证为观测角色')).toBeVisible();
 
     const forbidden = await page.request.post('/v1/chat/completions', {
       headers: { Authorization: `Bearer ${OBSERVER_TOKEN}`, 'X-Agent-Session-ID': 'observer-e2e' },
@@ -65,8 +121,11 @@ test.describe.serial('运营网关黑盒验收', () => {
     });
     expect(forbidden.status()).toBe(403);
 
-    await page.evaluate(() => sessionStorage.setItem('agent-supervisor-api-token', 'expired-token'));
     await page.getByRole('button', { name: 'Close' }).click();
+    // Close the transient drawer before mutating the browser session. The
+    // realtime connection may observe the invalid token immediately and
+    // correctly unmount the authenticated workspace before a later UI action.
+    await page.evaluate(() => sessionStorage.setItem('agent-supervisor-api-token', 'expired-token'));
     await page.getByRole('button', { name: '刷新数据' }).click();
     await expect(page.getByRole('heading', { name: '连接安全控制台' })).toBeVisible();
     await expect(page.getByText('当前会话已失效，请重新验证身份。')).toBeVisible();
@@ -142,6 +201,69 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(consoleErrors).toEqual([]);
   });
 
+  test('真实Provider SSE逐块显示、跨块风险收口并保留终态证据', async ({ page }) => {
+    await login(page);
+    await page.getByRole('button', { name: '验证防护' }).click();
+
+    await sendStreamingGatewayRequest(page, {
+      model: 'e2e-fixture-model',
+      messages: [{ role: 'user', content: 'long streaming narrative' }]
+    });
+    await expect(page.getByLabel('流式响应实时内容')).toContainText('verified-event-000');
+    await expect(page.getByText('bounded-safety-window')).toBeVisible();
+    await expect(page.getByText('真实Provider流')).toBeVisible();
+    await expect(page.getByText('Provider流Chunk')).toBeVisible();
+
+    await sendStreamingGatewayRequest(page, {
+      model: 'e2e-fixture-model',
+      messages: [{ role: 'user', content: 'split stream injection' }]
+    });
+    await expect(page.getByLabel('流式响应实时内容')).not.toContainText('fixture-secret-value');
+    await expect(page.getByText('content_filter')).toBeVisible();
+    await expect(page.getByText('流是否中断')).toBeVisible();
+
+    await page.getByRole('textbox', { name: '网关请求 JSON' }).fill(
+      JSON.stringify(
+        {
+          model: 'e2e-fixture-model',
+          stream: true,
+          messages: [{ role: 'user', content: 'stream interruption' }]
+        },
+        null,
+        2
+      )
+    );
+    await page.getByRole('button', { name: '发送到网关' }).click();
+    await expect(page.getByText('已中断')).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('Provider流式响应失败或在完成前中断');
+    await expect(page.getByText(/中断审计 ID：/)).toBeVisible();
+
+    await page.getByRole('textbox', { name: '网关请求 JSON' }).fill(
+      JSON.stringify(
+        {
+          model: 'e2e-fixture-model',
+          stream: true,
+          messages: [{ role: 'user', content: 'cancellable streaming narrative' }]
+        },
+        null,
+        2
+      )
+    );
+    await page.getByRole('button', { name: '发送到网关' }).click();
+    await page.getByRole('button', { name: '停止接收' }).click();
+    await expect(page.getByText('已中断')).toBeVisible();
+    await expect(page.getByRole('alert')).toContainText('流式请求已取消');
+    await expect
+      .poll(async () => {
+        const audits = await page.request.get('/api/audit_logs?limit=100', {
+          headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
+        });
+        const rows = (await audits.json()) as Array<{ stage_context?: { provider_failure_kind?: string } }>;
+        return rows.some((row) => row.stage_context?.provider_failure_kind === 'client-cancelled-stream');
+      })
+      .toBe(true);
+  });
+
   test('服务端托管 Tool Call 产生可验证回执，MCP JSON-RPC 走真实子进程', async ({ page }) => {
     await login(page);
 
@@ -176,27 +298,82 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(await providerRequestCount(page)).toBe(beforeManaged + 2);
     await expect(page.getByText('服务端托管执行回执')).toBeVisible();
 
-    const mcpHeaders = {
-      Authorization: `Bearer ${ADMIN_TOKEN}`,
-      'X-Agent-Session-ID': 'mcp-e2e-session'
-    };
-    const initialize = await page.request.post('/api/mcp', {
-      headers: mcpHeaders,
-      data: {
-        jsonrpc: '2.0',
-        id: 'initialize-1',
-        method: 'initialize',
-        params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } }
+    await page.getByRole('button', { name: 'Close' }).click();
+    await page.getByRole('tab', { name: 'MCP 工具' }).click();
+    await expect(page.getByText('MCP JSON-RPC 实际入口')).toBeVisible();
+    await page.getByRole('textbox', { name: 'MCP Agent 会话 ID' }).fill('mcp-e2e-session');
+
+    await expect(page.getByRole('combobox', { name: 'MCP 协议版本' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'server/discover' })).toBeVisible();
+    const discoverResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/api/mcp') && response.request().method() === 'POST'
+    );
+    await page.getByRole('button', { name: 'server/discover' }).click();
+    const discover = await discoverResponse;
+    expect(discover.status()).toBe(200);
+    expect(discover.request().headers()['mcp-protocol-version']).toBe('2026-07-28');
+    expect(discover.request().headers()['mcp-method']).toBe('server/discover');
+    expect(discover.request().postDataJSON()).toMatchObject({
+      method: 'server/discover',
+      params: {
+        _meta: {
+          'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+          'io.modelcontextprotocol/clientCapabilities': { sampling: {}, elicitation: {}, roots: {} }
+        }
       }
     });
-    expect(initialize.status()).toBe(200);
-    const toolsList = await page.request.post('/api/mcp', {
-      headers: mcpHeaders,
-      data: { jsonrpc: '2.0', id: 'tools-list-1', method: 'tools/list', params: {} }
-    });
+
+    const toolsListResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/api/mcp') && response.request().method() === 'POST'
+    );
+    await page.getByRole('button', { name: 'tools/list' }).click();
+    const toolsList = await toolsListResponse;
     expect(toolsList.status()).toBe(200);
     const toolsBody = (await toolsList.json()) as { result?: { tools?: unknown[] } };
     expect(Array.isArray(toolsBody.result?.tools)).toBe(true);
+    await expect(page.getByText(/当前响应可见工具：\d+ 个/)).toBeVisible();
+
+    await page.getByRole('button', { name: '开始订阅' }).click();
+    await expect(page.getByText('订阅已连接')).toBeVisible();
+
+    await page.getByRole('switch', { name: 'MCP 实时进度' }).click();
+    await page.getByRole('combobox', { name: 'MCP 日志级别' }).click();
+    await page.getByText('warning 及以上').click();
+
+    const inputRequiredResponse = page.waitForResponse(
+      (response) => response.url().endsWith('/api/mcp') && response.request().method() === 'POST'
+    );
+    await page.getByRole('button', { name: 'tools/call' }).click();
+    const inputRequired = await inputRequiredResponse;
+    expect(inputRequired.status()).toBe(200);
+    expect(inputRequired.headers()['content-type']).toContain('text/event-stream');
+    // Chromium does not retain a CDP response body for every Fetch-consumed
+    // stream. Assert the application-parsed state, then prove the protected
+    // requestState is carried by the resume request below.
+    await expect(page.getByText('MCP 需要操作员输入')).toBeVisible();
+    await expect(page.getByText('上游 inputRequests')).toBeVisible();
+    await expect(page.locator('pre.zh-evidence-code-block').filter({ hasText: '"srv-req-1"' }).first()).toContainText(
+      'sampling/createMessage'
+    );
+
+    const resumeRequest = page.waitForRequest(
+      (request) => request.url().endsWith('/api/mcp') && request.method() === 'POST'
+    );
+    await page.getByRole('button', { name: '提交输入并恢复' }).click();
+    const resumePayload = (await resumeRequest).postDataJSON() as {
+      params?: { requestState?: string; inputResponses?: Record<string, unknown> };
+    };
+    expect(resumePayload.params?.requestState).toBeTruthy();
+    expect(resumePayload.params?.inputResponses?.['srv-req-1']).toBeTruthy();
+    await expect(
+      page.locator('pre.zh-evidence-code-block').filter({ hasText: '"resultType": "complete"' }).first()
+    ).toBeVisible();
+    await expect(page.getByText('收到 3 条 MCP 请求级实时事件')).toBeVisible();
+    await expect(page.getByText('最新进度：1 / 1；日志：2 条（warning、error）。')).toBeVisible();
+    await expect(page.getByText('MCP 需要操作员输入')).toHaveCount(0);
+    await expect(page.getByText('MCP 订阅事件 1 条')).toBeVisible();
+    await page.getByRole('button', { name: '停止订阅' }).click();
+    await expect(page.getByText('未订阅')).toBeVisible();
   });
 
   test('风险事件可在正式页面批准，并由原始 Agent 领取后提交完成回执', async ({ page }) => {
@@ -251,6 +428,8 @@ test.describe.serial('运营网关黑盒验收', () => {
     await expect(page.getByRole('tab', { name: '待人工复核（1）' })).toHaveAttribute('aria-selected', 'true');
     await expect(page.getByText(new RegExp(`审计 ID：${auditId}`))).toBeVisible();
     await page.getByRole('button', { name: '批准恢复' }).click();
+    await expect(page.getByText('批准后允许 Agent 恢复执行？')).toBeVisible();
+    await page.getByRole('button', { name: /确\s*认/ }).click();
     await expect(page.getByText('等待Agent恢复')).toBeVisible();
 
     const inventory = await page.request.get('/api/approvals?status=全部&scope=operational&limit=100', {
@@ -317,6 +496,36 @@ test.describe.serial('运营网关黑盒验收', () => {
     ).toBe(true);
     await page.getByRole('button', { name: '打开导航菜单' }).click();
     await page.getByRole('menuitem', { name: '防护' }).click();
+    await expect(page.getByRole('heading', { name: '请求防护' })).toBeVisible();
+  });
+
+  test('标准视口和深色主题保持主要页面可用', async ({ page }) => {
+    await login(page);
+    const pages = [
+      { hash: 'gateway', heading: '请求防护' },
+      { hash: 'events', heading: '安全事件' },
+      { hash: 'settings', heading: '设置' }
+    ];
+    const viewports = [
+      { width: 390, height: 844 },
+      { width: 768, height: 1024 },
+      { width: 1440, height: 900 }
+    ];
+
+    for (const viewport of viewports) {
+      await page.setViewportSize(viewport);
+      for (const target of pages) {
+        await page.goto(`/#/${target.hash}`);
+        await expect(page.getByRole('heading', { name: target.heading, exact: true, level: 1 })).toBeVisible();
+        expect(
+          await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)
+        ).toBe(true);
+      }
+    }
+
+    await page.goto('/#/gateway');
+    await page.getByRole('button', { name: '切换深色模式' }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     await expect(page.getByRole('heading', { name: '请求防护' })).toBeVisible();
   });
 });
