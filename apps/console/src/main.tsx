@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { setAuthTokenProvider } from './api';
+import { setAuthTokenProvider } from './app/apiRequest';
 import { getAuthToken } from './app/authSession';
 import './design/tokens.css';
 import './styles.css';

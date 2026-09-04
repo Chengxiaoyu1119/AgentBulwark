@@ -60,6 +60,7 @@ export interface AuditLog {
     | 'not_applicable'
     | string;
   execution_target?: 'real' | 'sandbox' | 'none' | 'unknown' | string;
+  gateway_execution_claim_status?: 'running' | 'completed' | 'unknown' | string;
   execution_receipt?: ExecutionReceipt | null;
   execution_evidence?: 'server-observed' | 'caller-declared-required' | 'not-executed-observed' | string;
   execution_observed_by_server?: boolean;
@@ -103,6 +104,36 @@ export interface ExecutionReceipt {
   control_verified?: boolean;
   created_at?: string;
   event_id?: number;
+}
+
+export interface GatewayExecutionClaim {
+  audit_id: string;
+  claim_id: string;
+  agent_id: string;
+  session_id: string;
+  tool_call_hash: string;
+  status: 'running' | 'completed' | 'unknown' | string;
+  created_at: string;
+  completed_at: string;
+  receipt_id: string;
+}
+
+export interface ExecutionInventory {
+  generated_at: string;
+  summary: {
+    total: number;
+    completed: number;
+    failed: number;
+    not_executed: number;
+    decision_followed: number;
+    control_verified: number;
+    caller_declared: number;
+    server_observed: number;
+    signed: number;
+    gateway_unknown: number;
+  };
+  receipts: ExecutionReceipt[];
+  gateway_execution_claims: GatewayExecutionClaim[];
 }
 
 export interface GatewayToolExecutionResult {

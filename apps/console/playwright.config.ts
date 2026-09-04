@@ -5,7 +5,9 @@ import os from 'node:os';
 
 const consoleRoot = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = path.resolve(consoleRoot, '../..');
-const runtimeDir = path.join(os.tmpdir(), `agent-security-supervisor-e2e-${process.pid}`);
+const runtimeDir =
+  process.env.AGENT_SUPERVISOR_E2E_RUNTIME_DIR ||
+  path.join(os.tmpdir(), `agent-security-supervisor-e2e-${process.pid}`);
 const providerPort = '18081';
 const apiPort = '8016';
 const consolePort = '5180';
@@ -58,7 +60,12 @@ const apiEnvironment: Record<string, string> = {
   MCP_GATEWAY_SESSION_ISOLATION: 'true',
   MCP_GATEWAY_RESOURCE_LIMITS_ENABLED: 'true',
   MCP_GATEWAY_NETWORK_MODE: 'reject-unpinned',
-  MCP_GATEWAY_ALLOW_SIDE_EFFECT_NOTIFICATIONS: 'false'
+  MCP_GATEWAY_ALLOW_SIDE_EFFECT_NOTIFICATIONS: 'false',
+  MCP_GATEWAY_REQUEST_STATE_SECRET: 'e2e-mcp-request-state-secret-32-bytes-long',
+  MCP_ECHO_SERVER_REQUEST: '1',
+  MCP_ECHO_PROGRESS_ON_CALL: '1',
+  MCP_ECHO_NOTIFY_ON_CALL: '1',
+  MCP_ECHO_LOG_LEVELS: 'debug,info,warning,error'
 };
 
 export default defineConfig({

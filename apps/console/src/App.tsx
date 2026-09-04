@@ -1,8 +1,11 @@
 import { lazy, useCallback, useEffect, useState } from 'react';
 import { AuthGate } from './app/AuthGate';
-import { AppLoading, AppShell, type AppTheme } from './app/AppShell';
-import { useAppData } from './app/useAppData';
+import { AppErrorBoundary } from './app/AppErrorBoundary';
+import { AppLoading, AppShell } from './app/AppShell';
+import { type OperationalConnection, useAppData } from './app/useAppData';
 import { isPageKey, pageFromHash, pageToHash, type ProductPageKey } from './app/navigation';
+import { readThemePreference, saveThemePreference, type AppTheme } from './app/themePreference';
+import { PanelCard, UiAlert, UiButton } from './components/ui';
 import type { AuthContext } from './types';
 
 const GatewayPanel = lazy(() => import('./pages/GatewayPanel').then((module) => ({ default: module.GatewayPanel })));
@@ -12,14 +15,22 @@ const SecurityEventsPanel = lazy(() =>
 const SettingsPanel = lazy(() => import('./pages/SettingsPanel').then((module) => ({ default: module.SettingsPanel })));
 
 export default function App() {
-  return <AuthGate>{({ context, signOut }) => <Workspace authContext={context} onSignOut={signOut} />}</AuthGate>;
+  return (
+    <AuthGate>
+      {({ context, signOut }) => (
+        <AppErrorBoundary>
+          <Workspace authContext={context} onSignOut={signOut} />
+        </AppErrorBoundary>
+      )}
+    </AuthGate>
+  );
 }
 
 function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSignOut: () => void }) {
   const [page, setPageState] = useState<ProductPageKey>(() => pageFromHash(window.location.hash));
-  const [theme, setTheme] = useState<AppTheme>('light');
+  const [theme, setTheme] = useState<AppTheme>(() => readThemePreference());
   const [drawerVisible, setDrawerVisible] = useState(false);
-  const { overview, apiNotice, refresh } = useAppData(page);
+  const { overview, apiNotice, connection, refreshing, refresh } = useAppData(page);
 
   const setPage = useCallback((nextPage: ProductPageKey) => {
     setPageState(nextPage);
@@ -43,7 +54,11 @@ function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSig
     };
   }, []);
 
-  if (!overview) return <AppLoading />;
+  useEffect(() => {
+    saveThemePreference(theme);
+  }, [theme]);
+
+  if (!overview && connection.status === 'checking') return <AppLoading />;
 
   return (
     <AppShell
@@ -51,17 +66,58 @@ function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSig
       theme={theme}
       drawerVisible={drawerVisible}
       apiNotice={apiNotice}
+      connection={connection}
       authContext={authContext}
       onPageChange={setPage}
       onThemeChange={setTheme}
+      refreshing={refreshing}
       onRefresh={() => void refresh()}
       onOpenDrawer={() => setDrawerVisible(true)}
       onCloseDrawer={() => setDrawerVisible(false)}
       onSignOut={onSignOut}
     >
-      {page === 'protection' && <GatewayPanel onOpenSettings={() => setPage('settings')} />}
-      {page === 'events' && <SecurityEventsPanel />}
-      {page === 'settings' && <SettingsPanel overview={overview} refresh={refresh} />}
+      {!overview ? (
+        <WorkspaceDataUnavailable connection={connection} onRefresh={() => void refresh()} />
+      ) : (
+        <>
+          {page === 'protection' && <GatewayPanel onOpenSettings={() => setPage('settings')} />}
+          {page === 'events' && <SecurityEventsPanel authContext={authContext} />}
+          {page === 'settings' && <SettingsPanel overview={overview} refresh={refresh} />}
+        </>
+      )}
     </AppShell>
+  );
+}
+
+function WorkspaceDataUnavailable({
+  connection,
+  onRefresh
+}: {
+  connection: OperationalConnection;
+  onRefresh: () => void;
+}) {
+  const title =
+    connection.status === 'auth-expired'
+      ? '操作员会话已失效'
+      : connection.status === 'forbidden'
+        ? '当前身份不能读取运行数据'
+        : connection.status === 'offline'
+          ? '后端暂时不可达'
+          : '实时总览暂时不可用';
+
+  return (
+    <section className="zh-page-stack" aria-labelledby="workspace-data-unavailable-title">
+      <PanelCard title={title} variant="borderless">
+        <UiAlert
+          type={connection.status === 'degraded' ? 'warning' : 'error'}
+          showIcon
+          title={connection.message}
+          description="控制台没有将空白或零指标显示为实时运行结果。恢复连接后可重新读取数据。"
+        />
+        <UiButton type="primary" onClick={onRefresh} className="zh-mt-16">
+          重新读取实时数据
+        </UiButton>
+      </PanelCard>
+    </section>
   );
 }

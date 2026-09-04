@@ -1,5 +1,5 @@
-import { Col, Flex, Row, Typography } from 'antd';
-import { LabelTag, PanelCard, UiAlert } from '../ui';
+import { UiCol, UiFlex, UiRow, UiTypography } from '../ui';
+import { LabelTag, PanelCard, UiAlert, UiFieldLabel } from '../ui';
 
 export type RuntimeStatus = {
   backend?: {
@@ -11,6 +11,8 @@ export type RuntimeStatus = {
     identity_bound?: boolean;
     can_generate?: boolean;
     can_execute_managed_tools?: boolean;
+    can_use_mcp?: boolean;
+    can_execute_mcp_tools?: boolean;
     can_view_console?: boolean;
   };
   models?: {
@@ -25,6 +27,13 @@ export type RuntimeStatus = {
     server_observed_receipts_required?: boolean;
     reasoning_exposed?: boolean;
     executor_identity_required?: boolean;
+    streaming?: {
+      supported?: boolean;
+      mode?: string;
+      safety_window_chars?: number;
+      tool_calls_buffered_until_final_supervision?: boolean;
+      reasoning_buffered?: boolean;
+    };
     resource_governance?: {
       enabled?: boolean;
       scope?: string;
@@ -82,16 +91,16 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
         : '未强制回执';
 
   return (
-    <PanelCard title="实时边界状态" subtitle="来自 /api/runtime_status；空状态不代表已配置">
+    <PanelCard title="实时边界状态" subtitle="状态来自 /api/runtime_status，反映当前运行配置" className="zh-mb-24">
       {!status ? (
         <UiAlert
-          type={error ? 'warning' : 'info'}
+          type={error ? 'error' : 'info'}
           showIcon
-          title={error || '正在读取网关运行状态。'}
-          description="这里不使用本地样本推断 Provider、语义模型或 MCP 隔离状态。"
+          title={error ? '运行状态读取失败' : '正在读取网关运行状态。'}
+          description={error || 'Provider、语义模型和 MCP 隔离状态会从运行时接口更新。'}
         />
       ) : (
-        <Flex vertical gap={12}>
+        <UiFlex vertical gap={12}>
           {productionProfile && !strictReceiptBoundary ? (
             <UiAlert
               type="error"
@@ -100,36 +109,36 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
               description="模型可见的工具结果必须同时要求执行回执与服务端观察证据；调用方声明不等于实际执行事实。"
             />
           ) : null}
-          <Row gutter={[12, 12]}>
-            <Col xs={24} sm={12} lg={6}>
+          <UiRow gutter={[12, 12]}>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="安全配置档"
                 value={productionProfile ? 'production / 强制登记' : 'local / 兼容夹具'}
                 tone={productionProfile ? 'green' : 'amber'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="当前身份"
                 value={`${roleLabel} / ${agentLabel}`}
                 tone={securityContext?.can_generate ? 'green' : 'amber'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="模型生成权限"
                 value={securityContext?.can_generate ? '允许发起生成' : '仅可观测'}
                 tone={securityContext?.can_generate ? 'green' : 'amber'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="托管工具执行权限"
                 value={securityContext?.can_execute_managed_tools ? '允许服务端执行' : '不可执行'}
                 tone={securityContext?.can_execute_managed_tools ? 'green' : 'amber'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="目标 Provider"
                 value={
@@ -141,29 +150,29 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
                   status.models?.target?.some((item) => item.configured && item.mode === 'real-api') ? 'green' : 'amber'
                 }
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="透明代理"
                 value={`${status.proxy?.mode ?? 'unknown'} / ${status.proxy?.enabled ? '启用' : '关闭'}`}
                 tone={status.proxy?.enabled ? 'green' : 'red'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="Token 鉴权"
                 value={status.proxy?.auth_required ? '已开启' : '本地免鉴权'}
                 tone={status.proxy?.auth_required ? 'green' : 'red'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="工具结果信任"
                 value={receiptTrustLabel}
                 tone={strictReceiptBoundary ? 'green' : toolReceiptsRequired ? 'amber' : 'red'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="语义通道"
                 value={
@@ -175,22 +184,22 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
                 }
                 tone={status.semantic_detector?.loaded ? 'green' : 'amber'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="推理通道"
                 value={status.proxy?.reasoning_exposed ? '已暴露（降级）' : '默认隐藏'}
                 tone={status.proxy?.reasoning_exposed ? 'amber' : 'green'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="网关运行证据"
                 value={gatewayFingerprint ? `已绑定 · ${gatewayFingerprint.slice(0, 12)}` : '未绑定'}
                 tone={gatewayFingerprint ? 'green' : 'red'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="MCP 会话隔离"
                 value={
@@ -204,8 +213,8 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
                 }
                 tone={!status.mcp?.configured ? 'blue' : status.mcp.session_isolation?.enabled ? 'green' : 'red'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="MCP 上游隔离"
                 value={
@@ -217,8 +226,8 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
                 }
                 tone={!status.mcp?.configured ? 'blue' : status.mcp.resource_limits?.os_enforced ? 'green' : 'red'}
               />
-            </Col>
-            <Col xs={24} sm={12} lg={6}>
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
               <StatusCard
                 label="Agent 资源租约"
                 value={
@@ -228,9 +237,9 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
                 }
                 tone={resourcePolicy?.enabled ? 'green' : 'red'}
               />
-            </Col>
-          </Row>
-        </Flex>
+            </UiCol>
+          </UiRow>
+        </UiFlex>
       )}
     </PanelCard>
   );
@@ -247,15 +256,13 @@ function StatusCard({
 }) {
   return (
     <div className="zh-settings-status-card">
-      <Typography.Text type="secondary" className="zh-meta-block">
-        {label}
-      </Typography.Text>
-      <Flex justify="space-between" align="center" gap={8}>
-        <Typography.Text strong>{value}</Typography.Text>
+      <UiFieldLabel>{label}</UiFieldLabel>
+      <UiFlex justify="space-between" align="center" gap={8}>
+        <UiTypography.Text strong>{value}</UiTypography.Text>
         <LabelTag variant="filled" color={tone === 'amber' ? 'warning' : tone}>
           {tone === 'green' ? '已满足' : tone === 'red' ? '需处理' : tone === 'blue' ? '按需' : '降级'}
         </LabelTag>
-      </Flex>
+      </UiFlex>
     </div>
   );
 }

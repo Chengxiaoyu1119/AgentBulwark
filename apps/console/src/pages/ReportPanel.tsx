@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import '../design/视觉系统/experiments.css';
 import { Flex, Typography } from 'antd';
 import { Copy, RefreshCw } from 'lucide-react';
 import { LabelTag, PanelCard, UiButton, UiTabs } from '../components/ui';

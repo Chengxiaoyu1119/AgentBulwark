@@ -1,8 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Flex, Space, Typography } from 'antd';
-import { Activity, Radio, RefreshCw, Search } from 'lucide-react';
-import { request, subscribeRuntimeEvents } from '../../app/apiRequest';
-import { LabelTag, PanelCard, UiAlert, UiButton, UiInput, UiSelect } from '../ui';
+import { UiFlex, UiSpace, UiTypography } from '../ui';
+import { RefreshCw, Search } from 'lucide-react';
+import { request } from '../../app/apiRequest';
+import { safeUiErrorSummary } from '../../app/apiRequestSupport';
+import { useRuntimeEventRefresh } from '../../app/useRuntimeEventRefresh';
+import {
+  PanelCard,
+  RuntimeConnectionBadge,
+  RuntimeConnectionNotice,
+  UiDataState,
+  UiButton,
+  UiInput,
+  UiSelect
+} from '../ui';
 import { GatewayTraceDetails } from './GatewayTraceDetails';
 import { GatewayTraceTable } from './GatewayTraceTable';
 import {
@@ -18,87 +28,86 @@ type Props = {
   onCreateRequest?: () => void;
   onOpenApproval?: (auditId: string) => void;
   mode?: 'traffic' | 'events';
+  pendingApprovalCount?: number | string;
 };
 
-export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, onOpenApproval, mode = 'traffic' }: Props) {
+export function GatewayTracePanel({
+  refreshSignal = '',
+  onCreateRequest,
+  onOpenApproval,
+  mode = 'traffic',
+  pendingApprovalCount = '—'
+}: Props) {
   const [index, setIndex] = useState<GatewayTraceIndex>({ traces: [], summary: {} });
   const [selected, setSelected] = useState<GatewayTrace | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [listError, setListError] = useState('');
+  const [detailError, setDetailError] = useState('');
   const [query, setQuery] = useState('');
   const [decisionFilter, setDecisionFilter] = useState(mode === 'events' ? '全部受控' : '全部');
   const [providerFilter, setProviderFilter] = useState('全部');
-  const [liveStatus, setLiveStatus] = useState<'connecting' | 'connected' | 'offline'>('connecting');
-  const [liveReady, setLiveReady] = useState(false);
-  const refreshTimerRef = useRef<number | undefined>(undefined);
+  const traceRequestSequence = useRef(0);
+  const detailRequestSequence = useRef(0);
 
   const loadTraces = useCallback(async () => {
+    const sequence = ++traceRequestSequence.current;
     setLoading(true);
-    setError('');
+    setListError('');
     try {
-      setIndex(
-        await request<GatewayTraceIndex>('/api/gateway/traces?limit=50', undefined, {
-          retry: 0,
-          timeoutMs: 8_000
-        })
-      );
-      setLiveReady(true);
+      const nextIndex = await request<GatewayTraceIndex>('/api/gateway/traces?limit=50', undefined, {
+        retry: 0,
+        timeoutMs: 8_000
+      });
+      if (sequence !== traceRequestSequence.current) return;
+      setIndex(nextIndex);
     } catch (requestError) {
-      setLiveReady(false);
-      setLiveStatus('offline');
-      setError(requestError instanceof Error ? requestError.message : '实时流量读取失败。');
+      if (sequence !== traceRequestSequence.current) return;
+      // A failed refresh invalidates the previous snapshot. Operators must not
+      // mistake stale traces for current runtime traffic.
+      setIndex({ traces: [], summary: {} });
+      detailRequestSequence.current += 1;
+      setSelected(null);
+      setDetailError('');
+      setListError(safeUiErrorSummary(requestError, '实时流量读取失败。'));
     } finally {
-      setLoading(false);
+      if (sequence === traceRequestSequence.current) setLoading(false);
     }
   }, []);
+
+  // Keep the event loop alive even when the first snapshot fails. The
+  // connection owner already stops permanently for auth/permission failures
+  // and backs off transient failures, so disabling it here would strand the
+  // page until an operator manually refreshes it.
+  const liveConnection = useRuntimeEventRefresh(loadTraces);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadTraces(), 0);
     return () => window.clearTimeout(timer);
   }, [loadTraces, refreshSignal]);
 
-  useEffect(() => {
-    if (!liveReady) return undefined;
-    let stopped = false;
-    let controller: AbortController | undefined;
-    const connect = async () => {
-      while (!stopped) {
-        controller = new AbortController();
-        setLiveStatus('connecting');
-        try {
-          setLiveStatus('connected');
-          await subscribeRuntimeEvents(() => {
-            if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
-            refreshTimerRef.current = window.setTimeout(() => void loadTraces(), 300);
-          }, controller.signal);
-        } catch {
-          if (!stopped) setLiveStatus('offline');
-        }
-        if (!stopped) await new Promise((resolve) => window.setTimeout(resolve, 1500));
-      }
-    };
-    void connect();
-    return () => {
-      stopped = true;
-      controller?.abort();
-      if (refreshTimerRef.current !== undefined) window.clearTimeout(refreshTimerRef.current);
-    };
-  }, [liveReady, loadTraces]);
-
   async function openTrace(trace: GatewayTrace) {
     const requestId = gatewayRequestId(trace);
     if (!requestId) return;
+    const sequence = ++detailRequestSequence.current;
     setSelected(trace);
+    setDetailError('');
     try {
-      setSelected(
-        await request<GatewayTrace>(`/api/gateway/traces/${encodeURIComponent(requestId)}`, undefined, {
-          retry: 0,
-          timeoutMs: 8_000
-        })
-      );
+      const detail = await request<GatewayTrace>(`/api/gateway/traces/${encodeURIComponent(requestId)}`, undefined, {
+        retry: 0,
+        timeoutMs: 8_000
+      });
+      if (sequence === detailRequestSequence.current) setSelected(detail);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : '请求详情读取失败。');
+      if (sequence === detailRequestSequence.current) {
+        setDetailError(safeUiErrorSummary(requestError, '请求详情读取失败。'));
+      }
     }
+  }
+
+  function closeTrace() {
+    detailRequestSequence.current += 1;
+    setSelected(null);
+    setDetailError('');
   }
 
   const traces = useMemo(() => (Array.isArray(index.traces) ? index.traces : []), [index.traces]);
@@ -130,9 +139,9 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, onOpenA
   }, [decisionFilter, mode, providerFilter, query, traces]);
 
   const summary = index.summary ?? {};
-  const reviewCount = traces.filter((trace) => traceLabel(trace.decision) === '询问').length;
-  const isolatedCount = traces.filter((trace) => traceLabel(trace.decision) === '隔离').length;
-  const rejectedCount = traces.filter((trace) => traceLabel(trace.decision) === '拒绝').length;
+  const decisionDistribution = summary.decision_distribution ?? {};
+  const isolatedCount = decisionDistribution['隔离'] ?? 0;
+  const rejectedCount = decisionDistribution['拒绝'] ?? 0;
 
   return (
     <>
@@ -141,27 +150,29 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, onOpenA
         subtitle={
           mode === 'events'
             ? '点击一条事件，查看输入、模型、工具与执行的完整处置链'
-            : '运营数据库实时流量；实验样本和历史报告不会进入这里'
+            : '这里展示运营数据库的实时流量；实验样本与历史报告在对应页面查看'
         }
         className="zh-traffic-panel"
         extra={
-          <Space>
-            <LabelTag color={liveStatus === 'connected' ? 'green' : liveStatus === 'connecting' ? 'blue' : 'red'}>
-              <Radio size={12} aria-hidden="true" />{' '}
-              {liveStatus === 'connected' ? '实时连接' : liveStatus === 'connecting' ? '连接中' : '连接中断'}
-            </LabelTag>
+          <UiSpace>
+            <RuntimeConnectionBadge connection={liveConnection} />
             <UiButton size="small" icon={<RefreshCw size={14} />} loading={loading} onClick={() => void loadTraces()}>
               刷新
             </UiButton>
-          </Space>
+          </UiSpace>
         }
       >
+        <RuntimeConnectionNotice connection={liveConnection} />
         <div className="zh-traffic-metrics">
           {mode === 'events' ? (
             <>
               <TrafficMetric label="受控事件" value={summary.controlled_count ?? 0} tone="danger" />
               <TrafficMetric label="已阻断" value={rejectedCount} />
-              <TrafficMetric label="待处理" value={reviewCount} tone={reviewCount ? 'warning' : 'default'} />
+              <TrafficMetric
+                label="待处理"
+                value={pendingApprovalCount}
+                tone={Number(pendingApprovalCount) > 0 ? 'warning' : 'default'}
+              />
               <TrafficMetric label="已隔离" value={isolatedCount} />
             </>
           ) : (
@@ -174,7 +185,7 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, onOpenA
           )}
         </div>
 
-        <Flex gap={10} wrap="wrap" className="zh-traffic-filters">
+        <UiFlex gap={10} wrap="wrap" className="zh-traffic-filters">
           <UiInput
             prefix={<Search size={15} aria-hidden="true" />}
             value={query}
@@ -200,34 +211,46 @@ export function GatewayTracePanel({ refreshSignal = '', onCreateRequest, onOpenA
             className="zh-traffic-filter"
             aria-label="按 Provider 筛选"
           />
-          <Typography.Text type="secondary" className="zh-traffic-filter-count">
+          <UiTypography.Text type="secondary" className="zh-traffic-filter-count">
             当前显示 {filteredTraces.length} / {index.total_available ?? traces.length}
-          </Typography.Text>
-        </Flex>
+          </UiTypography.Text>
+        </UiFlex>
 
-        {error ? <UiAlert type="warning" showIcon title={error} className="zh-mb-12" /> : null}
-        {!traces.length && !loading ? (
-          <div className="zh-traffic-empty">
-            <Activity size={28} aria-hidden="true" />
-            <Typography.Title level={4} className="zh-title-flush">
-              {mode === 'events' ? '当前没有安全事件' : '等待第一条请求'}
-            </Typography.Title>
-            <Typography.Text type="secondary">
-              {mode === 'events'
-                ? '被阻断、隔离或需要处理的真实请求会自动出现在这里。'
-                : '接入应用后，请求与处置结果会实时出现在这里。'}
-            </Typography.Text>
-            {onCreateRequest ? (
-              <UiButton type="primary" onClick={onCreateRequest}>
-                发送验证请求
+        {listError ? (
+          <UiDataState
+            status="error"
+            title="实时流量读取失败"
+            description={listError}
+            action={
+              <UiButton size="small" onClick={() => void loadTraces()} loading={loading}>
+                重试读取
               </UiButton>
-            ) : null}
-          </div>
+            }
+          />
+        ) : loading && !traces.length ? (
+          <UiDataState status="loading" title="正在读取实时请求…" />
+        ) : !traces.length ? (
+          <UiDataState
+            status="empty"
+            title={mode === 'events' ? '安全事件将在首次受控请求后显示' : '等待第一条请求'}
+            description={
+              mode === 'events'
+                ? '被阻断、隔离或需要处理的真实请求会自动出现在这里。'
+                : '接入应用后，请求与处置结果会实时出现在这里。'
+            }
+            action={
+              onCreateRequest ? (
+                <UiButton type="primary" onClick={onCreateRequest}>
+                  发送验证请求
+                </UiButton>
+              ) : undefined
+            }
+          />
         ) : (
           <GatewayTraceTable traces={filteredTraces} onOpen={(trace) => void openTrace(trace)} />
         )}
       </PanelCard>
-      <GatewayTraceDetails trace={selected} onClose={() => setSelected(null)} onOpenApproval={onOpenApproval} />
+      <GatewayTraceDetails trace={selected} error={detailError} onClose={closeTrace} onOpenApproval={onOpenApproval} />
     </>
   );
 }
@@ -243,7 +266,7 @@ function TrafficMetric({
 }) {
   return (
     <div className={`zh-traffic-metric zh-traffic-metric--${tone}`}>
-      <Typography.Text type="secondary">{label}</Typography.Text>
+      <UiTypography.Text type="secondary">{label}</UiTypography.Text>
       <strong>{value}</strong>
     </div>
   );

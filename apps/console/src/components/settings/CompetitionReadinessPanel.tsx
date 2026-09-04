@@ -2,8 +2,9 @@ import { Col, Row, Space, Typography } from 'antd';
 import { ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { openAuthenticatedResource } from '../../app/apiRequest';
+import { safeUiErrorSummary } from '../../app/apiRequestSupport';
 import type { CompetitionReadiness, CompetitionReadinessWriteResult } from '@/types';
-import { LabelTag, PanelCard, UiAlert, UiButton } from '../ui';
+import { LabelTag, PanelCard, UiAlert, UiButton, UiFieldLabel } from '../ui';
 import { getMissingBindings } from './competitionReadinessUtils';
 import { ReadinessClaimStatus } from './ReadinessClaimStatus';
 
@@ -38,7 +39,7 @@ export function CompetitionReadinessPanel({
     try {
       await openAuthenticatedResource(path);
     } catch (error) {
-      setArtifactError(error instanceof Error ? error.message : '报告打开失败。');
+      setArtifactError(safeUiErrorSummary(error, '报告打开失败。'));
     }
   }
   return (
@@ -72,43 +73,31 @@ export function CompetitionReadinessPanel({
         <>
           <Row gutter={[16, 16]} className="zh-settings-readiness-summary">
             <Col xs={12} md={6}>
-              <Typography.Text type="secondary" className="zh-meta-block">
-                就绪分
-              </Typography.Text>
+              <UiFieldLabel>就绪分</UiFieldLabel>
               <Typography.Title level={2} className="zh-settings-readiness-score">
                 {competitionReadiness.readiness_score}%
               </Typography.Title>
             </Col>
             <Col xs={12} md={6}>
-              <Typography.Text type="secondary" className="zh-meta-block">
-                {competitionReadiness.status_label}
-              </Typography.Text>
+              <UiFieldLabel>{competitionReadiness.status_label}</UiFieldLabel>
               <Typography.Text strong>{competitionReadiness.verdict}</Typography.Text>
             </Col>
             <Col xs={24} md={12}>
               <Space size="large" wrap className="zh-settings-readiness-counts">
                 <div>
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    总项
-                  </Typography.Text>
+                  <UiFieldLabel>总项</UiFieldLabel>
                   <Typography.Text strong>{competitionReadiness.summary.check_count}</Typography.Text>
                 </div>
                 <div>
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    通过
-                  </Typography.Text>
+                  <UiFieldLabel>通过</UiFieldLabel>
                   <Typography.Text strong>{competitionReadiness.summary.passed_count}</Typography.Text>
                 </div>
                 <div>
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    需补强
-                  </Typography.Text>
+                  <UiFieldLabel>需补强</UiFieldLabel>
                   <Typography.Text strong>{competitionReadiness.summary.warning_count}</Typography.Text>
                 </div>
                 <div>
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    阻塞
-                  </Typography.Text>
+                  <UiFieldLabel>阻塞</UiFieldLabel>
                   <Typography.Text strong>{competitionReadiness.summary.blocker_count}</Typography.Text>
                 </div>
               </Space>

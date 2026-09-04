@@ -1,6 +1,7 @@
-import { Col, Flex, Row, Space, Typography } from 'antd';
+import { useState } from 'react';
+import { UiCol, UiFlex, UiRow, UiSpace, UiTypography } from '../ui';
 import type { PolicySettings } from '@/types';
-import { PanelCard, UiAlert, UiButton, UiInput, UiSelect } from '../ui';
+import { PanelCard, UiAlert, UiButton, UiConfirmButton, UiFieldLabel, UiInput, UiSelect } from '../ui';
 
 type ContextScope = Record<string, string[]>;
 
@@ -33,7 +34,7 @@ export function AgentContextAllowlistEditor({ policySettings, canEdit, onPatch }
 
   function renameAgent(currentId: string, nextValue: string) {
     const nextId = nextValue.trim();
-    if (!nextId || nextId === currentId) return;
+    if (!nextId || nextId === currentId || nextId in allowlists) return;
     const nextAllowlists = { ...allowlists, [nextId]: allowlists[currentId] ?? { ...EMPTY_SCOPE } };
     delete nextAllowlists[currentId];
     onPatch({ agent_context_allowlists: nextAllowlists });
@@ -66,34 +67,33 @@ export function AgentContextAllowlistEditor({ policySettings, canEdit, onPatch }
 
   return (
     <>
-      <Flex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16 zh-mb-16">
+      <UiFlex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16 zh-mb-16">
         <div>
-          <Typography.Text strong>Agent MCP 上下文白名单</Typography.Text>
-          <Typography.Text type="secondary" className="zh-meta-block">
+          <UiTypography.Text strong>Agent MCP 上下文白名单</UiTypography.Text>
+          <UiFieldLabel>
             resources/prompts 是模型可见上下文；生产 Agent 只能读取登记的 URI、模板或 prompt 名称，支持 * 通配。
-          </Typography.Text>
+          </UiFieldLabel>
         </div>
         <UiButton disabled={!canEdit} onClick={addAgent}>
           新增 Agent
         </UiButton>
-      </Flex>
-      <Space orientation="vertical" size="middle" className="zh-full-width">
+      </UiFlex>
+      <UiSpace orientation="vertical" size="middle" className="zh-full-width">
         {Object.entries(allowlists).map(([agentId, rawScope]) => {
           const scope = { ...EMPTY_SCOPE, ...rawScope };
           return (
             <PanelCard key={agentId} size="small" bodyPadding={12}>
-              <Row gutter={[12, 12]} align="middle">
-                <Col xs={24} md={6}>
-                  <Typography.Text type="secondary" className="zh-meta-block">
-                    Agent ID
-                  </Typography.Text>
-                  <UiInput
-                    defaultValue={agentId}
+              <UiRow gutter={[12, 12]} align="middle">
+                <UiCol xs={24} md={6}>
+                  <AgentIdField
+                    agentId={agentId}
+                    registeredAgentIds={Object.keys(allowlists)}
                     disabled={!canEdit}
-                    onBlur={(event) => renameAgent(agentId, event.target.value)}
+                    onRename={(nextId) => renameAgent(agentId, nextId)}
                   />
-                </Col>
+                </UiCol>
                 <ContextField
+                  id={`agent-context-resources-${encodeURIComponent(agentId)}`}
                   label="Resource URI"
                   value={scope.resources}
                   placeholder="例如 file://public/*"
@@ -101,6 +101,7 @@ export function AgentContextAllowlistEditor({ policySettings, canEdit, onPatch }
                   onChange={(value) => patchScope(agentId, 'resources', value)}
                 />
                 <ContextField
+                  id={`agent-context-resource-templates-${encodeURIComponent(agentId)}`}
                   label="Resource Template"
                   value={scope.resource_templates}
                   placeholder="例如 file://public/{name}"
@@ -108,18 +109,25 @@ export function AgentContextAllowlistEditor({ policySettings, canEdit, onPatch }
                   onChange={(value) => patchScope(agentId, 'resource_templates', value)}
                 />
                 <ContextField
+                  id={`agent-context-prompts-${encodeURIComponent(agentId)}`}
                   label="Prompt 名称"
                   value={scope.prompts}
                   placeholder="例如 safe-summary-*"
                   disabled={!canEdit}
                   onChange={(value) => patchScope(agentId, 'prompts', value)}
                 />
-                <Col xs={24} md={2}>
-                  <UiButton danger disabled={!canEdit} onClick={() => removeAgent(agentId)}>
+                <UiCol xs={24} md={2}>
+                  <UiConfirmButton
+                    danger
+                    disabled={!canEdit}
+                    confirmTitle={`删除 Agent ${agentId} 的 MCP 上下文白名单？`}
+                    confirmDescription="保存权限设置后，该 Agent 的 resources、templates 和 prompts 读取范围将被清空。"
+                    onConfirm={() => removeAgent(agentId)}
+                  >
                     删除
-                  </UiButton>
-                </Col>
-              </Row>
+                  </UiConfirmButton>
+                </UiCol>
+              </UiRow>
             </PanelCard>
           );
         })}
@@ -131,7 +139,7 @@ export function AgentContextAllowlistEditor({ policySettings, canEdit, onPatch }
           />
         ) : null}
         {missingRegisteredAgentIds.length ? (
-          <Flex align="center" justify="space-between" wrap="wrap" gap={12}>
+          <UiFlex align="center" justify="space-between" wrap="wrap" gap={12}>
             <UiAlert
               title={`已有 ${missingRegisteredAgentIds.length} 个 Agent 登记了其他权限，但还没有 MCP 上下文范围。`}
               description="先建立空范围，再为每个 Agent 填入明确的 Resource URI、模板或 Prompt 名称；空范围仍会拒绝所有上下文读取。"
@@ -141,20 +149,76 @@ export function AgentContextAllowlistEditor({ policySettings, canEdit, onPatch }
             <UiButton disabled={!canEdit} onClick={addRegisteredAgents}>
               为已登记 Agent 建立空范围
             </UiButton>
-          </Flex>
+          </UiFlex>
         ) : null}
-      </Space>
+      </UiSpace>
+    </>
+  );
+}
+
+function AgentIdField({
+  agentId,
+  registeredAgentIds,
+  disabled,
+  onRename
+}: {
+  agentId: string;
+  registeredAgentIds: string[];
+  disabled: boolean;
+  onRename: (nextId: string) => void;
+}) {
+  const [draft, setDraft] = useState(agentId);
+  const [error, setError] = useState('');
+
+  function commit() {
+    const nextId = draft.trim();
+    if (!nextId) {
+      setDraft(agentId);
+      setError('Agent ID 不能为空，原上下文白名单保持不变。');
+      return;
+    }
+    if (nextId !== agentId && registeredAgentIds.includes(nextId)) {
+      setDraft(agentId);
+      setError(`Agent ID ${nextId} 已存在，未覆盖原上下文白名单。`);
+      return;
+    }
+    setDraft(nextId);
+    setError('');
+    if (nextId !== agentId) onRename(nextId);
+  }
+
+  return (
+    <>
+      <UiFieldLabel>Agent ID</UiFieldLabel>
+      <UiInput
+        aria-label={`Agent ID：${agentId}`}
+        value={draft}
+        status={error ? 'error' : undefined}
+        disabled={disabled}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setError('');
+        }}
+        onBlur={commit}
+      />
+      {error ? (
+        <UiTypography.Text type="danger" role="alert" className="zh-inline-field-error">
+          {error}
+        </UiTypography.Text>
+      ) : null}
     </>
   );
 }
 
 function ContextField({
+  id,
   label,
   value,
   placeholder,
   disabled,
   onChange
 }: {
+  id: string;
   label: string;
   value: string[];
   placeholder: string;
@@ -162,11 +226,10 @@ function ContextField({
   onChange: (value: string[]) => void;
 }) {
   return (
-    <Col xs={24} md={5}>
-      <Typography.Text type="secondary" className="zh-meta-block">
-        {label}
-      </Typography.Text>
+    <UiCol xs={24} md={5}>
+      <UiFieldLabel htmlFor={id}>{label}</UiFieldLabel>
       <UiSelect
+        id={id}
         mode="tags"
         value={value}
         disabled={disabled}
@@ -174,6 +237,6 @@ function ContextField({
         className="zh-full-width"
         placeholder={placeholder}
       />
-    </Col>
+    </UiCol>
   );
 }

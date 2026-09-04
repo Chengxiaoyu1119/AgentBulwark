@@ -10,6 +10,9 @@ export interface ModelStatus {
   endpoint?: string;
 }
 
+export type ModelProfileId = 'global' | 'optimizer' | 'target';
+export type ModelStatusByProfile = Partial<Record<ModelProfileId, ModelStatus[]>>;
+
 export interface ModelProviderOption {
   id: string;
   label: string;
@@ -37,6 +40,30 @@ export interface ModelRuntimeConfigUpdate {
       model_overrides?: Record<string, string>;
     }
   >;
+}
+
+export interface ModelProviderProbeRequest {
+  profile: string;
+  provider_id: string;
+}
+
+export interface ModelProviderProbeResult {
+  schema_version?: string;
+  profile: string;
+  provider_id: string;
+  provider?: string;
+  status: 'healthy' | 'unconfigured' | 'unhealthy' | string;
+  configured?: boolean;
+  model?: string;
+  endpoint_scope?: string;
+  checked_at?: string;
+  latency_ms?: number | null;
+  http_status?: number | null;
+  request_hash?: string;
+  response_hash?: string;
+  network_observation?: Record<string, unknown>;
+  error_code?: string;
+  error?: string;
 }
 
 export interface Policy {
@@ -105,6 +132,8 @@ export interface AuthContext {
     can_execute_runtime: boolean;
     can_generate?: boolean;
     can_execute_managed_tools?: boolean;
+    can_use_mcp?: boolean;
+    can_execute_mcp_tools?: boolean;
     can_view: boolean;
   };
 }

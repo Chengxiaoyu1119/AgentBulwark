@@ -82,7 +82,6 @@ export function PolicyCenter({
         description: String(policyDraft.description ?? policy.description),
         decision: policyDraft.decision ?? policy.decision,
         layer: String(policyDraft.layer ?? policy.layer ?? ''),
-        operator: 'security-admin',
         comment: '通过策略中心编辑策略详情'
       });
       setPolicies(policies.map((item) => (item.id === policy.id ? savedPolicy : item)));

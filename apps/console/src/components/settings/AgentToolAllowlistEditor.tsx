@@ -1,6 +1,7 @@
-import { Col, Flex, Row, Space, Typography } from 'antd';
+import { useState } from 'react';
+import { UiCol, UiFlex, UiRow, UiSpace, UiTypography } from '../ui';
 import type { PolicySettings } from '@/types';
-import { PanelCard, UiAlert, UiButton, UiInput, UiSelect } from '../ui';
+import { PanelCard, UiAlert, UiButton, UiConfirmButton, UiFieldLabel, UiInput, UiSelect } from '../ui';
 
 const supportedToolOptions = [
   'file.read',
@@ -29,7 +30,7 @@ export function AgentToolAllowlistEditor({ policySettings, canEdit, onPatch }: A
 
   function renameAgent(currentId: string, nextValue: string) {
     const nextId = nextValue.trim();
-    if (!nextId || nextId === currentId) return;
+    if (!nextId || nextId === currentId || nextId in allowlists) return;
     const nextAllowlists = { ...allowlists };
     const tools = nextAllowlists[currentId] ?? [];
     delete nextAllowlists[currentId];
@@ -55,36 +56,31 @@ export function AgentToolAllowlistEditor({ policySettings, canEdit, onPatch }: A
 
   return (
     <>
-      <Flex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16 zh-mb-16">
+      <UiFlex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16 zh-mb-16">
         <div>
-          <Typography.Text strong>Agent 工具最小权限</Typography.Text>
-          <Typography.Text type="secondary" className="zh-meta-block">
-            每个 Agent 只获得完成职责所需的工具；使用 * 可设置未单独登记 Agent 的默认规则。
-          </Typography.Text>
+          <UiTypography.Text strong>Agent 工具最小权限</UiTypography.Text>
+          <UiFieldLabel>每个 Agent 只获得完成职责所需的工具；使用 * 可设置未单独登记 Agent 的默认规则。</UiFieldLabel>
         </div>
         <UiButton disabled={!canEdit} onClick={addAgent}>
           新增 Agent
         </UiButton>
-      </Flex>
-      <Space orientation="vertical" size="middle" className="zh-full-width">
+      </UiFlex>
+      <UiSpace orientation="vertical" size="middle" className="zh-full-width">
         {Object.entries(allowlists).map(([agentId, tools]) => (
           <PanelCard key={agentId} size="small" bodyPadding={12}>
-            <Row gutter={[12, 12]} align="middle">
-              <Col xs={24} md={7}>
-                <Typography.Text type="secondary" className="zh-meta-block">
-                  Agent ID
-                </Typography.Text>
-                <UiInput
-                  defaultValue={agentId}
+            <UiRow gutter={[12, 12]} align="middle">
+              <UiCol xs={24} md={7}>
+                <AgentIdField
+                  agentId={agentId}
+                  registeredAgentIds={Object.keys(allowlists)}
                   disabled={!canEdit}
-                  onBlur={(event) => renameAgent(agentId, event.target.value)}
+                  onRename={(nextId) => renameAgent(agentId, nextId)}
                 />
-              </Col>
-              <Col xs={24} md={14}>
-                <Typography.Text type="secondary" className="zh-meta-block">
-                  允许调用的工具
-                </Typography.Text>
+              </UiCol>
+              <UiCol xs={24} md={14}>
+                <UiFieldLabel htmlFor={`agent-tools-${encodeURIComponent(agentId)}`}>允许调用的工具</UiFieldLabel>
                 <UiSelect
+                  id={`agent-tools-${encodeURIComponent(agentId)}`}
                   mode="multiple"
                   options={supportedToolOptions}
                   value={tools}
@@ -93,13 +89,19 @@ export function AgentToolAllowlistEditor({ policySettings, canEdit, onPatch }: A
                   className="zh-full-width"
                   placeholder="选择最小工具集合"
                 />
-              </Col>
-              <Col xs={24} md={3}>
-                <UiButton danger disabled={!canEdit} onClick={() => removeAgent(agentId)}>
+              </UiCol>
+              <UiCol xs={24} md={3}>
+                <UiConfirmButton
+                  danger
+                  disabled={!canEdit}
+                  confirmTitle={`删除 Agent ${agentId} 的工具白名单？`}
+                  confirmDescription="保存权限设置后，该 Agent 将失去当前登记的工具能力。"
+                  onConfirm={() => removeAgent(agentId)}
+                >
                   删除
-                </UiButton>
-              </Col>
-            </Row>
+                </UiConfirmButton>
+              </UiCol>
+            </UiRow>
           </PanelCard>
         ))}
         {!Object.keys(allowlists).length ? (
@@ -109,7 +111,61 @@ export function AgentToolAllowlistEditor({ policySettings, canEdit, onPatch }: A
             showIcon
           />
         ) : null}
-      </Space>
+      </UiSpace>
+    </>
+  );
+}
+
+function AgentIdField({
+  agentId,
+  registeredAgentIds,
+  disabled,
+  onRename
+}: {
+  agentId: string;
+  registeredAgentIds: string[];
+  disabled: boolean;
+  onRename: (nextId: string) => void;
+}) {
+  const [draft, setDraft] = useState(agentId);
+  const [error, setError] = useState('');
+
+  function commit() {
+    const nextId = draft.trim();
+    if (!nextId) {
+      setDraft(agentId);
+      setError('Agent ID 不能为空，原工具白名单保持不变。');
+      return;
+    }
+    if (nextId !== agentId && registeredAgentIds.includes(nextId)) {
+      setDraft(agentId);
+      setError(`Agent ID ${nextId} 已存在，未覆盖原工具白名单。`);
+      return;
+    }
+    setDraft(nextId);
+    setError('');
+    if (nextId !== agentId) onRename(nextId);
+  }
+
+  return (
+    <>
+      <UiFieldLabel>Agent ID</UiFieldLabel>
+      <UiInput
+        aria-label={`Agent ID：${agentId}`}
+        value={draft}
+        status={error ? 'error' : undefined}
+        disabled={disabled}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          setError('');
+        }}
+        onBlur={commit}
+      />
+      {error ? (
+        <UiTypography.Text type="danger" role="alert" className="zh-inline-field-error">
+          {error}
+        </UiTypography.Text>
+      ) : null}
     </>
   );
 }

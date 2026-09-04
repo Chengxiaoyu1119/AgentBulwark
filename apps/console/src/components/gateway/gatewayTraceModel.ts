@@ -51,6 +51,8 @@ export type GatewayTraceSummary = {
   tool_call_count?: number;
   receipt_count?: number;
   max_risk_score?: number;
+  decision_distribution?: Record<string, number>;
+  provider_distribution?: Record<string, number>;
 };
 
 export type GatewayTraceIndex = {

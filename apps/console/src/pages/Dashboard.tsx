@@ -1,4 +1,5 @@
 import type { Overview } from '../types';
+import '../design/视觉系统/experiments.css';
 import { DashboardOverviewTab } from '../components/dashboard';
 import type { PageKey } from '../app/navigation';
 

@@ -14,7 +14,7 @@
     "format:check": "prettier . --check --ignore-unknown --ignore-path ../../.prettierignore",
     "ui:audit": "node ../../scripts/frontend-governance-check.mjs",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "node e2e/run-e2e.mjs",
     "test:watch": "vitest",
     "verify": "npm run lint:strict && npm run format:check && npm run ui:audit && npm run test && npm run build"
   },

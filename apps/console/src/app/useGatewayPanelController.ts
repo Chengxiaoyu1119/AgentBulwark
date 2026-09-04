@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { request } from './apiRequest';
+import { safeUiErrorSummary } from './apiRequestSupport';
 import { executeGatewayToolCall } from './gatewayApi';
 import { DEFAULT_REQUEST, pretty, type GatewayResponse } from './gatewayPanelPresets';
+import { streamOpenAIChatCompletion, type OpenAIStreamProgress } from './openaiChatStream';
+import { isAbortError } from './requestAbort';
 import type { GatewayToolExecutionResult } from '../types';
-import { type GatewayComparisonResult } from '../components/settings/GatewayComparisonPanel';
-import { type RuntimeStatus } from '../components/settings/GatewayRuntimeStatus';
+import { type RuntimeStatus } from '../components/gateway/GatewayRuntimeStatus';
 const CONTROLLED_DECISIONS = new Set(['拒绝', '询问', '隔离']);
 function defaultGatewayModel(runtimeStatus: RuntimeStatus | null): string {
   return (
@@ -23,27 +25,23 @@ export function useGatewayPanelController() {
   const [executionError, setExecutionError] = useState('');
   const [followupResult, setFollowupResult] = useState<GatewayResponse | null>(null);
   const [followingUp, setFollowingUp] = useState(false);
-  const [comparisonResult, setComparisonResult] = useState<GatewayComparisonResult | null>(null);
-  const [comparisonError, setComparisonError] = useState('');
-  const [comparing, setComparing] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [runtimeStatusError, setRuntimeStatusError] = useState('');
   const [sessionId, setSessionId] = useState('gateway-console-session');
   const [managedMode, setManagedMode] = useState(false);
+  const [streamProgress, setStreamProgress] = useState<OpenAIStreamProgress | null>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     void request<RuntimeStatus>('/api/runtime_status', undefined, { retry: 0, timeoutMs: 5000 })
       .then(setRuntimeStatus)
-      .catch((requestError) =>
-        setRuntimeStatusError(requestError instanceof Error ? requestError.message : '运行状态读取失败。')
-      );
+      .catch((requestError) => setRuntimeStatusError(safeUiErrorSummary(requestError, '运行状态读取失败。')));
   }, []);
+
+  useEffect(() => () => streamAbortRef.current?.abort(), []);
 
   const metadata = result?.agent_supervisor ?? {};
   const canExecuteManagedTools = runtimeStatus?.security_context?.can_execute_managed_tools;
-  const callerRole = runtimeStatus?.security_context?.role;
-  const canCompare = callerRole ? callerRole === 'analyst' || callerRole === 'admin' : undefined;
-  const canCausalCompare = callerRole ? callerRole === 'admin' : undefined;
   const decision = metadata.decision === undefined || metadata.decision === null ? '—' : String(metadata.decision);
   const blocked = CONTROLLED_DECISIONS.has(decision);
   const toolDecisions = Array.isArray(metadata.tool_decisions) ? metadata.tool_decisions : [];
@@ -66,8 +64,7 @@ export function useGatewayPanelController() {
     setExecutionResult(null);
     setExecutionError('');
     setFollowupResult(null);
-    setComparisonResult(null);
-    setComparisonError('');
+    setStreamProgress(null);
     let parsed: Record<string, unknown>;
     try {
       parsed = JSON.parse(payload) as Record<string, unknown>;
@@ -79,8 +76,9 @@ export function useGatewayPanelController() {
       setError('请求必须是 JSON 对象。');
       return;
     }
-    if (parsed.stream === true) {
-      setError('网关工作台先用非流式模式展示完整证据；请把 stream 设为 false 或删除该字段。');
+    const streamRequested = parsed.stream === true;
+    if (streamRequested && managedMode) {
+      setError('真实流式安全链当前使用透明模式；请关闭“服务端托管工具执行”后重试。');
       return;
     }
     if (managedMode && canExecuteManagedTools === false) {
@@ -104,75 +102,53 @@ export function useGatewayPanelController() {
     if (managedMode && supervisorOptions.max_tool_rounds === undefined) supervisorOptions.max_tool_rounds = 3;
     parsed.agent_supervisor = supervisorOptions;
     setLoading(true);
+    if (streamRequested) {
+      setStreamProgress({ status: 'streaming', chunkCount: 0, content: '', characterCount: 0, metadata: {} });
+    }
     try {
-      const data = await request<GatewayResponse>(
-        '/v1/chat/completions',
-        {
-          method: 'POST',
-          headers: sessionId.trim() ? { 'X-Agent-Session-ID': sessionId.trim() } : undefined,
-          body: JSON.stringify({ ...parsed, stream: false })
-        },
-        { retry: 0, timeoutMs: 90_000 }
-      );
+      let data: GatewayResponse;
+      if (streamRequested) {
+        const controller = new AbortController();
+        streamAbortRef.current = controller;
+        const timeoutId = window.setTimeout(() => controller.abort(), 90_000);
+        try {
+          data = await streamOpenAIChatCompletion(parsed, {
+            sessionId,
+            signal: controller.signal,
+            onProgress: setStreamProgress
+          });
+        } finally {
+          window.clearTimeout(timeoutId);
+          if (streamAbortRef.current === controller) streamAbortRef.current = null;
+        }
+      } else {
+        data = await request<GatewayResponse>(
+          '/v1/chat/completions',
+          {
+            method: 'POST',
+            headers: sessionId.trim() ? { 'X-Agent-Session-ID': sessionId.trim() } : undefined,
+            body: JSON.stringify({ ...parsed, stream: false })
+          },
+          { retry: 0, timeoutMs: 90_000 }
+        );
+      }
       setResult(data);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : '网关请求失败。');
+      if (streamRequested) {
+        setStreamProgress((current) => (current ? { ...current, status: 'interrupted' } : current));
+      }
+      setError(
+        isAbortError(requestError)
+          ? '流式请求已取消；服务端会记录中断边界，不会把未完成内容标记为成功。'
+          : safeUiErrorSummary(requestError, '网关请求失败。')
+      );
     } finally {
       setLoading(false);
     }
   }
-  async function runComparison(executionMode: 'observation' | 'sandbox-causal' = 'observation') {
-    setComparisonError('');
-    setComparisonResult(null);
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = JSON.parse(payload) as Record<string, unknown>;
-    } catch {
-      setComparisonError('请求 JSON 格式不正确，请先修正编辑器内容。');
-      return;
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      setComparisonError('请求必须是 JSON 对象。');
-      return;
-    }
-    if (parsed.stream === true) {
-      setComparisonError('同请求对照只接受非流式请求。');
-      return;
-    }
-    const requestedModel = typeof parsed.model === 'string' ? parsed.model.trim() : '';
-    if (!requestedModel) {
-      const configuredModel = defaultGatewayModel(runtimeStatus);
-      if (configuredModel) parsed.model = configuredModel;
-      else {
-        setComparisonError('请求体缺少 model，且运行状态没有可用的真实 Provider 模型。');
-        return;
-      }
-    }
-    setComparing(true);
-    try {
-      const supervisorOptions =
-        parsed.agent_supervisor &&
-        typeof parsed.agent_supervisor === 'object' &&
-        !Array.isArray(parsed.agent_supervisor)
-          ? { ...(parsed.agent_supervisor as Record<string, unknown>) }
-          : {};
-      supervisorOptions.comparison_mode = executionMode;
-      parsed.agent_supervisor = supervisorOptions;
-      const data = await request<GatewayComparisonResult>(
-        '/api/gateway/compare',
-        {
-          method: 'POST',
-          headers: sessionId.trim() ? { 'X-Agent-Session-ID': sessionId.trim() } : undefined,
-          body: JSON.stringify({ ...parsed, stream: false })
-        },
-        { retry: 0, timeoutMs: 120_000 }
-      );
-      setComparisonResult(data);
-    } catch (requestError) {
-      setComparisonError(requestError instanceof Error ? requestError.message : '同请求对照失败。');
-    } finally {
-      setComparing(false);
-    }
+
+  function cancelStream() {
+    streamAbortRef.current?.abort();
   }
   async function executeToolCall() {
     if (!executableToolDecision) return;
@@ -192,7 +168,7 @@ export function useGatewayPanelController() {
       });
       setExecutionResult(data);
     } catch (requestError) {
-      setExecutionError(requestError instanceof Error ? requestError.message : '服务端工具执行失败。');
+      setExecutionError(safeUiErrorSummary(requestError, '服务端工具执行失败。'));
     } finally {
       setExecutingTool(false);
     }
@@ -253,7 +229,7 @@ export function useGatewayPanelController() {
       );
       setFollowupResult(data);
     } catch (requestError) {
-      setExecutionError(requestError instanceof Error ? requestError.message : '工具结果回灌失败。');
+      setExecutionError(safeUiErrorSummary(requestError, '工具结果回灌失败。'));
     } finally {
       setFollowingUp(false);
     }
@@ -270,19 +246,15 @@ export function useGatewayPanelController() {
     executionError,
     followupResult,
     followingUp,
-    comparisonResult,
-    comparisonError,
-    comparing,
     runtimeStatus,
     runtimeStatusError,
     sessionId,
     setSessionId,
     managedMode,
     setManagedMode,
+    streamProgress,
     metadata,
     canExecuteManagedTools,
-    canCompare,
-    canCausalCompare,
     decision,
     blocked,
     toolDecisions,
@@ -292,7 +264,7 @@ export function useGatewayPanelController() {
     executableToolDecision,
     responsePreview,
     sendRequest,
-    runComparison,
+    cancelStream,
     executeToolCall,
     followupToolResult
   };

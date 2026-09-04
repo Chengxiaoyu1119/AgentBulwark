@@ -1,53 +1,12 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import net from 'node:net';
 import { fileURLToPath, URL } from 'node:url';
-import type { Plugin, ViteDevServer } from 'vite';
 
 const backendHost = process.env.AGENT_SUPERVISOR_API_HOST || '127.0.0.1';
 const backendPort = Number(process.env.AGENT_SUPERVISOR_API_PORT || '8012');
 
-function isBackendOnline(timeoutMs = 250) {
-  return new Promise<boolean>((resolve) => {
-    const socket = net.createConnection({ host: backendHost, port: backendPort });
-    let settled = false;
-    const finish = (online: boolean) => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve(online);
-    };
-
-    socket.setTimeout(timeoutMs);
-    socket.once('connect', () => finish(true));
-    socket.once('timeout', () => finish(false));
-    socket.once('error', () => finish(false));
-  });
-}
-
-function backendHealthFallbackPlugin(): Plugin {
-  return {
-    name: 'agent-supervisor-api-health-fallback',
-    configureServer(server: ViteDevServer) {
-      server.middlewares.use('/api/health', async (request, response, next) => {
-        if (request.method !== 'GET' && request.method !== 'HEAD') {
-          next();
-          return;
-        }
-        if (await isBackendOnline()) {
-          next();
-          return;
-        }
-        response.statusCode = 200;
-        response.setHeader('Content-Type', 'application/json; charset=utf-8');
-        response.end(JSON.stringify({ ok: false, service: 'agent-security-supervisor', offline: true }));
-      });
-    }
-  };
-}
-
 export default defineConfig({
-  plugins: [backendHealthFallbackPlugin(), react()],
+  plugins: [react()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))
@@ -59,13 +18,17 @@ export default defineConfig({
     css: true,
     exclude: ['e2e/**', '**/node_modules/**', '**/dist/**'],
     // Ant Design's jsdom-heavy gateway and evidence views routinely need
-    // several seconds to mount when the full suite is loaded together.  The
-    // previous five-second default made the same tests pass in isolation but
-    // fail under the normal repository verification command.  Keep the
-    // timeout bounded while making the result independent of file scheduling.
-    testTimeout: 15_000,
-    hookTimeout: 15_000,
-    fileParallelism: false
+    // several seconds to mount when the full suite is loaded together. Keep
+    // the timeout bounded, but leave enough headroom for a cold Windows
+    // checkout instead of making file scheduling change the result.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
+    // Each file has its own jsdom/module sandbox. Running independent files
+    // concurrently prevents a serial worker from carrying expensive timers
+    // and DOM work into the next file, which previously caused false timeout
+    // failures in the full suite while the same tests passed in isolation.
+    fileParallelism: true,
+    maxWorkers: 4
   },
   build: {
     rollupOptions: {

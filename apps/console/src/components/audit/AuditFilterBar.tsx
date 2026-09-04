@@ -1,4 +1,4 @@
-import { Flex } from 'antd';
+import { UiFlex } from '../ui';
 import { riskLabel } from '@/utils';
 import { UiButton, UiInput, UiSelect } from '../ui';
 
@@ -40,8 +40,8 @@ export function AuditFilterBar({
   onCopyFiltered
 }: AuditFilterBarProps) {
   return (
-    <Flex gap={16} wrap="wrap" className="zh-mb-16" justify="space-between">
-      <Flex gap={16} wrap="wrap" className="zh-flex-spacer">
+    <UiFlex gap={16} wrap="wrap" className="zh-mb-16" justify="space-between">
+      <UiFlex gap={16} wrap="wrap" className="zh-flex-spacer">
         <UiInput
           placeholder="搜索审计编号、工具、策略、原因..."
           value={query}
@@ -90,16 +90,16 @@ export function AuditFilterBar({
           value={executionFilter}
           onChange={onExecutionFilterChange}
           className="zh-filter-control--sm"
-          options={['全部', '已执行', '未执行', '回执已确认', '等待回执', '执行失败'].map((value) => ({
+          options={['全部', '待核查', '已执行', '未执行', '回执已确认', '等待回执', '执行失败'].map((value) => ({
             label: value === '全部' ? '全部执行状态' : value,
             value
           }))}
         />
-      </Flex>
-      <Flex gap={16} wrap="wrap">
+      </UiFlex>
+      <UiFlex gap={16} wrap="wrap">
         <UiButton onClick={onReset}>重置</UiButton>
         <UiButton onClick={onCopyFiltered}>{copiedFiltered ? '已复制' : '复制当前筛选'}</UiButton>
-      </Flex>
-    </Flex>
+      </UiFlex>
+    </UiFlex>
   );
 }

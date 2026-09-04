@@ -1,5 +1,5 @@
 import { Col, Collapse, Flex, Row, Space, Typography } from 'antd';
-import { LabelTag, PanelCard, UiButton } from '../ui';
+import { LabelTag, PanelCard, UiButton, UiFieldLabel } from '../ui';
 import { OpenClawPluginPanel } from './OpenClawPluginPanel';
 import type {
   AgentIntegrationBundle,
@@ -58,9 +58,7 @@ export function ExternalIntegrationTab({
           {integrationChecks.map((item) => (
             <Col xs={24} sm={12} lg={6} key={item.label}>
               <div className="zh-settings-status-card">
-                <Typography.Text type="secondary" className="zh-meta-block">
-                  {item.label}
-                </Typography.Text>
+                <UiFieldLabel>{item.label}</UiFieldLabel>
                 <Flex justify="space-between" align="center" gap={8}>
                   <Typography.Text strong>{item.value}</Typography.Text>
                   <LabelTag
@@ -84,9 +82,7 @@ export function ExternalIntegrationTab({
               <Typography.Text code className="zh-settings-code-wrap">
                 POST /api/runtime/execute
               </Typography.Text>
-              <Typography.Text type="secondary" className="zh-meta-block">
-                `/api/runtime/evaluate` 仅返回判定
-              </Typography.Text>
+              <UiFieldLabel>`/api/runtime/evaluate` 仅返回判定</UiFieldLabel>
             </PanelCard>
           </Col>
           <Col xs={24} sm={12} lg={6}>
@@ -97,9 +93,7 @@ export function ExternalIntegrationTab({
               <Typography.Text code className="zh-settings-code-wrap">
                 POST /v1/chat/completions
               </Typography.Text>
-              <Typography.Text type="secondary" className="zh-meta-block">
-                透明转发 + tool call 阻断
-              </Typography.Text>
+              <UiFieldLabel>透明转发 + tool call 阻断</UiFieldLabel>
             </PanelCard>
           </Col>
           <Col xs={24} sm={12} lg={6}>
@@ -110,9 +104,7 @@ export function ExternalIntegrationTab({
               <Typography.Text code className="zh-settings-code-wrap">
                 POST /api/mcp
               </Typography.Text>
-              <Typography.Text type="secondary" className="zh-meta-block">
-                强制代理 + 工具定义投毒扫描
-              </Typography.Text>
+              <UiFieldLabel>强制代理 + 工具定义投毒扫描</UiFieldLabel>
             </PanelCard>
           </Col>
           <Col xs={24} sm={12} lg={6}>
@@ -159,9 +151,7 @@ export function ExternalIntegrationTab({
                     <Typography.Text strong className="zh-text-block">
                       {example.name}
                     </Typography.Text>
-                    <Typography.Text type="secondary" className="zh-meta-block">
-                      {example.framework}
-                    </Typography.Text>
+                    <UiFieldLabel>{example.framework}</UiFieldLabel>
                     <LabelTag variant="filled" color={example.status === 'ready' ? 'success' : 'blue'}>
                       {example.status}
                     </LabelTag>
@@ -217,9 +207,7 @@ export function ExternalIntegrationTab({
                       <Row gutter={[16, 16]} className="zh-mb-24">
                         <Col xs={12} md={6}>
                           <PanelCard size="small" variant="borderless">
-                            <Typography.Text type="secondary" className="zh-meta-block">
-                              接口数量
-                            </Typography.Text>
+                            <UiFieldLabel>接口数量</UiFieldLabel>
                             <Typography.Text strong className="zh-settings-stat-value">
                               {integrationBundle.endpoints.length}
                             </Typography.Text>
@@ -227,9 +215,7 @@ export function ExternalIntegrationTab({
                         </Col>
                         <Col xs={12} md={6}>
                           <PanelCard size="small" variant="borderless">
-                            <Typography.Text type="secondary" className="zh-meta-block">
-                              样例事件
-                            </Typography.Text>
+                            <UiFieldLabel>样例事件</UiFieldLabel>
                             <Typography.Text strong className="zh-settings-stat-value">
                               {integrationBundle.sample_events.length}
                             </Typography.Text>
@@ -237,9 +223,7 @@ export function ExternalIntegrationTab({
                         </Col>
                         <Col xs={12} md={6}>
                           <PanelCard size="small" variant="borderless">
-                            <Typography.Text type="secondary" className="zh-meta-block">
-                              最低控制
-                            </Typography.Text>
+                            <UiFieldLabel>最低控制</UiFieldLabel>
                             <Typography.Text strong className="zh-settings-stat-value">
                               {integrationBundle.validation.expected.controlled_min}
                             </Typography.Text>
@@ -247,9 +231,7 @@ export function ExternalIntegrationTab({
                         </Col>
                         <Col xs={12} md={6}>
                           <PanelCard size="small" variant="borderless">
-                            <Typography.Text type="secondary" className="zh-meta-block">
-                              安全默认
-                            </Typography.Text>
+                            <UiFieldLabel>安全默认</UiFieldLabel>
                             <Typography.Text strong className="zh-settings-stat-value">
                               {integrationBundle.event_contract.safe_default.includes('false') ? '只审计' : '需确认'}
                             </Typography.Text>

@@ -1,4 +1,4 @@
-import { Flex, Space, Typography } from 'antd';
+import { UiFlex, UiSpace, UiTypography } from '../ui';
 import { Play } from 'lucide-react';
 import { LabelTag, PanelCard, UiAlert, UiButton } from '../ui';
 import { AuditDeepLinkButton } from '../audit/AuditDeepLinkButton';
@@ -93,17 +93,17 @@ export function GatewayEvidencePanel({
         <UiAlert
           type="info"
           showIcon
-          title="尚未发送请求"
-          description="把真实 Agent 的 OpenAI 请求或自定义 Payload 粘贴到左侧发送；这里会显示是否到达 Provider、策略阶段、工具处置、执行边界和审计 Hash。"
+          title="等待第一条请求"
+          description="把真实 Agent 的 OpenAI 请求或自定义 Payload 粘贴到左侧发送；这里会显示 Provider 到达情况、策略阶段、工具处置、执行边界和审计 Hash。"
         />
       ) : (
-        <Space orientation="vertical" size={16} className="zh-full-width">
-          <Flex justify="space-between" align="center">
-            <Typography.Text strong>最终决策</Typography.Text>
+        <UiSpace orientation="vertical" size={16} className="zh-full-width">
+          <UiFlex justify="space-between" align="center">
+            <UiTypography.Text strong>最终决策</UiTypography.Text>
             <LabelTag variant="filled" color={blocked ? 'red' : 'green'}>
               {decision}
             </LabelTag>
-          </Flex>
+          </UiFlex>
           <div className="zh-meta-grid zh-meta-grid--2">
             {[
               ['阶段', metadata.request_stage],
@@ -127,6 +127,16 @@ export function GatewayEvidencePanel({
               ['Provider 请求哈希', metadata.provider_request_hash],
               ['Provider 响应哈希', metadata.provider_response_hash],
               ['Provider 响应 ID', metadata.provider_response_id],
+              [
+                '真实Provider流',
+                metadata.provider_streamed === true ? '是' : metadata.provider_streamed === false ? '否' : '—'
+              ],
+              ['流安全模式', metadata.stream_security_mode],
+              ['安全窗口字符', metadata.stream_safety_window_chars],
+              ['Provider流Chunk', metadata.provider_stream_chunk_count],
+              ['已增量放行字符', metadata.stream_released_char_count],
+              ['Tool Call延后放行', metadata.stream_tool_calls_buffered === true ? '是' : '否'],
+              ['流是否中断', metadata.stream_interrupted === true ? '是' : '否'],
               ['执行模式', metadata.execution_mode],
               ['托管状态', metadata.managed_status],
               ['托管轮次', metadata.managed_rounds],
@@ -150,24 +160,24 @@ export function GatewayEvidencePanel({
               ['原因', metadata.reason]
             ].map(([label, value]) => (
               <div key={String(label)} className="zh-meta-grid__item">
-                <Typography.Text type="secondary" className="zh-meta-grid__label">
+                <UiTypography.Text type="secondary" className="zh-meta-grid__label">
                   {String(label)}
-                </Typography.Text>
-                <Typography.Text className="zh-meta-grid__value">{text(value)}</Typography.Text>
+                </UiTypography.Text>
+                <UiTypography.Text className="zh-meta-grid__value">{text(value)}</UiTypography.Text>
               </div>
             ))}
           </div>
           {auditIds.length > 0 ? (
-            <Flex justify="space-between" align="center" gap={12} wrap="wrap">
-              <Typography.Text strong>审计精确定位</Typography.Text>
-              <Space wrap>
+            <UiFlex justify="space-between" align="center" gap={12} wrap="wrap">
+              <UiTypography.Text strong>审计精确定位</UiTypography.Text>
+              <UiSpace wrap>
                 {auditIds.map((auditId, index) => (
                   <AuditDeepLinkButton key={auditId} auditId={auditId}>
                     {auditIds.length === 1 ? '打开本次审计' : `打开审计 ${index + 1}`}
                   </AuditDeepLinkButton>
                 ))}
-              </Space>
-            </Flex>
+              </UiSpace>
+            </UiFlex>
           ) : null}
           {callerDeclaredReceiptUsed ? (
             <UiAlert
@@ -195,48 +205,48 @@ export function GatewayEvidencePanel({
               subtitle="仅执行已审计且决策为允许的 Provider tool call；隔离调用只保留证据"
               className="zh-mt-12"
             >
-              <Flex justify="space-between" align="center" gap={12} wrap="wrap">
-                <Typography.Text type="secondary">
+              <UiFlex justify="space-between" align="center" gap={12} wrap="wrap">
+                <UiTypography.Text type="secondary">
                   这是闭环中的实际执行步骤，默认进入智安哨本地沙箱，不接受浏览器重新提交的工具参数。
-                </Typography.Text>
+                </UiTypography.Text>
                 <UiButton type="primary" icon={<Play size={16} />} loading={executingTool} onClick={onExecuteTool}>
                   服务端沙箱执行
                 </UiButton>
-              </Flex>
+              </UiFlex>
               {executionError && <UiAlert type="error" showIcon title={executionError} className="zh-mt-12" />}
               {executionResult && (
-                <Space orientation="vertical" size={8} className="zh-full-width zh-mt-12">
-                  <Typography.Text strong>
+                <UiSpace orientation="vertical" size={8} className="zh-full-width zh-mt-12">
+                  <UiTypography.Text strong>
                     执行事实：{executionResult.execution_observed_by_server ? '服务端观察' : '调用方声明'}
-                  </Typography.Text>
-                  <Typography.Text type="secondary">
+                  </UiTypography.Text>
+                  <UiTypography.Text type="secondary">
                     回执：{text(executionResult.receipt?.receipt_hash)} · 结果哈希：
                     {text(executionResult.tool_result_hash)}
-                  </Typography.Text>
+                  </UiTypography.Text>
                   <pre className="zh-evidence-code-block">
                     {executionResult.tool_result || pretty(executionResult.execution_result)}
                   </pre>
-                  <Flex justify="space-between" align="center" gap={12} wrap="wrap">
-                    <Typography.Text type="secondary">
+                  <UiFlex justify="space-between" align="center" gap={12} wrap="wrap">
+                    <UiTypography.Text type="secondary">
                       回灌会携带已验证回执，重新经过工具结果扫描后才到达 Provider。
-                    </Typography.Text>
+                    </UiTypography.Text>
                     <UiButton loading={followingUp} onClick={onFollowupToolResult}>
                       回灌结果并继续对话
                     </UiButton>
-                  </Flex>
+                  </UiFlex>
                   {followupResult && (
                     <>
-                      <Typography.Text strong>回灌后的 Provider 响应</Typography.Text>
+                      <UiTypography.Text strong>回灌后的 Provider 响应</UiTypography.Text>
                       <pre className="zh-evidence-code-block">{pretty(followupResult.choices ?? followupResult)}</pre>
                     </>
                   )}
-                </Space>
+                </UiSpace>
               )}
             </PanelCard>
           )}
-          <Typography.Text strong>返回摘要</Typography.Text>
+          <UiTypography.Text strong>返回摘要</UiTypography.Text>
           <pre className="zh-evidence-code-block">{responsePreview}</pre>
-        </Space>
+        </UiSpace>
       )}
     </PanelCard>
   );
@@ -245,7 +255,7 @@ export function GatewayEvidencePanel({
 function EvidenceBlock({ title, value }: { title: string; value: unknown }) {
   return (
     <>
-      <Typography.Text strong>{title}</Typography.Text>
+      <UiTypography.Text strong>{title}</UiTypography.Text>
       <pre className="zh-evidence-code-block">{pretty(value)}</pre>
     </>
   );

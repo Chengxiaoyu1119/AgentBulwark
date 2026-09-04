@@ -30,6 +30,7 @@ import type {
   SupervisorEvaluation
 } from '@/types';
 import { externalBatchEventSample, externalEventSample } from '@/utils';
+import { safeUiErrorSummary } from '@/app/apiRequestSupport';
 
 export function useSettingsPanelController(refresh: () => Promise<unknown>) {
   const [eventJson, setEventJson] = useState(JSON.stringify(externalEventSample, null, 2));
@@ -93,7 +94,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setEvaluation(result);
       await refresh();
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : '事件 JSON 解析或监督接口调用失败');
+      setEvaluateError(safeUiErrorSummary(error, '事件 JSON 解析或监督接口调用失败'));
     } finally {
       setEvaluating(false);
     }
@@ -108,7 +109,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setBatchEvaluation(result);
       await refresh();
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : '批量事件 JSON 解析或监督接口调用失败');
+      setEvaluateError(safeUiErrorSummary(error, '批量事件 JSON 解析或监督接口调用失败'));
     } finally {
       setBatchEvaluating(false);
     }
@@ -121,7 +122,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setExternalAgentDemo(await runExternalAgentDemo());
       await refresh();
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : '外部 Agent 验证运行失败');
+      setEvaluateError(safeUiErrorSummary(error, '外部 Agent 验证运行失败'));
     } finally {
       setRunningExternalAgentDemo(false);
     }
@@ -138,7 +139,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setCompetitionReadiness(readinessResult.readiness);
       await refresh();
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : '闭环复现实验运行失败');
+      setEvaluateError(safeUiErrorSummary(error, '闭环复现实验运行失败'));
     } finally {
       setRunningDemoDrill(false);
     }
@@ -150,7 +151,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
     try {
       setOpenClawPluginPackage(await writeOpenClawPluginPackage());
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : 'OpenClaw 插件包生成失败');
+      setEvaluateError(safeUiErrorSummary(error, 'OpenClaw 插件包生成失败'));
     } finally {
       setWritingOpenClawPlugin(false);
     }
@@ -164,7 +165,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setOpenClawPluginValidation(result);
       setOpenClawPluginPackage(result.validation.package);
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : 'OpenClaw 插件包验收失败');
+      setEvaluateError(safeUiErrorSummary(error, 'OpenClaw 插件包验收失败'));
     } finally {
       setValidatingOpenClawPlugin(false);
     }
@@ -178,7 +179,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setCompetitionReadinessOutput(result);
       setCompetitionReadiness(result.readiness);
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : 'AI Agent 安全就绪检查运行失败');
+      setEvaluateError(safeUiErrorSummary(error, 'AI Agent 安全就绪检查运行失败'));
     } finally {
       setCheckingReadiness(false);
     }
@@ -198,7 +199,7 @@ export function useSettingsPanelController(refresh: () => Promise<unknown>) {
       setModelConfig(result);
       await refresh();
     } catch (error) {
-      setEvaluateError(error instanceof Error ? error.message : '模型运行配置保存失败');
+      setEvaluateError(safeUiErrorSummary(error, '模型运行配置保存失败'));
     } finally {
       setSavingModelConfig(false);
     }

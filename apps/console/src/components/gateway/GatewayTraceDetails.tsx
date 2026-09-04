@@ -1,6 +1,6 @@
-import { Drawer, Flex, Space, Typography } from 'antd';
+import { UiDrawer, UiFlex, UiSpace, UiTypography } from '../ui';
 import { Activity, CircleCheck, ShieldX, Wrench } from 'lucide-react';
-import { LabelTag, MetaGrid, UiButton } from '../ui';
+import { LabelTag, MetaGrid, UiAlert, UiButton, UiFieldLabel } from '../ui';
 import {
   CONTROLLED_DECISIONS,
   formatTraceTime,
@@ -13,10 +13,12 @@ import {
 
 export function GatewayTraceDetails({
   trace,
+  error = '',
   onClose,
   onOpenApproval
 }: {
   trace: GatewayTrace | null;
+  error?: string;
   onClose: () => void;
   onOpenApproval?: (auditId: string) => void;
 }) {
@@ -24,18 +26,19 @@ export function GatewayTraceDetails({
     trace?.stages?.find((stage) => traceLabel(stage.decision) === '询问' && Boolean(stage.audit_id))?.audit_id ?? '';
 
   return (
-    <Drawer title="请求安全详情" size="large" open={Boolean(trace)} onClose={onClose} destroyOnHidden>
+    <UiDrawer title="请求安全详情" size="large" open={Boolean(trace)} onClose={onClose} destroyOnHidden>
       {trace ? (
         <div className="zh-traffic-detail">
-          <Flex justify="space-between" align="center" gap={12} wrap="wrap">
+          {error ? <UiAlert type="error" showIcon title="请求详情读取失败" description={error} /> : null}
+          <UiFlex justify="space-between" align="center" gap={12} wrap="wrap">
             <div>
-              <Typography.Text type="secondary">请求 ID</Typography.Text>
-              <Typography.Title level={4} className="zh-title-flush zh-code-sm">
+              <UiTypography.Text type="secondary">请求 ID</UiTypography.Text>
+              <UiTypography.Title level={4} className="zh-title-flush zh-code-sm">
                 {gatewayRequestId(trace)}
-              </Typography.Title>
+              </UiTypography.Title>
             </div>
             <LabelTag color={traceDecisionColor(traceLabel(trace.decision))}>{traceLabel(trace.decision)}</LabelTag>
-          </Flex>
+          </UiFlex>
 
           {reviewAuditId && onOpenApproval ? (
             <UiButton
@@ -66,7 +69,7 @@ export function GatewayTraceDetails({
           />
 
           <div>
-            <Typography.Title level={5}>输入 → 模型 → 工具 → 执行</Typography.Title>
+            <UiTypography.Title level={5}>输入 → 模型 → 工具 → 执行</UiTypography.Title>
             <ol className="zh-traffic-timeline">
               {(trace.stages ?? []).map((stage, index) => (
                 <li key={`${stage.audit_id || stage.stage}-${index}`}>
@@ -82,23 +85,21 @@ export function GatewayTraceDetails({
                     )}
                   </span>
                   <div>
-                    <Flex justify="space-between" gap={8} wrap="wrap">
+                    <UiFlex justify="space-between" gap={8} wrap="wrap">
                       <div>
-                        <Typography.Text strong>{stageLabel(stage.stage, index)}</Typography.Text>
-                        <Typography.Text type="secondary" className="zh-meta-block">
-                          {stageDescription(stage.stage, stage.provider_called)}
-                        </Typography.Text>
+                        <UiTypography.Text strong>{stageLabel(stage.stage, index)}</UiTypography.Text>
+                        <UiFieldLabel>{stageDescription(stage.stage, stage.provider_called)}</UiFieldLabel>
                       </div>
-                      <Typography.Text type="secondary">{formatTraceTime(stage.timestamp)}</Typography.Text>
-                    </Flex>
-                    <Space wrap size={[6, 4]}>
+                      <UiTypography.Text type="secondary">{formatTraceTime(stage.timestamp)}</UiTypography.Text>
+                    </UiFlex>
+                    <UiSpace wrap size={[6, 4]}>
                       <LabelTag color={traceDecisionColor(traceLabel(stage.decision))}>
                         {traceLabel(stage.decision)}
                       </LabelTag>
                       {stage.policy_id ? <LabelTag>{stage.policy_id}</LabelTag> : null}
                       {stage.tool ? <LabelTag>{stage.tool}</LabelTag> : null}
                       {stage.execution_status ? <LabelTag>{stage.execution_status}</LabelTag> : null}
-                    </Space>
+                    </UiSpace>
                   </div>
                 </li>
               ))}
@@ -106,7 +107,7 @@ export function GatewayTraceDetails({
           </div>
         </div>
       ) : null}
-    </Drawer>
+    </UiDrawer>
   );
 }
 

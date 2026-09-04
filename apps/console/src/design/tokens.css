@@ -1,20 +1,89 @@
 :root {
+  /* Primitive spacing scale: reusable layout primitives consume this scale. */
+  --zh-space-0: 0px;
+  --zh-space-px: 1px;
+  --zh-space-0-5: 2px;
+  --zh-space-1: 4px;
+  --zh-space-1-5: 6px;
+  --zh-space-2: 8px;
+  --zh-space-2-5: 10px;
+  --zh-space-3: 12px;
+  --zh-space-3-5: 14px;
+  --zh-space-4: 16px;
+  --zh-space-4-5: 18px;
+  --zh-space-5: 20px;
+  --zh-space-5-5: 22px;
+  --zh-space-6: 24px;
+  --zh-space-6-5: 28px;
+  --zh-space-7: 32px;
+  --zh-space-8: 48px;
+  --zh-space-9: 64px;
+
   /* Layout */
-  --zh-page-padding: 24px;
-  --zh-page-padding-mobile: 12px;
-  --zh-section-gap: 24px;
-  --zh-panel-gap: 16px;
+  --zh-page-padding: var(--zh-space-6);
+  --zh-page-padding-mobile: var(--zh-space-3);
+  --zh-section-gap: var(--zh-space-6);
+  --zh-panel-gap: var(--zh-space-4);
   --zh-app-chrome-height: 64px;
+  --zh-control-gap: var(--zh-space-2);
+  --zh-control-height-sm: 24px;
+  --zh-control-height-md: 32px;
+  --zh-control-height-lg: 40px;
+  --zh-control-height-xs: 28px;
+  --zh-control-min-height: 32px;
+  --zh-text-line-min-height: 20px;
+  --zh-label-height: 22px;
+  --zh-label-padding-inline: 7px;
+  --zh-form-label-gap: 7px;
+  --zh-font-family-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --zh-font-family-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --zh-size-icon-xs: 12px;
+  --zh-size-icon-sm: 16px;
+  --zh-size-icon-md: 20px;
+  --zh-size-logo: 32px;
+  --zh-size-logo-small: 24px;
+  --zh-size-scrollbar: 6px;
+  --zh-viewport-height: 100dvh;
+  --zh-border-width-hairline: 1px;
+  --zh-border-width-accent: 3px;
+  --zh-border-width-focus: 2px;
+  --zh-outline-offset: 3px;
+  --zh-z-base: 0;
+  --zh-z-sticky: 10;
+  --zh-z-drawer: 1000;
+  --zh-z-modal: 1100;
 
   /* Radius */
+  --zh-radius-subtle: 4px;
+  --zh-radius-compact: 6px;
   --zh-radius-panel: 8px;
   --zh-radius-control: 8px;
+  --zh-radius-card: 10px;
+  --zh-radius-large: 12px;
   --zh-radius-pill: 999px;
 
   /* Typography */
   --zh-font-size-meta: 12px;
+  --zh-font-size-compact: 13px;
+  --zh-font-size-micro: 11px;
   --zh-font-size-body: 14px;
   --zh-font-size-panel-title: 16px;
+  --zh-font-size-heading: 18px;
+  --zh-font-size-metric: 24px;
+  --zh-font-size-page-min: 26px;
+  --zh-font-size-display: 28px;
+  --zh-font-size-page-max: 34px;
+  --zh-line-height-tight: 1.25;
+  --zh-line-height-body: 1.5;
+  --zh-line-height-relaxed: 1.7;
+  --zh-letter-spacing-heading: -0.03em;
+  --zh-letter-spacing-section: -0.02em;
+
+  /* Interaction */
+  --zh-motion-fast: 120ms;
+  --zh-motion-normal: 180ms;
+  --zh-motion-ease: ease-out;
+  --zh-focus-ring: 0 0 0 3px var(--ant-color-primary-bg);
 
   /* Surfaces */
   --zh-bg-page: var(--ant-color-bg-layout, #f5f5f5);
@@ -31,6 +100,9 @@
   --zh-text: var(--ant-color-text, rgba(0, 0, 0, 0.88));
   --zh-text-dark: var(--ant-color-text, rgba(255, 255, 255, 0.85));
   --zh-text-secondary: var(--ant-color-text-secondary, #888);
+  --zh-visual-muted-text: var(--ant-color-text-secondary);
+  --zh-visual-subtle-border: var(--zh-border-subtle);
+  --zh-visual-soft-surface: var(--zh-bg-panel-soft);
 
   /* Semantic risk tones */
   --zh-risk-critical: var(--ant-color-error);
@@ -51,4 +123,43 @@
   --zh-shadow-soft: var(--ant-box-shadow-tertiary, 0 4px 12px rgba(0, 0, 0, 0.05));
   --zh-shadow-panel: var(--ant-box-shadow-secondary, 0 6px 16px rgba(0, 0, 0, 0.08));
   --zh-shadow-hairline: 0 2px 4px rgba(0, 0, 0, 0.02);
+
+  /* Component geometry: change these once to keep dense surfaces aligned. */
+  --zh-layout-content-max: 1440px;
+  --zh-layout-auth-max: 460px;
+  --zh-layout-setup-max: 560px;
+  --zh-layout-description-max: 680px;
+  --zh-layout-table-min: 990px;
+  --zh-layout-header-title-max: 360px;
+  --zh-layout-search-max: 320px;
+  --zh-layout-filter-width: 170px;
+  --zh-layout-filter-query-width: 200px;
+  --zh-layout-filter-sm-width: 120px;
+  --zh-layout-filter-md-width: 150px;
+  --zh-layout-grid-icon-column: 22px;
+  --zh-layout-action-min-width: 280px;
+  --zh-layout-setup-flow-min-height: calc(100dvh - 116px);
+  --zh-state-min-height: 220px;
+  --zh-state-loading-min-height: 240px;
+  --zh-empty-state-min-height: 260px;
+  --zh-stream-min-height: 112px;
+  --zh-stream-max-height: 280px;
+  --zh-scroll-list-max-height: 600px;
+  --zh-page-heading-min-height: 54px;
+  --zh-timeline-column-width: 34px;
+  --zh-timeline-icon-size: 30px;
+  --zh-timeline-item-min-height: 76px;
+  --zh-timeline-line-width: 1px;
+  --zh-timeline-line-offset: 14px;
+  --zh-timeline-line-height: 46px;
+  --zh-summary-min-height: 82px;
+  --zh-metric-min-height: 96px;
+  --zh-setup-icon-size: 46px;
+  --zh-auth-icon-size: 44px;
+  --zh-nav-item-height: 40px;
+  --zh-nav-item-margin: 4px;
+  --zh-traffic-metric-min-height: 74px;
+  --zh-settings-status-min-height: 78px;
+  --zh-settings-model-min-height: 246px;
+  --zh-settings-provider-min-height: 136px;
 }

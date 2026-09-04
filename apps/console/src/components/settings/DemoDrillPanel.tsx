@@ -1,7 +1,7 @@
 import { Col, Row, Space, Typography } from 'antd';
 import { Play, ScrollText, TerminalSquare } from 'lucide-react';
 import type { DemoDrillResult } from '@/types';
-import { DecisionPill, LabelTag, MetricCard as Metric, PanelCard, UiAlert, UiButton } from '../ui';
+import { DecisionPill, LabelTag, MetricCard as Metric, PanelCard, UiAlert, UiButton, UiFieldLabel } from '../ui';
 
 interface DemoDrillPanelProps {
   demoDrill: DemoDrillResult | null;
@@ -88,19 +88,13 @@ export function DemoDrillPanel({ demoDrill, runningDemoDrill, handleRunDemoDrill
                   <Col xs={12} md={4}>
                     <Space orientation="vertical" size={2}>
                       <DecisionPill decision={stage.decision} />
-                      <Typography.Text type="secondary" className="zh-meta-block">
-                        复核: {stage.approval_action_label}
-                      </Typography.Text>
+                      <UiFieldLabel>复核: {stage.approval_action_label}</UiFieldLabel>
                     </Space>
                   </Col>
                   <Col xs={12} md={4}>
                     <Space orientation="vertical" size={2}>
-                      <Typography.Text type="secondary" className="zh-meta-block">
-                        audit: {stage.audit_hash?.slice(0, 14) ?? '-'}
-                      </Typography.Text>
-                      <Typography.Text type="secondary" className="zh-meta-block">
-                        review: {stage.review_hash?.slice(0, 14) ?? '-'}
-                      </Typography.Text>
+                      <UiFieldLabel>audit: {stage.audit_hash?.slice(0, 14) ?? '-'}</UiFieldLabel>
+                      <UiFieldLabel>review: {stage.review_hash?.slice(0, 14) ?? '-'}</UiFieldLabel>
                     </Space>
                   </Col>
                 </Row>

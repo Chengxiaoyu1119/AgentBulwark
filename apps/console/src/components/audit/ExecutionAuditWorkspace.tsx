@@ -1,4 +1,4 @@
-import { Col, Row, Typography } from 'antd';
+import { UiCol, UiRow, UiTypography } from '../ui';
 import { AuditFilterBar } from './AuditFilterBar';
 import { AuditLogDetail } from './AuditLogDetail';
 import { AuditLogList } from './AuditLogList';
@@ -10,8 +10,8 @@ export function ExecutionAuditWorkspace({ view }: { view: AuditLogViewModel }) {
     <PanelCard variant="borderless">
       {view.activeAuditLinkId ? (
         <div className="zh-audit-locator">
-          <Typography.Text type="secondary">正在定位</Typography.Text>
-          <Typography.Text code>{view.activeAuditLinkId}</Typography.Text>
+          <UiTypography.Text type="secondary">正在定位</UiTypography.Text>
+          <UiTypography.Text code>{view.activeAuditLinkId}</UiTypography.Text>
         </div>
       ) : null}
 
@@ -34,18 +34,18 @@ export function ExecutionAuditWorkspace({ view }: { view: AuditLogViewModel }) {
         onCopyFiltered={view.copyFilteredAuditEvidence}
       />
 
-      <Row gutter={[24, 24]}>
-        <Col xs={24} md={10}>
+      <UiRow gutter={[24, 24]}>
+        <UiCol xs={24} md={10}>
           <AuditLogList
             logs={view.filteredLogs}
             selectedLogId={view.selectedLogId}
             onSelectLog={view.setSelectedLogId}
           />
-        </Col>
-        <Col xs={24} md={14}>
+        </UiCol>
+        <UiCol xs={24} md={14}>
           <AuditLogDetail log={view.selectedLog} copied={view.copied} onCopy={view.copyEvidence} />
-        </Col>
-      </Row>
+        </UiCol>
+      </UiRow>
     </PanelCard>
   );
 }

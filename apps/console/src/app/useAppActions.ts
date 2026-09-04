@@ -11,6 +11,7 @@ import type {
   Scenario
 } from '../types';
 import type { PageKey } from './navigation';
+import { safeUiErrorSummary } from './apiRequestSupport';
 
 type UseAppActionsOptions = {
   setPage: (page: PageKey) => void;
@@ -76,7 +77,7 @@ export function useAppActions({
         await refresh();
         setPage('lab');
       } catch (error) {
-        setApiNotice(`后端未启动或运行失败：${error instanceof Error ? error.message : '未知错误'}`);
+        setApiNotice(`后端未启动或运行失败：${safeUiErrorSummary(error, '未知错误')}`);
       } finally {
         setRunning(false);
       }
@@ -124,7 +125,7 @@ export function useAppActions({
         await refresh();
         setPage('lab');
       } catch (error) {
-        setApiNotice(`批量运行失败：${error instanceof Error ? error.message : '未知错误'}`);
+        setApiNotice(`批量运行失败：${safeUiErrorSummary(error, '未知错误')}`);
       } finally {
         setRunning(false);
       }
@@ -172,7 +173,7 @@ export function useAppActions({
         await refresh();
         setPage('chain');
       } catch (error) {
-        setApiNotice(`组合攻击链运行失败：${error instanceof Error ? error.message : '未知错误'}`);
+        setApiNotice(`组合攻击链运行失败：${safeUiErrorSummary(error, '未知错误')}`);
       } finally {
         setRunning(false);
       }

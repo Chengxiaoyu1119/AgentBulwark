@@ -1,6 +1,6 @@
 import { Col, Flex, Row, Space, Switch, Typography } from 'antd';
 import type { AuthContext, MemoryGovernance, ObservabilityMetrics, PolicySettings } from '@/types';
-import { LabelTag, MetricCard, PanelCard, UiAlert, UiButton, UiInputNumber } from '../ui';
+import { LabelTag, MetricCard, PanelCard, UiAlert, UiButton, UiFieldLabel, UiInputNumber } from '../ui';
 import { AgentBoundarySettingsPanel } from './AgentBoundarySettingsPanel';
 import { MemoryGovernancePanel } from './MemoryGovernancePanel';
 type RuntimeGovernanceTabProps = {
@@ -61,9 +61,7 @@ export function RuntimeGovernanceTab({
         <Row gutter={[16, 16]} className="zh-settings-status-grid">
           <Col xs={24} sm={12} lg={6}>
             <div className="zh-settings-status-card">
-              <Typography.Text type="secondary" className="zh-meta-block">
-                策略编辑
-              </Typography.Text>
+              <UiFieldLabel>策略编辑</UiFieldLabel>
               <LabelTag variant="filled" color={canEditPolicy ? 'success' : 'warning'}>
                 {canEditPolicy ? '允许修改' : '只读'}
               </LabelTag>
@@ -71,9 +69,7 @@ export function RuntimeGovernanceTab({
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <div className="zh-settings-status-card">
-              <Typography.Text type="secondary" className="zh-meta-block">
-                人工复核
-              </Typography.Text>
+              <UiFieldLabel>人工复核</UiFieldLabel>
               <LabelTag variant="filled" color={canReviewApproval ? 'success' : 'warning'}>
                 {canReviewApproval ? '可处理' : '不可处理'}
               </LabelTag>
@@ -81,17 +77,13 @@ export function RuntimeGovernanceTab({
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <div className="zh-settings-status-card">
-              <Typography.Text type="secondary" className="zh-meta-block">
-                待复核队列
-              </Typography.Text>
+              <UiFieldLabel>待复核队列</UiFieldLabel>
               <Typography.Text strong>{metrics?.summary.pending_review_count ?? 0} 条</Typography.Text>
             </div>
           </Col>
           <Col xs={24} sm={12} lg={6}>
             <div className="zh-settings-status-card">
-              <Typography.Text type="secondary" className="zh-meta-block">
-                记忆隔离
-              </Typography.Text>
+              <UiFieldLabel>记忆隔离</UiFieldLabel>
               <LabelTag variant="filled" color={memoryIsolated ? 'warning' : 'success'}>
                 {memoryIsolated ? '存在隔离项' : '无隔离项'}
               </LabelTag>
@@ -116,10 +108,9 @@ export function RuntimeGovernanceTab({
         </Typography.Paragraph>
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={12} lg={6}>
-            <Typography.Text type="secondary" className="zh-meta-block">
-              异常询问阈值
-            </Typography.Text>
+            <UiFieldLabel htmlFor="policy-anomaly-review-threshold">异常询问阈值</UiFieldLabel>
             <UiInputNumber
+              id="policy-anomaly-review-threshold"
               min={1}
               max={100}
               value={policySettings?.anomaly_review_threshold}
@@ -129,10 +120,9 @@ export function RuntimeGovernanceTab({
             />
           </Col>
           <Col xs={24} sm={12} lg={6}>
-            <Typography.Text type="secondary" className="zh-meta-block">
-              异常拒绝阈值
-            </Typography.Text>
+            <UiFieldLabel htmlFor="policy-anomaly-reject-threshold">异常拒绝阈值</UiFieldLabel>
             <UiInputNumber
+              id="policy-anomaly-reject-threshold"
               min={1}
               max={100}
               value={policySettings?.anomaly_reject_threshold}
@@ -142,10 +132,9 @@ export function RuntimeGovernanceTab({
             />
           </Col>
           <Col xs={24} sm={12} lg={6}>
-            <Typography.Text type="secondary" className="zh-meta-block">
-              复核时限分钟
-            </Typography.Text>
+            <UiFieldLabel htmlFor="policy-approval-sla-minutes">复核时限分钟</UiFieldLabel>
             <UiInputNumber
+              id="policy-approval-sla-minutes"
               min={1}
               max={1440}
               value={policySettings?.approval_sla_minutes}
@@ -155,11 +144,10 @@ export function RuntimeGovernanceTab({
             />
           </Col>
           <Col xs={24} sm={12} lg={6}>
-            <Typography.Text type="secondary" className="zh-meta-block">
-              高风险自动升级
-            </Typography.Text>
+            <UiFieldLabel htmlFor="policy-high-risk-auto-escalation">高风险自动升级</UiFieldLabel>
             <div className="zh-settings-switch-row">
               <Switch
+                id="policy-high-risk-auto-escalation"
                 checked={Boolean(policySettings?.high_risk_auto_escalation)}
                 disabled={!canEditPolicy}
                 onChange={(checked) => patchSettings({ high_risk_auto_escalation: checked })}

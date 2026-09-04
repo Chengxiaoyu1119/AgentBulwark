@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Flex, Space, Typography } from 'antd';
 import type { AuditLog } from '@/types';
-import { LabelTag, UiButton } from '../ui';
+import { LabelTag, UiButton, UiFlex, UiSpace, UiTypography } from '../ui';
 
 const AUDIT_PAGE_SIZE = 12;
 
@@ -24,27 +23,31 @@ export function AuditLogList({ logs, selectedLogId, onSelectLog }: AuditLogListP
 
   return (
     <div>
-      <Typography.Text type="secondary" className="zh-text-block zh-mb-12">
+      <UiTypography.Text type="secondary" className="zh-text-block zh-mb-12">
         共 {logs.length} 条 · 每页最多 {AUDIT_PAGE_SIZE} 条
-      </Typography.Text>
+      </UiTypography.Text>
       <div className="zh-scroll-list zh-scroll-list--fixed">
         {visibleLogs.map((log) => {
           const selected = selectedLogId === log.id;
 
           return (
-            <div
+            <button
+              type="button"
               key={log.id}
               onClick={() => onSelectLog(log.id)}
-              className={`zh-selectable-list-item${selected ? ' zh-selectable-list-item--active' : ''}`}
+              aria-pressed={selected}
+              className={`zh-selectable-list-item zh-selectable-list-item--button${
+                selected ? ' zh-selectable-list-item--active' : ''
+              }`}
             >
-              <Flex justify="space-between" align="center" gap={16} wrap="wrap">
+              <UiFlex justify="space-between" align="center" gap={16} wrap="wrap">
                 <div className="zh-flex-min">
-                  <Space wrap>
-                    <Typography.Text strong className={selected ? 'zh-text-primary-active' : undefined}>
+                  <UiSpace wrap>
+                    <UiTypography.Text strong className={selected ? 'zh-text-primary-active' : undefined}>
                       {log.tool}
-                    </Typography.Text>
+                    </UiTypography.Text>
                     {log.standard_capability && log.standard_capability !== log.tool ? (
-                      <Typography.Text type="secondary">→ {log.standard_capability}</Typography.Text>
+                      <UiTypography.Text type="secondary">→ {log.standard_capability}</UiTypography.Text>
                     ) : null}
                     <LabelTag
                       variant="filled"
@@ -52,40 +55,40 @@ export function AuditLogList({ logs, selectedLogId, onSelectLog }: AuditLogListP
                     >
                       {log.decision}
                     </LabelTag>
-                  </Space>
+                  </UiSpace>
                   <div className="zh-mt-4">
-                    <Typography.Paragraph type="secondary" ellipsis={{ rows: 2 }} className="zh-title-flush">
+                    <UiTypography.Paragraph type="secondary" ellipsis={{ rows: 2 }} className="zh-title-flush">
                       {log.reason}
-                    </Typography.Paragraph>
+                    </UiTypography.Paragraph>
                   </div>
-                  <Space size={6} wrap>
-                    <Typography.Text className="zh-text-meta zh-text-tertiary">
+                  <UiSpace size={6} wrap>
+                    <UiTypography.Text className="zh-text-meta zh-text-tertiary">
                       执行：
                       {log.execution_status === 'awaiting_receipt' || !log.execution_status
                         ? '等待回执'
                         : log.execution_status}
-                    </Typography.Text>
-                    <Typography.Text className="zh-text-meta zh-text-tertiary">
+                    </UiTypography.Text>
+                    <UiTypography.Text className="zh-text-meta zh-text-tertiary">
                       目标：{log.execution_target ?? '未确认'}
-                    </Typography.Text>
-                  </Space>
+                    </UiTypography.Text>
+                  </UiSpace>
                 </div>
                 <div>
-                  <Typography.Text className="zh-text-meta zh-text-tertiary">{log.policy_id}</Typography.Text>
+                  <UiTypography.Text className="zh-text-meta zh-text-tertiary">{log.policy_id}</UiTypography.Text>
                 </div>
-              </Flex>
-            </div>
+              </UiFlex>
+            </button>
           );
         })}
         {!logs.length && <div className="zh-empty-panel">没有匹配的审计记录。</div>}
       </div>
       {logs.length > AUDIT_PAGE_SIZE ? (
         <div className="zh-list-pagination">
-          <Typography.Text type="secondary">
+          <UiTypography.Text type="secondary">
             第 {activePage}/{pageCount} 页 · 显示 {(activePage - 1) * AUDIT_PAGE_SIZE + 1}-
             {Math.min(activePage * AUDIT_PAGE_SIZE, logs.length)} 条
-          </Typography.Text>
-          <Space>
+          </UiTypography.Text>
+          <UiSpace>
             <UiButton
               size="small"
               disabled={activePage === 1}
@@ -106,7 +109,7 @@ export function AuditLogList({ logs, selectedLogId, onSelectLog }: AuditLogListP
             >
               下一页
             </UiButton>
-          </Space>
+          </UiSpace>
         </div>
       ) : null}
     </div>

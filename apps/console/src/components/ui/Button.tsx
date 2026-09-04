@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { forwardRef, useState } from 'react';
 import { Button as AntButton, ButtonProps, message } from 'antd';
 import { openAuthenticatedResource } from '../../app/apiRequest';
+import { safeUiErrorSummary } from '../../app/apiRequestSupport';
 
 export type UiButtonProps = {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'default';
@@ -8,18 +9,10 @@ export type UiButtonProps = {
   authenticatedHref?: string;
 } & Omit<ButtonProps, 'variant'>;
 
-export function UiButton({
-  variant = 'default',
-  className = '',
-  icon,
-  children,
-  authenticatedHref,
-  onClick,
-  loading,
-  href,
-  target,
-  ...props
-}: UiButtonProps) {
+export const UiButton = forwardRef<HTMLAnchorElement | HTMLButtonElement, UiButtonProps>(function UiButton(
+  { variant = 'default', className = '', icon, children, authenticatedHref, onClick, loading, href, target, ...props },
+  ref
+) {
   const [resourceLoading, setResourceLoading] = useState(false);
   let type: ButtonProps['type'] = undefined;
   let danger = false;
@@ -39,7 +32,7 @@ export function UiButton({
     try {
       await openAuthenticatedResource(authenticatedHref);
     } catch (error) {
-      message.error(error instanceof Error ? error.message : '受保护资源打开失败。');
+      message.error(safeUiErrorSummary(error, '受保护资源打开失败。'));
     } finally {
       setResourceLoading(false);
     }
@@ -47,6 +40,7 @@ export function UiButton({
 
   return (
     <AntButton
+      ref={ref}
       type={type}
       danger={danger}
       icon={icon}
@@ -60,4 +54,4 @@ export function UiButton({
       {children}
     </AntButton>
   );
-}
+});

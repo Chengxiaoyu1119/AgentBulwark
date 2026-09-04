@@ -17,7 +17,7 @@ export async function fetchPolicyConfig(): Promise<PolicyConfig> {
 }
 
 export async function updatePolicySettings(
-  payload: Partial<PolicySettings> & { operator?: string; comment?: string }
+  payload: Partial<PolicySettings> & { comment?: string }
 ): Promise<PolicySettings> {
   return request<PolicySettings>('/api/policy_settings', {
     method: 'PATCH',
@@ -43,13 +43,13 @@ export async function updateMemoryStatus(
 ): Promise<{ updated: boolean; event_id?: number }> {
   return request<{ updated: boolean; event_id?: number }>(`/api/memory_governance/${encodeURIComponent(memoryId)}`, {
     method: 'PATCH',
-    body: JSON.stringify({ status, operator: 'security-analyst' })
+    body: JSON.stringify({ status })
   });
 }
 
 export async function rollbackLatestMemory(): Promise<{ updated: boolean; reason?: string; event_id?: number }> {
   return request<{ updated: boolean; reason?: string; event_id?: number }>('/api/memory_governance/rollback_latest', {
     method: 'POST',
-    body: JSON.stringify({ operator: 'security-analyst' })
+    body: JSON.stringify({})
   });
 }

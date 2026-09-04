@@ -1,6 +1,6 @@
-import { Col, Collapse, Flex, Row, Switch, Typography } from 'antd';
+import { UiCol, UiCollapse, UiFlex, UiRow, UiSwitch, UiTypography } from '../ui';
 import type { PolicySettings } from '@/types';
-import { PanelCard, UiButton, UiSelect } from '../ui';
+import { PanelCard, UiAlert, UiButton, UiFieldLabel, UiSelect } from '../ui';
 import { AgentApiAllowlistEditor } from './AgentApiAllowlistEditor';
 import { AgentContextAllowlistEditor } from './AgentContextAllowlistEditor';
 import { AgentModelAllowlistEditor } from './AgentModelAllowlistEditor';
@@ -11,22 +11,46 @@ type Props = {
   policySettings: PolicySettings | null;
   canEdit: boolean;
   saving: boolean;
+  loading?: boolean;
+  loadError?: string;
   onPatch: (patch: Partial<PolicySettings>) => void;
   onSave: () => void | Promise<void>;
 };
 
-export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, onPatch, onSave }: Props) {
+export function AgentBoundarySettingsPanel({
+  policySettings,
+  canEdit,
+  saving,
+  loading = false,
+  loadError,
+  onPatch,
+  onSave
+}: Props) {
+  if (!policySettings) {
+    return (
+      <PanelCard title="业务安全边界" subtitle="先关闭未登记能力，再按 Agent 精确放行。">
+        {loadError ? (
+          <UiAlert type="error" showIcon title="业务安全边界读取失败" description={loadError} />
+        ) : loading ? (
+          <UiAlert type="info" showIcon title="正在读取业务安全边界。" />
+        ) : (
+          <UiAlert type="warning" showIcon title="业务安全边界暂时没有返回内容。" />
+        )}
+      </PanelCard>
+    );
+  }
+
   const mappingCount = Object.values(policySettings?.agent_tool_mappings ?? {}).reduce(
     (total, mappings) => total + Object.keys(mappings).length,
     0
   );
   return (
     <PanelCard title="业务安全边界" subtitle="先关闭未登记能力，再按 Agent 精确放行。">
-      <Typography.Paragraph type="secondary">
+      <UiTypography.Paragraph type="secondary">
         配置内部邮箱域、敏感路径和高敏 API 边界。生产 Agent 应先登记能力，再发放绑定 Token。
-      </Typography.Paragraph>
-      <Row gutter={[16, 16]} className="zh-mb-16">
-        <Col xs={24} md={12}>
+      </UiTypography.Paragraph>
+      <UiRow gutter={[16, 16]} className="zh-mb-16">
+        <UiCol xs={24} md={12}>
           <RegistrationSwitch
             checked={Boolean(policySettings?.require_agent_capability_registration)}
             disabled={!canEdit}
@@ -34,8 +58,8 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
             title="未登记 Agent 工具默认拒绝"
             description="开启后，Agent 必须命中工具白名单；未登记身份不会继承默认放行。"
           />
-        </Col>
-        <Col xs={24} md={12}>
+        </UiCol>
+        <UiCol xs={24} md={12}>
           <RegistrationSwitch
             checked={Boolean(policySettings?.require_agent_context_registration)}
             disabled={!canEdit}
@@ -43,8 +67,8 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
             title="未登记 Agent MCP 上下文默认拒绝"
             description="开启后，resources/prompts 只能读取当前 Agent 的上下文白名单。"
           />
-        </Col>
-        <Col xs={24} md={12}>
+        </UiCol>
+        <UiCol xs={24} md={12}>
           <RegistrationSwitch
             checked={Boolean(policySettings?.require_agent_model_registration)}
             disabled={!canEdit}
@@ -52,10 +76,11 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
             title="未登记 Agent 模型默认拒绝"
             description="开启后，透明代理只能选择该 Agent 的模型白名单。"
           />
-        </Col>
-      </Row>
-      <Row gutter={[16, 16]}>
+        </UiCol>
+      </UiRow>
+      <UiRow gutter={[16, 16]}>
         <BoundarySelect
+          id="policy-internal-email-domains"
           label="内部邮箱域"
           value={policySettings?.internal_email_domains ?? []}
           placeholder="例如 company.example"
@@ -63,6 +88,7 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
           onChange={(value) => onPatch({ internal_email_domains: value.map(String) })}
         />
         <BoundarySelect
+          id="policy-sensitive-path-markers"
           label="敏感路径标记"
           value={policySettings?.sensitive_path_markers ?? []}
           placeholder="例如 vault、credentials"
@@ -70,14 +96,15 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
           onChange={(value) => onPatch({ sensitive_path_markers: value.map(String) })}
         />
         <BoundarySelect
+          id="policy-sensitive-api-markers"
           label="高敏 API 标记"
           value={policySettings?.sensitive_api_markers ?? []}
           placeholder="例如 payroll、admin"
           disabled={!canEdit}
           onChange={(value) => onPatch({ sensitive_api_markers: value.map(String) })}
         />
-      </Row>
-      <Collapse
+      </UiRow>
+      <UiCollapse
         className="zh-permission-collapse"
         items={[
           {
@@ -95,14 +122,14 @@ export function AgentBoundarySettingsPanel({ policySettings, canEdit, saving, on
           }
         ]}
       />
-      <Flex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16">
-        <Typography.Text type="secondary">
+      <UiFlex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16">
+        <UiTypography.Text type="secondary">
           已登记 {Object.keys(policySettings?.agent_tool_allowlists ?? {}).length} 个 Agent，{mappingCount} 条工具映射。
-        </Typography.Text>
+        </UiTypography.Text>
         <UiButton type="primary" loading={saving} disabled={!canEdit} onClick={() => void onSave()}>
           保存业务边界
         </UiButton>
-      </Flex>
+      </UiFlex>
     </PanelCard>
   );
 }
@@ -122,24 +149,26 @@ function RegistrationSwitch({
 }) {
   return (
     <div className="zh-settings-switch-row">
-      <Switch checked={checked} disabled={disabled} onChange={onChange} />
+      <UiSwitch checked={checked} disabled={disabled} onChange={onChange} />
       <div>
-        <Typography.Text strong>{title}</Typography.Text>
-        <Typography.Paragraph type="secondary" className="zh-mb-0">
+        <UiTypography.Text strong>{title}</UiTypography.Text>
+        <UiTypography.Paragraph type="secondary" className="zh-mb-0">
           {description}
-        </Typography.Paragraph>
+        </UiTypography.Paragraph>
       </div>
     </div>
   );
 }
 
 function BoundarySelect({
+  id,
   label,
   value,
   placeholder,
   disabled,
   onChange
 }: {
+  id: string;
   label: string;
   value: string[];
   placeholder: string;
@@ -147,11 +176,10 @@ function BoundarySelect({
   onChange: (value: unknown[]) => void;
 }) {
   return (
-    <Col xs={24} lg={8}>
-      <Typography.Text type="secondary" className="zh-meta-block">
-        {label}
-      </Typography.Text>
+    <UiCol xs={24} lg={8}>
+      <UiFieldLabel htmlFor={id}>{label}</UiFieldLabel>
       <UiSelect
+        id={id}
         mode="tags"
         value={value}
         onChange={onChange}
@@ -159,6 +187,6 @@ function BoundarySelect({
         placeholder={placeholder}
         disabled={disabled}
       />
-    </Col>
+    </UiCol>
   );
 }

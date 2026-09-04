@@ -1,25 +1,19 @@
 import type {
   AlertItem,
-  ApprovalDecisionResult,
-  ApprovalReviewList,
   AttackCaseDataset,
   AttackChain,
   AttackChainCompareResult,
   AttackChainRunResult,
   AuditHashVerification,
-  AuditLog,
   BatchCompareResult,
   CompareResult,
   CompetitionReadiness,
   CompetitionReadinessWriteResult,
   DemoDrillResult,
   ExternalAgentDemoResult,
-  ModelRuntimeConfig,
-  ModelRuntimeConfigUpdate,
   OpenClawIntegrationBundle,
   OpenClawPluginPackageResult,
   OpenClawPluginValidationWriteResult,
-  Overview,
   Policy,
   ReportData,
   RunResult,
@@ -31,78 +25,24 @@ import type {
   SurfaceEvidencePackIndex,
   SurfaceEvidencePackWriteResult
 } from './types';
-import { offlineOverview, offlinePolicies, offlineScenarios } from './fallback';
-import { ApiError, request } from './app/apiRequest';
+import { request } from './app/apiRequest';
 export { ApiError, setAuthTokenProvider, subscribeRuntimeEvents } from './app/apiRequest';
 export * from './app/attackLabApi';
 export * from './app/governanceApi';
+export * from './app/operationalApi';
 export * from './app/reportEvaluationApi';
 export type { ApiErrorCode, RequestOptions } from './app/apiRequest';
 
-function shouldUseFallback(error: unknown) {
-  if (!(error instanceof ApiError)) {
-    return true;
-  }
-  return error.code === 'network_error' || error.code === 'timeout';
-}
-
-function fallbackOrThrow<T>(error: unknown, fallback: T): T {
-  if (shouldUseFallback(error)) {
-    return fallback;
-  }
-  throw error;
-}
-
-export async function fetchHealth(): Promise<boolean> {
-  try {
-    const health = await request<{ ok: boolean }>('/api/health', undefined, { retry: 0, timeoutMs: 5000 });
-    return health.ok === true;
-  } catch {
-    return false;
-  }
-}
-
-export async function fetchOverview(): Promise<Overview> {
-  try {
-    return await request<Overview>('/api/overview');
-  } catch (error) {
-    return fallbackOrThrow(error, offlineOverview);
-  }
-}
-
 export async function fetchScenarios(): Promise<Scenario[]> {
-  try {
-    return await request<Scenario[]>('/api/scenarios');
-  } catch (error) {
-    // A failed live catalog must not silently turn historical fixtures into
-    // current security evidence.  The UI shows an empty/offline state until
-    // the backend can supply the actual scenario definitions.
-    return fallbackOrThrow(error, offlineScenarios);
-  }
+  return request<Scenario[]>('/api/scenarios');
 }
 
 export async function fetchStudentCompetitionAttackMap(): Promise<StudentCompetitionAttackProfile[]> {
-  try {
-    return await request<StudentCompetitionAttackProfile[]>('/api/student_competition_attack_map');
-  } catch (error) {
-    return fallbackOrThrow(error, offlineOverview.student_competition_attack_map ?? []);
-  }
+  return request<StudentCompetitionAttackProfile[]>('/api/student_competition_attack_map');
 }
 
 export async function fetchPolicies(): Promise<Policy[]> {
-  try {
-    return await request<Policy[]>('/api/policies');
-  } catch (error) {
-    return fallbackOrThrow(error, offlinePolicies);
-  }
-}
-
-export async function fetchAuditLogs(limit = 100): Promise<AuditLog[]> {
-  try {
-    return await request<AuditLog[]>(`/api/audit_logs?limit=${limit}`);
-  } catch (error) {
-    return fallbackOrThrow(error, offlineOverview.audit_logs);
-  }
+  return request<Policy[]>('/api/policies');
 }
 
 export async function verifyRunAuditHash(runId: string): Promise<AuditHashVerification> {
@@ -110,42 +50,19 @@ export async function verifyRunAuditHash(runId: string): Promise<AuditHashVerifi
 }
 
 export async function fetchAlerts(limit = 100): Promise<AlertItem[]> {
-  try {
-    return await request<AlertItem[]>(`/api/alerts?limit=${limit}`);
-  } catch (error) {
-    return fallbackOrThrow(error, offlineOverview.alerts);
-  }
-}
-
-export async function fetchApprovalReviews(status = '全部', limit = 100): Promise<ApprovalReviewList> {
-  return request<ApprovalReviewList>(`/api/approvals?status=${encodeURIComponent(status)}&limit=${limit}`);
-}
-
-export async function decideApprovalReview(
-  reviewId: string,
-  action: 'approve' | 'reject',
-  comment = '已完成人工复核，按当前安全策略处置。'
-): Promise<ApprovalDecisionResult> {
-  return request<ApprovalDecisionResult>(`/api/approvals/${encodeURIComponent(reviewId)}/decision`, {
-    method: 'POST',
-    body: JSON.stringify({
-      action,
-      operator: 'security-reviewer',
-      comment
-    })
-  });
+  return request<AlertItem[]>(`/api/alerts?limit=${limit}`);
 }
 
 export async function updatePolicyEnabled(policyId: string, enabled: boolean): Promise<Policy> {
   return request<Policy>(`/api/policies/${policyId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ enabled, operator: 'security-admin', comment: enabled ? '启用策略' : '停用策略' })
+    body: JSON.stringify({ enabled, comment: enabled ? '启用策略' : '停用策略' })
   });
 }
 
 export async function updatePolicyDetail(
   policyId: string,
-  payload: Partial<Policy> & { operator?: string; comment?: string }
+  payload: Partial<Policy> & { comment?: string }
 ): Promise<Policy> {
   return request<Policy>(`/api/policies/${policyId}`, {
     method: 'PATCH',
@@ -198,17 +115,6 @@ export async function fetchReport(): Promise<ReportData> {
 
 export async function fetchAttackCaseDataset(): Promise<AttackCaseDataset> {
   return request<AttackCaseDataset>('/api/datasets/attack_cases');
-}
-
-export async function fetchModelConfig(): Promise<ModelRuntimeConfig> {
-  return request<ModelRuntimeConfig>('/api/model_config');
-}
-
-export async function updateModelConfig(payload: ModelRuntimeConfigUpdate): Promise<ModelRuntimeConfig> {
-  return request<ModelRuntimeConfig>('/api/model_config', {
-    method: 'PATCH',
-    body: JSON.stringify(payload)
-  });
 }
 
 export async function fetchSurfaceEvidencePack(surfaceId: string): Promise<SurfaceEvidencePack> {

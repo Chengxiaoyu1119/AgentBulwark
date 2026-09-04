@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { decideApprovalReview, fetchApprovalReviews } from '@/api';
+import { decideApprovalReview, fetchApprovalReviews } from '@/app/operationalApi';
 import type { ApprovalReview, ApprovalReviewList, AuditLog } from '@/types';
 import { writeClipboardText } from '@/utils';
 import { compareApprovalReviews } from './approvalReviewSorting';
@@ -28,6 +28,10 @@ const emptyApprovalQueue: ApprovalReviewList = {
   },
   reviews: []
 };
+
+function toolWasExecuted(log: AuditLog) {
+  return Boolean(log.tool_output?.executed);
+}
 
 export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelParams) {
   const [query, setQuery] = useState('');
@@ -67,30 +71,32 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
           (riskScoreFilter === '全部' || (log.risk_score ?? 0) >= (minRiskScore ?? 0)) &&
           (toolFilter === '全部' || log.tool === toolFilter) &&
           (executionFilter === '全部' ||
-            (executionFilter === '已执行'
-              ? log.tool_output.executed
-              : executionFilter === '未执行'
-                ? !log.tool_output.executed
-                : executionFilter === '回执已确认'
-                  ? receiptConfirmed
-                  : executionFilter === '等待回执'
-                    ? !receiptConfirmed
-                    : executionFilter === '执行失败'
-                      ? receiptStatus === 'failed'
-                      : true))
+            (executionFilter === '待核查'
+              ? receiptStatus === 'unknown'
+              : executionFilter === '已执行'
+                ? toolWasExecuted(log)
+                : executionFilter === '未执行'
+                  ? !toolWasExecuted(log)
+                  : executionFilter === '回执已确认'
+                    ? receiptConfirmed
+                    : executionFilter === '等待回执'
+                      ? !receiptConfirmed
+                      : executionFilter === '执行失败'
+                        ? receiptStatus === 'failed'
+                        : true))
         );
       })
       .sort((a, b) => {
         const riskScoreDiff = (b.risk_score ?? 0) - (a.risk_score ?? 0);
         if (riskScoreDiff !== 0) return riskScoreDiff;
-        return b.timestamp.localeCompare(a.timestamp);
+        return String(b.timestamp ?? '').localeCompare(String(a.timestamp ?? ''));
       });
   }, [decisionFilter, executionFilter, logs, query, riskFilter, riskScoreFilter, toolFilter]);
 
   const selectedLog = filteredLogs.find((log) => log.id === selectedLogId) ?? filteredLogs[0];
   const controlledCount = logs.filter((log) => ['拒绝', '询问', '隔离'].includes(log.decision)).length;
   const highRiskCount = logs.filter((log) => ['high', 'critical'].includes(log.risk_level)).length;
-  const executedCount = logs.filter((log) => log.tool_output.executed).length;
+  const executedCount = logs.filter(toolWasExecuted).length;
   const receiptCount = logs.filter((log) => Boolean(log.execution_receipt)).length;
   const unconfirmedCount = logs.filter((log) => log.execution_receipt_expected && !log.execution_receipt).length;
 

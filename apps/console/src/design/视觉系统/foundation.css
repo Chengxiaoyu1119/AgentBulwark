@@ -1,0 +1,137 @@
+/* Global document primitives only. Product classes belong to operations.css. */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: var(--zh-viewport-height);
+  width: 100%;
+  overflow: hidden; /* Let Layout handle scrolling */
+}
+
+html[data-theme='dark'],
+html[data-theme='dark'] body,
+html[data-theme='dark'] #root {
+  background-color: var(--zh-bg-page-dark);
+  color: var(--zh-text-dark);
+}
+
+body {
+  font-family: var(--zh-font-family-sans);
+}
+
+html[data-theme='light'],
+html[data-theme='light'] body,
+html[data-theme='light'] #root {
+  background-color: var(--zh-bg-page);
+  color: var(--zh-text);
+}
+
+/* Scrollbar Styles */
+::-webkit-scrollbar {
+  width: var(--zh-size-scrollbar);
+  height: var(--zh-size-scrollbar);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--zh-scrollbar-thumb);
+  border-radius: var(--zh-radius-subtle);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--zh-scrollbar-thumb-hover);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--zh-scrollbar-thumb) transparent;
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+  text-wrap: balance;
+}
+
+:where(p, .ant-typography) {
+  text-wrap: pretty;
+}
+
+html[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: var(--zh-scrollbar-thumb-dark);
+}
+
+html[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: var(--zh-scrollbar-thumb-dark-hover);
+}
+
+html[data-theme='dark'] * {
+  scrollbar-color: var(--zh-scrollbar-thumb-dark) transparent;
+}
+
+/* Responsive Overrides */
+@media (min-width: 993px) {
+  .mobile-menu-btn {
+    display: none !important;
+  }
+}
+
+@media (max-width: 992px) {
+  .desktop-sider,
+  .ant-layout-sider-zero-width-trigger {
+    display: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.main-content {
+  padding: var(--zh-page-padding);
+}
+
+/* Product shell: three tasks, one primary action, one live work surface. */
+
+.mobile-only {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .main-content {
+    padding: var(--zh-page-padding-mobile);
+  }
+}
+
+@media (max-width: 768px) {
+  .hide-on-mobile {
+    display: none !important;
+  }
+
+  .mobile-only {
+    display: inline;
+  }
+
+  /* Fix Select components overflowing on mobile */
+  .ant-select {
+    max-width: 100%;
+  }
+
+  /* Allow Row/Col wrapping more easily */
+  .ant-card-body {
+    padding: var(--zh-space-4);
+  }
+}
+
+/* Production console styles reachable from src/main.tsx. */
+
+/* Historical research, report, scenario and competition surfaces. */

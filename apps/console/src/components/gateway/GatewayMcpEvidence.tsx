@@ -1,14 +1,6 @@
-import { Space, Typography } from 'antd';
+import { UiSpace, UiTypography } from '../ui';
+import type { JsonObject, McpResponse } from '../../app/mcpConsoleContract';
 import { EvidenceCodeBlock, LabelTag, UiAlert } from '../ui';
-
-type JsonObject = Record<string, unknown>;
-
-type McpResponse = {
-  method: string;
-  request: JsonObject;
-  response: JsonObject | null;
-  receivedAt: string;
-};
 
 function stringValue(value: unknown, fallback = '—') {
   if (value === undefined || value === null || value === '') return fallback;
@@ -81,19 +73,19 @@ export function GatewayMcpEvidence({ result }: { result: McpResponse }) {
   );
 
   return (
-    <Space orientation="vertical" size={12} className="zh-full-width">
+    <UiSpace orientation="vertical" size={12} className="zh-full-width">
       <div className="zh-meta-grid zh-meta-grid--4">
         <div className="zh-meta-grid__item">
-          <Typography.Text type="secondary" className="zh-meta-grid__label">
+          <UiTypography.Text type="secondary" className="zh-meta-grid__label">
             方法
-          </Typography.Text>
-          <Typography.Text className="zh-meta-grid__value">{result.method}</Typography.Text>
+          </UiTypography.Text>
+          <UiTypography.Text className="zh-meta-grid__value">{result.method}</UiTypography.Text>
         </div>
         <div className="zh-meta-grid__item">
-          <Typography.Text type="secondary" className="zh-meta-grid__label">
+          <UiTypography.Text type="secondary" className="zh-meta-grid__label">
             JSON-RPC
-          </Typography.Text>
-          <Typography.Text className="zh-meta-grid__value">
+          </UiTypography.Text>
+          <UiTypography.Text className="zh-meta-grid__value">
             {rpcError ? (
               <LabelTag color="red" variant="filled">
                 error {stringValue(rpcError.code)}
@@ -103,27 +95,27 @@ export function GatewayMcpEvidence({ result }: { result: McpResponse }) {
                 result
               </LabelTag>
             )}
-          </Typography.Text>
+          </UiTypography.Text>
         </div>
         <div className="zh-meta-grid__item">
-          <Typography.Text type="secondary" className="zh-meta-grid__label">
+          <UiTypography.Text type="secondary" className="zh-meta-grid__label">
             决策
-          </Typography.Text>
-          <Typography.Text className="zh-meta-grid__value">{stringValue(marker?.decision)}</Typography.Text>
+          </UiTypography.Text>
+          <UiTypography.Text className="zh-meta-grid__value">{stringValue(marker?.decision)}</UiTypography.Text>
         </div>
         <div className="zh-meta-grid__item">
-          <Typography.Text type="secondary" className="zh-meta-grid__label">
+          <UiTypography.Text type="secondary" className="zh-meta-grid__label">
             审计 ID
-          </Typography.Text>
-          <Typography.Text className="zh-meta-grid__value">
+          </UiTypography.Text>
+          <UiTypography.Text className="zh-meta-grid__value">
             {stringValue(marker?.audit_id ?? marker?.auditId)}
-          </Typography.Text>
+          </UiTypography.Text>
         </div>
         <div className="zh-meta-grid__item">
-          <Typography.Text type="secondary" className="zh-meta-grid__label">
+          <UiTypography.Text type="secondary" className="zh-meta-grid__label">
             执行事实
-          </Typography.Text>
-          <Typography.Text className="zh-meta-grid__value">
+          </UiTypography.Text>
+          <UiTypography.Text className="zh-meta-grid__value">
             <LabelTag
               color={
                 executionOutcome === 'executed-result-contained' || executionOutcome === 'audit-uncertain'
@@ -136,7 +128,7 @@ export function GatewayMcpEvidence({ result }: { result: McpResponse }) {
             >
               {executionOutcome}
             </LabelTag>
-          </Typography.Text>
+          </UiTypography.Text>
         </div>
       </div>
       {outcomeDescription && (
@@ -151,19 +143,19 @@ export function GatewayMcpEvidence({ result }: { result: McpResponse }) {
         />
       )}
       {result.method === 'tools/list' && (
-        <Space orientation="vertical" size={4}>
-          <Typography.Text type="secondary">
+        <UiSpace orientation="vertical" size={4}>
+          <UiTypography.Text type="secondary">
             当前响应可见工具：{visibleTools} 个；已过滤 {filteredTools} 个；模型侧隔离 {quarantinedTools} 个。
-          </Typography.Text>
-          {scanSummary && <Typography.Text type="secondary">{scanSummaryText}</Typography.Text>}
-        </Space>
+          </UiTypography.Text>
+          {scanSummary && <UiTypography.Text type="secondary">{scanSummaryText}</UiTypography.Text>}
+        </UiSpace>
       )}
-      <Typography.Text strong>JSON-RPC 请求</Typography.Text>
+      <UiTypography.Text strong>JSON-RPC 请求</UiTypography.Text>
       <EvidenceCodeBlock size="small">{pretty(result.request)}</EvidenceCodeBlock>
-      <Typography.Text strong>JSON-RPC 响应与网关证据</Typography.Text>
+      <UiTypography.Text strong>JSON-RPC 响应与网关证据</UiTypography.Text>
       <EvidenceCodeBlock size="small" maxHeight="large">
         {pretty(result.response)}
       </EvidenceCodeBlock>
-    </Space>
+    </UiSpace>
   );
 }

@@ -9,6 +9,7 @@ import {
   updatePolicySettings
 } from '@/api';
 import type { AuthContext, MemoryGovernance, ObservabilityMetrics, PolicySettings } from '@/types';
+import { safeUiErrorSummary } from '@/app/apiRequestSupport';
 
 export function useRuntimeGovernanceController(setSharedError: (message: string) => void) {
   const [authContext, setAuthContext] = useState<AuthContext | null>(null);
@@ -30,7 +31,7 @@ export function useRuntimeGovernanceController(setSharedError: (message: string)
         setMemoryGovernance(memory);
       })
       .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : '运行治理状态刷新失败';
+        const message = safeUiErrorSummary(error, '运行治理状态刷新失败');
         setGovernanceError(message);
         setSharedError(message);
       });
@@ -49,7 +50,7 @@ export function useRuntimeGovernanceController(setSharedError: (message: string)
       setMemoryGovernance(memory);
       setGovernanceNotice('治理状态已刷新。');
     } catch (error) {
-      const message = error instanceof Error ? error.message : '运行治理状态刷新失败';
+      const message = safeUiErrorSummary(error, '运行治理状态刷新失败');
       setGovernanceError(message);
       setSharedError(message);
     } finally {
@@ -67,14 +68,13 @@ export function useRuntimeGovernanceController(setSharedError: (message: string)
       setPolicySettings(
         await updatePolicySettings({
           ...policySettings,
-          operator: 'security-admin',
           comment: '通过防护策略中心更新策略阈值、业务边界与 Agent 工具白名单'
         })
       );
       await handleRefreshGovernance();
       setGovernanceNotice('策略阈值、业务边界、Agent 白名单和工具映射已保存，并生成新策略版本。');
     } catch (error) {
-      const message = error instanceof Error ? error.message : '策略阈值保存失败';
+      const message = safeUiErrorSummary(error, '策略阈值保存失败');
       setGovernanceError(message);
       setSharedError(message);
     } finally {
@@ -92,7 +92,7 @@ export function useRuntimeGovernanceController(setSharedError: (message: string)
       setMemoryGovernance(await fetchMemoryGovernance());
       setGovernanceNotice(`记忆 ${memoryId} 已更新为 ${status}；治理证据事件 #${result.event_id ?? '-'} 已写入。`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : '记忆状态更新失败';
+      const message = safeUiErrorSummary(error, '记忆状态更新失败');
       setGovernanceError(message);
       setSharedError(message);
     } finally {
@@ -110,7 +110,7 @@ export function useRuntimeGovernanceController(setSharedError: (message: string)
       setMemoryGovernance(await fetchMemoryGovernance());
       setGovernanceNotice(`最新非种子记忆已回滚；治理证据事件 #${result.event_id ?? '-'} 已写入。`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : '记忆回滚失败';
+      const message = safeUiErrorSummary(error, '记忆回滚失败');
       setGovernanceError(message);
       setSharedError(message);
     } finally {

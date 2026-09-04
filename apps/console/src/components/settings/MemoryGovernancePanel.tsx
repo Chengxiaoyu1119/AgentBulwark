@@ -1,6 +1,6 @@
 import { Flex, Space, Typography } from 'antd';
 import type { MemoryGovernance } from '@/types';
-import { LabelTag, PanelCard, UiAlert, UiButton } from '../ui';
+import { LabelTag, PanelCard, UiAlert, UiButton, UiConfirmButton } from '../ui';
 
 type MemoryGovernancePanelProps = {
   memoryGovernance: MemoryGovernance | null;
@@ -39,13 +39,15 @@ export function MemoryGovernancePanel({
             </LabelTag>
           ) : null}
         </Space>
-        <UiButton
+        <UiConfirmButton
           loading={busyMemoryId === '__rollback__'}
           disabled={actionDisabled}
-          onClick={() => void onRollbackMemory()}
+          confirmTitle="回滚最新非种子记忆？"
+          confirmDescription="这会改变运行时记忆状态，并写入治理审计事件。"
+          onConfirm={() => void onRollbackMemory()}
         >
           回滚最新非种子记忆
-        </UiButton>
+        </UiConfirmButton>
       </Flex>
       {items.length ? (
         <Space orientation="vertical" className="zh-full-width" size="middle">
@@ -81,15 +83,17 @@ export function MemoryGovernancePanel({
                   >
                     隔离
                   </UiButton>
-                  <UiButton
+                  <UiConfirmButton
                     size="small"
                     danger
                     loading={busyMemoryId === item.id}
                     disabled={actionDisabled}
-                    onClick={() => void onMemoryStatus(item.id, 'removed')}
+                    confirmTitle={`移除记忆 ${item.id}？`}
+                    confirmDescription="移除后该记忆不会继续参与运行时上下文，并会保留审计记录。"
+                    onConfirm={() => void onMemoryStatus(item.id, 'removed')}
                   >
                     移除
-                  </UiButton>
+                  </UiConfirmButton>
                 </Space>
               </Flex>
             </PanelCard>

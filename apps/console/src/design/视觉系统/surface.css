@@ -38,7 +38,6 @@
   width: 100%;
   height: 100%;
   flex-direction: column;
-  transition: all 0.3s;
 }
 
 .zh-surface-matrix-card > .ant-card-body {
@@ -821,9 +820,4 @@
 
 .zh-surface-coverage-text--checked {
   text-decoration: none;
-}
-
-.zh-code-sm {
-  font-size: 12px;
-  font-family: monospace;
 }
