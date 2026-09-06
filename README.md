@@ -18,6 +18,7 @@
 ```text
 apps/api/agent_supervisor/  FastAPI 服务与运行内核
 apps/api/tests/             后端契约、策略、网关和回执测试
+apps/api/runtime/           本地运行数据、备份、E2E 与质量产物（忽略）
 apps/console/               React + Vite 控制台
 docs/product/               产品定位与方案
 docs/engineering/           本地启动、接入和安全配置
@@ -29,10 +30,10 @@ scripts/                    本地启动、维护和质量检查
 
 ## 本地启动
 
-首次使用先安装依赖（Python 虚拟环境是隔离项目依赖的目录）：
+首次使用先安装依赖（控制台依赖安装在 `apps/console/`，不会在仓库根目录生成 `node_modules/`）：
 
 ```powershell
-npm install
+npm --prefix apps/console ci
 python -m pip install -r apps/api/requirements-dev.txt
 ```
 
@@ -73,7 +74,7 @@ python -X utf8 -m unittest discover -s apps/api/tests -t . -p "test_*.py"
 npm run verify:local
 ```
 
-`verify:local` 只执行本机检查，不依赖外部部署环境。运行数据和临时输出统一放在 `apps/api/runtime/`，该目录已加入 Git 忽略规则。
+`verify:local` 只执行本机检查，不依赖外部部署环境。运行数据和质量工具输出统一放在 `apps/api/runtime/`，该目录已加入 Git 忽略规则；根目录不会保留覆盖率、审计报告或工具缓存。
 
 ## 许可证
 

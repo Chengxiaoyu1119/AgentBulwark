@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-const REPORT_DIR = resolve("verification");
+const REPORT_DIR = resolve("apps/api/runtime/quality/security-audit");
 const JSON_REPORT = resolve(REPORT_DIR, "dependency-security-audit.json");
 const MARKDOWN_REPORT = resolve(REPORT_DIR, "依赖安全审计报告.md");
 
 // Only audit packages that are part of the current product build. Historical
 // website/docs trees live under legacy/archive/ and are not shipped by the local
-// container; treating their removed paths as failed projects hid the actual
+// application; treating their removed paths as failed projects hid the actual
 // console dependency findings behind two false failures.
 const PROJECTS = [
   {
@@ -303,7 +303,7 @@ function buildMarkdown(report) {
     "## 当前处理原则",
     "",
     "- 不使用 `npm audit fix --force` 强行升大版本，避免把官网或文档站构建链路打断。",
-    "- 历史官网和文档站位于 `legacy/archive/`，不参与当前本地应用与审计门禁。",
+    "- 当前应用之外的历史资料位于 `legacy/`，不参与本地应用与审计门禁。",
   );
   return lines.join("\n");
 }

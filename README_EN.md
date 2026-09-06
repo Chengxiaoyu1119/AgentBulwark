@@ -16,7 +16,7 @@ Agent Security Supervisor is a local-first control gateway for agent actions. Op
 ## Local start
 
 ```powershell
-npm install
+npm --prefix apps/console ci
 python -m pip install -r apps/api/requirements-dev.txt
 npm run dev
 ```
@@ -30,6 +30,7 @@ Copy `.env.example` to `.env` and configure Provider and MCP values on the serve
 ```text
 apps/api/agent_supervisor/  FastAPI service and runtime
 apps/api/tests/             backend tests and fixtures
+apps/api/runtime/           local runtime, backups, E2E, and quality output (ignored)
 apps/console/               React + Vite console
 docs/product/               product documents
 docs/engineering/           local operations and security
@@ -48,6 +49,6 @@ python -X utf8 -m unittest discover -s apps/api/tests -t . -p "test_*.py"
 npm run verify:local
 ```
 
-Runtime data stays under `apps/api/runtime/` and is ignored by Git. The project is designed for a single local machine; external deployment is outside the current product boundary.
+Runtime data and quality output stay under `apps/api/runtime/` and are ignored by Git. The repository root does not retain coverage, audit reports, or tool caches. The project is designed for a single local machine; external deployment is outside the current product boundary.
 
 Apache-2.0. See [LICENSE](LICENSE).

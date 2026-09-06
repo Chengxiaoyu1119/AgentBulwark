@@ -1,6 +1,7 @@
 [tool.ruff]
 target-version = "py311"
 line-length = 140
+cache-dir = "apps/api/runtime/quality/ruff"
 exclude = [
   ".git",
   ".venv",
@@ -8,8 +9,6 @@ exclude = [
   "apps/api/runtime",
   "legacy",
   "apps/console/dist",
-  "apps/www/dist",
-  "apps/docs/build",
 ]
 
 [tool.ruff.lint]
@@ -19,6 +18,7 @@ ignore = ["E501", "B008"]
 [tool.mypy]
 python_version = "3.11"
 explicit_package_bases = true
+cache_dir = "apps/api/runtime/quality/mypy"
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true
@@ -37,6 +37,7 @@ disallow_untyped_defs = false
 
 [tool.coverage.run]
 branch = true
+data_file = "apps/api/runtime/quality/.coverage"
 # Keep the gate focused on request-time security decisions; storage recovery is
 # exercised by the full integration suite and has filesystem-dependent branches.
 include = [
@@ -62,3 +63,4 @@ exclude_lines = [
 [tool.pytest.ini_options]
 testpaths = ["apps/api/tests"]
 norecursedirs = [".git", "node_modules", "apps/api/runtime", "apps/console/dist", "legacy"]
+cache_dir = "apps/api/runtime/quality/pytest"

@@ -15,8 +15,6 @@ $protectedPaths = @(
     (Join-Path $repoRoot ".git"),
     (Join-Path $repoRoot ".env"),
     (Join-Path $repoRoot "apps\api\runtime"),
-    (Join-Path $repoRoot "apps\api\sandbox\runtime"),
-    (Join-Path $repoRoot "verification"),
     (Join-Path $repoRoot "docs\media"),
     (Join-Path $repoRoot "apps\console\dist"),
     (Join-Path $repoRoot "apps\console\node_modules")
@@ -53,17 +51,7 @@ Get-ChildItem -LiteralPath $repoRoot -Force |
     ".pytest_cache",
     ".ruff_cache",
     ".playwright-mcp",
-    "legacy\archive\apps\docs\node_modules",
-    "legacy\archive\apps\www\dist",
-    "legacy\archive\apps\www\node_modules",
-    "legacy\archive\competition_materials",
-    "legacy\archive\historical_reports",
-    "legacy\training\__pycache__",
-    "legacy\training\seeds\__pycache__",
-    "legacy\training\_compare",
-    "legacy\training\dataset\generation.log",
-    "legacy\training\dataset\generation_err.log",
-    "legacy\training\dataset\variant_checkpoint.json",
+    "verification",
     "apps\console\.playwright-mcp"
 ) | ForEach-Object {
     $path = Join-Path $repoRoot $_
