@@ -10,8 +10,8 @@ export default tseslint.config(
       'dist/**',
       'node_modules/**',
       'public/**',
-      '../api/sandbox/**',
-      '../../scripts/archive/**',
+      '../api/runtime/**',
+      '../../legacy/scripts/**',
       '*.config.js',
       'vite.config.js',
       'vite.config.d.ts'

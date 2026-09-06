@@ -6,13 +6,12 @@ describe('primary navigation', () => {
     expect(navItems.map((item) => item.key)).toEqual(['protection', 'events', 'settings']);
   });
 
-  it('folds legacy deep links into the nearest product task', () => {
-    expect(pageFromHash('#/gateway')).toBe('protection');
-    expect(pageFromHash('#/dashboard')).toBe('protection');
-    expect(pageFromHash('#/audit')).toBe('events');
-    expect(pageFromHash('#/alerts')).toBe('events');
-    expect(pageFromHash('#/lab')).toBe('protection');
-    expect(pageToHash(pageFromHash('#/lab'))).toBe('#/protection');
+  it('accepts only canonical product deep links', () => {
+    expect(pageFromHash('#/protection')).toBe('protection');
+    expect(pageFromHash('#/events')).toBe('events');
+    expect(pageFromHash('#/settings')).toBe('settings');
+    expect(pageFromHash('#/legacy')).toBe('protection');
+    expect(pageToHash(pageFromHash('#/legacy'))).toBe('#/protection');
     expect(pageLabel('events')).toBe('事件');
   });
 });

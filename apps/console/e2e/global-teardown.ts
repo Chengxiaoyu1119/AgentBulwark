@@ -1,12 +1,12 @@
-import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export default async function globalTeardown() {
   const candidate = process.env.AGENT_SUPERVISOR_E2E_RUNTIME_DIR;
   if (!candidate) return;
-  const tempRoot = path.resolve(os.tmpdir());
+  const runtimeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../api/runtime/e2e');
   const resolved = path.resolve(candidate);
-  const relative = path.relative(tempRoot, resolved);
+  const relative = path.relative(runtimeRoot, resolved);
   if (
     !relative ||
     relative.startsWith('..') ||

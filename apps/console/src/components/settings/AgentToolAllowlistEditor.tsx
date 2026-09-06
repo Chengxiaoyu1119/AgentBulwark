@@ -8,7 +8,6 @@ const supportedToolOptions = [
   'file.write',
   'mail.send',
   'api.call',
-  'code.run',
   'memory.write',
   'memory.read',
   'env.read',

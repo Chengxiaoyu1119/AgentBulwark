@@ -14,7 +14,6 @@ export function buildApprovalEvidenceText(review: ApprovalReview) {
     `原审计 hash：${review.audit_hash || '-'}`,
     `复核 hash：${review.review_hash || '-'}`,
     `操作人：${review.operator || '-'}`,
-    `范围：${review.scope || '-'}`,
     `Agent：${review.agent_id || '-'}`,
     `执行状态：${review.execution_status || '-'}`,
     `领取 Agent：${review.execution_claim_agent_id || '-'}`,
@@ -51,7 +50,7 @@ export function buildAuditEvidenceText(log: AuditLog) {
     `结果 Hash：${log.execution_receipt?.result_hash ?? '-'}`,
     `回执 Hash：${log.execution_receipt?.receipt_hash ?? '-'}`,
     `回执签名：${log.execution_receipt?.receipt_signature ?? '-'}`,
-    `输出：${log.tool_output.output}`
+    `输出：${log.tool_output?.output ?? '-'}`
   ].join('\n');
 }
 
@@ -73,7 +72,7 @@ export function buildFilteredAuditEvidenceText(logs: AuditLog[]) {
         `策略：${log.policy_id}`,
         `原因：${log.reason}`,
         `建议：${log.recommendation}`,
-        `执行：${log.tool_output.executed ? '是' : '否'} / 目标：${log.execution_target ?? 'unknown'} / 状态：${log.execution_status ?? 'awaiting_receipt'}`,
+        `执行：${log.tool_output?.executed ? '是' : '否'} / 目标：${log.execution_target ?? 'unknown'} / 状态：${log.execution_status ?? 'awaiting_receipt'}`,
         `回执：${log.execution_receipt?.receipt_hash ?? '未收到'}`
       ].join('\n')
     )

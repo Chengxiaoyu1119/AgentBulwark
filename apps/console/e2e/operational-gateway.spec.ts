@@ -143,13 +143,13 @@ test.describe.serial('运营网关黑盒验收', () => {
     });
     expect(overview.status()).toBe(200);
     const overviewBody = (await overview.json()) as Record<string, unknown>;
-    expect(overviewBody.attack_surfaces).toEqual([]);
-    expect(overviewBody.scenarios).toEqual([]);
-    expect(overviewBody.student_competition_attack_map).toEqual([]);
-    const labs = await page.request.get('/api/scenarios', {
+    expect(overviewBody).not.toHaveProperty('attack_surfaces');
+    expect(overviewBody).not.toHaveProperty('scenarios');
+    expect(overviewBody).not.toHaveProperty('student_competition_attack_map');
+    const removedRoute = await page.request.get('/api/scenarios', {
       headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
     });
-    expect(labs.status()).toBe(404);
+    expect(removedRoute.status()).toBe(404);
 
     const clean = await sendGatewayRequest(page, {
       model: 'e2e-fixture-model',

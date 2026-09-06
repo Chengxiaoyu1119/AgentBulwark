@@ -249,7 +249,7 @@ describe('GatewayPanel', () => {
     render(<GatewayPanel />);
     await userEvent.click(screen.getByRole('button', { name: '验证防护' }));
     await userEvent.click(screen.getByRole('button', { name: '发送到网关' }));
-    await userEvent.click(await screen.findByRole('button', { name: '服务端沙箱执行' }));
+    await userEvent.click(await screen.findByRole('button', { name: '服务端受限执行' }));
 
     expect((await screen.findAllByText(/服务端观察/)).length).toBeGreaterThan(0);
     expect(await screen.findByText('公开项目说明')).toBeInTheDocument();

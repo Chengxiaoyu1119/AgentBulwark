@@ -32,27 +32,15 @@ function isAuthContext(value: unknown) {
 
 function isOverview(value: unknown) {
   if (!isRecord(value)) return false;
-  if (
-    !['attack_surfaces', 'scenarios', 'models', 'recent_runs', 'alerts', 'audit_logs'].every((key) =>
-      Array.isArray(value[key])
-    )
-  ) {
-    return false;
-  }
-  if (value.student_competition_attack_map !== undefined && !Array.isArray(value.student_competition_attack_map)) {
+  if (!['models', 'recent_runs', 'alerts', 'audit_logs'].every((key) => Array.isArray(value[key]))) {
     return false;
   }
   const summary = value.summary;
   return (
     isRecord(summary) &&
-    [
-      'surface_count',
-      'scenario_count',
-      'recent_run_count',
-      'block_rate',
-      'attack_success_rate',
-      'avg_latency_ms'
-    ].every((key) => typeof summary[key] === 'number' && Number.isFinite(summary[key]))
+    ['recent_run_count', 'block_rate', 'avg_latency_ms'].every(
+      (key) => typeof summary[key] === 'number' && Number.isFinite(summary[key])
+    )
   );
 }
 

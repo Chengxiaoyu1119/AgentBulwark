@@ -73,10 +73,8 @@ export interface Policy {
   enabled: boolean;
   description: string;
   layer?: string;
-  surface_ids?: string[];
   tools?: string[];
   risk_controls?: string[];
-  demo_scenarios?: string[];
   disable_impact?: string;
 }
 
@@ -145,7 +143,6 @@ export interface ObservabilityMetrics {
     run_count: number;
     controlled_count: number;
     control_rate: number;
-    attack_success_count: number;
     avg_detection_latency_ms: number;
     max_detection_latency_ms: number;
     audit_log_count: number;

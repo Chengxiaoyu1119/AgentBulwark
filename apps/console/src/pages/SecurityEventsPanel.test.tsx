@@ -112,7 +112,6 @@ function approval(status: ApprovalReview['status']): ApprovalReview {
     recommendation: '核对收件人与业务目的。',
     source_app: 'openai-compatible-proxy',
     agent_id: 'e2e-agent',
-    scope: 'operational',
     conversation_id: 'review-session',
     model_input_excerpt: '',
     model_output_excerpt: '',

@@ -1,46 +1,28 @@
 import type { GuardDecision, RiskLevel } from './common';
-import type { Scenario } from './surface';
 
 export interface AlertItem {
   id: string;
-  run_id: string;
-  severity: RiskLevel;
-  title: string;
-  decision: GuardDecision;
-  evidence: string;
+  run_id?: string;
+  severity: RiskLevel | string;
+  title?: string;
+  decision: GuardDecision | string;
+  evidence?: string;
   created_at: string;
-  scenario_id?: string;
-  scenario_title?: string;
-  surface_id?: string;
-  target?: string;
-  policy_id?: string;
-  tool?: string;
-  arguments?: Record<string, unknown>;
-  recommendation?: string;
-  tool_output?: {
-    executed?: boolean;
-    sandboxed?: boolean;
-    simulated?: boolean;
-    output?: string;
-  };
   risk_score?: number;
-  risk_factors?: string[];
-  anomaly_score?: number;
-  anomaly_signals?: string[];
 }
 
 export interface AuditLog {
   id: string;
   run_id: string;
-  step: number;
+  step?: number;
   tool: string;
-  arguments: Record<string, unknown>;
+  arguments?: Record<string, unknown>;
   standard_capability?: string;
   standard_arguments?: Record<string, unknown>;
   tool_mapping?: Record<string, unknown> | null;
   execution_receipt_expected?: boolean;
-  decision: GuardDecision;
-  risk_level: RiskLevel;
+  decision: GuardDecision | string;
+  risk_level: RiskLevel | string;
   policy_id: string;
   reason: string;
   recommendation: string;
@@ -51,32 +33,24 @@ export interface AuditLog {
   previous_hash?: string;
   audit_hash?: string;
   tool_call_hash?: string;
-  execution_status?:
-    | 'completed'
-    | 'failed'
-    | 'not_executed'
-    | 'awaiting_receipt'
-    | 'server_sandbox_completed'
-    | 'not_applicable'
-    | string;
-  execution_target?: 'real' | 'sandbox' | 'none' | 'unknown' | string;
-  gateway_execution_claim_status?: 'running' | 'completed' | 'unknown' | string;
+  execution_status?: string;
+  execution_target?: string;
+  gateway_execution_claim_status?: string;
   execution_receipt?: ExecutionReceipt | null;
-  execution_evidence?: 'server-observed' | 'caller-declared-required' | 'not-executed-observed' | string;
+  execution_evidence?: string;
   execution_observed_by_server?: boolean;
   stage_context?: Record<string, unknown>;
-  tool_output: {
-    executed: boolean;
-    sandboxed: boolean;
-    simulated?: boolean;
+  tool_output?: {
+    executed?: boolean;
+    output?: string;
     execution_target?: string;
     executor?: string;
-    container_image?: string;
     exit_code?: number | null;
     timed_out?: boolean;
-    output: string;
   };
   timestamp: string;
+  created_at?: string;
+  source_app?: string;
 }
 
 export interface ExecutionReceipt {
@@ -86,7 +60,7 @@ export interface ExecutionReceipt {
   agent_id: string;
   tool_call_hash: string;
   status: 'completed' | 'failed' | 'not_executed' | string;
-  execution_target: 'real' | 'sandbox' | 'none' | string;
+  execution_target: 'real' | 'local-runtime' | 'external' | 'none' | string;
   result_hash?: string;
   duration_ms?: number;
   error?: string;
@@ -120,18 +94,7 @@ export interface GatewayExecutionClaim {
 
 export interface ExecutionInventory {
   generated_at: string;
-  summary: {
-    total: number;
-    completed: number;
-    failed: number;
-    not_executed: number;
-    decision_followed: number;
-    control_verified: number;
-    caller_declared: number;
-    server_observed: number;
-    signed: number;
-    gateway_unknown: number;
-  };
+  summary: Record<string, number>;
   receipts: ExecutionReceipt[];
   gateway_execution_claims: GatewayExecutionClaim[];
 }
@@ -149,69 +112,11 @@ export interface GatewayToolExecutionResult {
 }
 
 export interface AuditHashVerification {
-  run_id: string;
-  scenario_id: string;
-  created_at: string;
+  run_id?: string;
+  created_at?: string;
   valid: boolean;
   checked: number;
-  failures: Array<{
-    step: number;
-    reason: string;
-  }>;
+  failures: Array<{ step?: number; reason: string }>;
   first_hash?: string;
   last_hash?: string;
-}
-
-export interface AgentTrace {
-  id: string;
-  agent: string;
-  role: string;
-  message: string;
-  status: string;
-  timestamp: string;
-}
-
-export interface RunResult {
-  run_id: string;
-  created_at: string;
-  scenario: Scenario;
-  guard_enabled: boolean;
-  agent_trace: AgentTrace[];
-  audit_logs: AuditLog[];
-  alerts: AlertItem[];
-  attack_success: boolean;
-  metrics: {
-    attack_success_rate: number;
-    blocked_count: number;
-    asked_count: number;
-    isolated_count: number;
-    detection_latency_ms: number;
-    false_positive_rate: number;
-  };
-}
-
-export interface CompareResult {
-  scenario_id: string;
-  without_guard: RunResult;
-  with_guard: RunResult;
-  summary: {
-    attack_success_reduced: boolean;
-    blocked_or_controlled: boolean;
-  };
-}
-
-export interface BatchCompareResult {
-  scenario_ids: string[];
-  comparisons: CompareResult[];
-  summary: {
-    total: number;
-    exposed_without_guard: number;
-    controlled_with_guard: number;
-    attack_success_reduced: number;
-    control_rate: number;
-    avg_latency_ms: number;
-    blocked_count: number;
-    asked_count: number;
-    isolated_count: number;
-  };
 }

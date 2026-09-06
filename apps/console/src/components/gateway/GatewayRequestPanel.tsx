@@ -73,7 +73,7 @@ export function GatewayRequestPanel({
           {canExecuteManagedTools === false
             ? '当前身份可以生成模型响应；绑定 Agent 的 executor 或 admin 凭证可开启服务端工具执行。'
             : managedMode
-              ? '允许的工具会在智安哨沙箱执行，回执校验后才回灌 Provider；拒绝/询问不会执行。'
+              ? '允许的工具会在智安哨受限运行时执行，回执校验后才回灌 Provider；拒绝/询问不会执行。'
               : '透明模式只返回已检查的 tool call，由接入方执行并提交回执。'}
         </UiTypography.Text>
       </UiFlex>

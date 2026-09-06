@@ -44,7 +44,7 @@ const apiMocks = vi.hoisted(() => ({
         provider: 'deepseek',
         configured: false,
         model: 'deepseek-chat',
-        mode: 'simulated'
+        mode: 'unconfigured'
       }
     ])
   ),
@@ -67,25 +67,12 @@ vi.mock('../app/operationalApi', () => ({
 }));
 
 const overview = {
-  attack_surfaces: [
-    {
-      id: 'prompt-injection',
-      name: '提示词注入',
-      risk: 'high',
-      status: '已覆盖',
-      summary: '覆盖核心攻击面',
-      samples: 3,
-      scripts: 2,
-      defense: '输入检测与工具拦截'
-    }
-  ],
-  scenarios: [],
   models: [
     {
-      provider: '本地安全评测模型',
+      provider: 'DeepSeek',
       configured: false,
-      model: 'agent-supervisor-sim-guard',
-      mode: 'fallback'
+      model: 'deepseek-chat',
+      mode: 'unconfigured'
     }
   ],
   recent_runs: [],
@@ -96,7 +83,6 @@ const overview = {
     scenario_count: 2,
     recent_run_count: 0,
     block_rate: 0,
-    attack_success_rate: 0,
     avg_latency_ms: 0
   }
 } as Overview;
@@ -115,7 +101,7 @@ describe('SettingsPanel', () => {
           provider: 'deepseek',
           configured: false,
           model: 'deepseek-chat',
-          mode: 'simulated'
+          mode: 'unconfigured'
         }
       ])
     );
@@ -139,11 +125,10 @@ describe('SettingsPanel', () => {
     expect(apiMocks.fetchAgentIntegrationBundle).toHaveBeenCalledTimes(1);
   });
 
-  it('does not expose demo drills or framework-specific generators', async () => {
+  it('does not expose non-operational generators', async () => {
     render(<SettingsPanel overview={overview} refresh={vi.fn().mockResolvedValue(undefined)} />);
     expect(await screen.findByText('接入契约')).toBeInTheDocument();
-    expect(screen.queryByText('OpenClaw')).not.toBeInTheDocument();
-    expect(screen.queryByText('闭环复现实验')).not.toBeInTheDocument();
+    expect(screen.queryByText('验证工具（非生产路径）')).not.toBeInTheDocument();
   });
 
   it('keeps independent settings surfaces available when one read fails', async () => {
@@ -196,7 +181,7 @@ describe('SettingsPanel', () => {
           provider: profile === 'target' ? 'deepseek' : 'zhipu',
           configured: profile === 'target',
           model: profile === 'target' ? 'target-model' : 'optimizer-model',
-          mode: profile === 'target' ? 'real-api' : 'simulated'
+          mode: profile === 'target' ? 'real-api' : 'unconfigured'
         }
       ])
     );

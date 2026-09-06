@@ -65,9 +65,7 @@ export function SecurityEventsPanel({ authContext }: { authContext: AuthContext 
   const liveConnection = useRuntimeEventRefresh(loadAuditLogs);
 
   const view = useAuditLogViewModel({ logs, refresh: loadAuditLogs });
-  const operationalPendingCount = view.latestReviews.filter(
-    (review) => review.status === '待复核' && review.scope === 'operational'
-  ).length;
+  const operationalPendingCount = view.latestReviews.filter((review) => review.status === '待复核').length;
   const unknownExecutionCount = executionInventory?.summary.gateway_unknown ?? 0;
 
   useEffect(() => {

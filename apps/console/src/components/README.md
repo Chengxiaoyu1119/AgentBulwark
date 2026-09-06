@@ -10,9 +10,6 @@
 | `gateway` | OpenAI 代理、MCP、网关 Trace、接入向导和执行证据 | `ui`、`app` 契约、类型 |
 | `audit` | 风险事件、审批、审计和执行回执视图 | `ui`、类型 |
 | `settings` | Provider、Agent 权限、策略和记忆治理配置 | `ui`、类型 |
-| `agent` | Agent 链路与运行证据 | `ui`、类型 |
-| `dashboard` | 历史研究首页组合（不进入运营入口） | `ui`、类型 |
-| `lab` / `report` / `surface` / `scenarios` / `policy` | 研究、报告和历史材料组合 | `ui`、对应类型 |
 
 ## 放置规则
 

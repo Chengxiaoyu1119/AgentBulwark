@@ -32,11 +32,9 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
             ? '执行中·待确认'
             : executionStatus === 'not_executed'
               ? '未执行'
-              : executionStatus === 'server_sandbox_completed'
-                ? '服务端沙箱已完成'
-                : executionStatus === 'not_applicable'
-                  ? '无需外部回执'
-                  : '等待外部回执';
+              : executionStatus === 'not_applicable'
+                ? '无需外部回执'
+                : '等待外部回执';
 
   return (
     <PanelCard
@@ -79,22 +77,22 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
         </UiDescriptions.Item>
         <UiDescriptions.Item label="实际执行目标">
           <UiBadge
-            status={executionTarget === 'real' ? 'warning' : executionTarget === 'sandbox' ? 'processing' : 'default'}
+            status={executionTarget === 'real' || executionTarget === 'external' ? 'warning' : 'default'}
             text={
-              executionTarget === 'real'
-                ? '真实执行器'
-                : executionTarget === 'sandbox'
-                  ? '沙箱'
-                  : executionTarget === 'none'
-                    ? '无'
+              executionTarget === 'real' || executionTarget === 'external'
+                ? '外部执行器'
+                : executionTarget === 'none'
+                  ? '无'
+                  : executionTarget === 'local-runtime'
+                    ? '本地受控运行时'
                     : '未确认'
             }
           />
         </UiDescriptions.Item>
         <UiDescriptions.Item label="工具本次执行">
           <UiBadge
-            status={log.tool_output.executed ? 'success' : 'default'}
-            text={log.tool_output.executed ? '是' : '否'}
+            status={log.tool_output?.executed ? 'success' : 'default'}
+            text={log.tool_output?.executed ? '是' : '否'}
           />
         </UiDescriptions.Item>
         <UiDescriptions.Item label="执行耗时">
@@ -158,7 +156,7 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
 
       <UiTypography.Title level={5}>工具输出</UiTypography.Title>
       <EvidenceCodeBlock size="small" maxHeight="small">
-        {log.tool_output.output}
+        {log.tool_output?.output || '无工具输出'}
       </EvidenceCodeBlock>
 
       {receipt?.error ? (

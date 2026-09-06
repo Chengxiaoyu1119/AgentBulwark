@@ -70,14 +70,14 @@ const apiEnvironment: Record<string, string> = {
 
 export default defineConfig({
   testDir: './e2e',
-  outputDir: '../../test-results/playwright',
+  outputDir: '../../apps/api/runtime/e2e/test-results',
   fullyParallel: false,
   workers: 1,
   timeout: 120_000,
   expect: { timeout: 15_000 },
   retries: 0,
   globalTeardown: './e2e/global-teardown.ts',
-  reporter: [['line'], ['html', { outputFolder: '../../playwright-report', open: 'never' }]],
+  reporter: [['line'], ['html', { outputFolder: '../../apps/api/runtime/e2e/playwright-report', open: 'never' }]],
   use: {
     baseURL: `http://127.0.0.1:${consolePort}`,
     ...(browserChannel ? { channel: browserChannel } : {}),
@@ -87,7 +87,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `${python} -X utf8 -m apps.api.sandbox.fixtures.openai_gateway_provider`,
+      command: `${python} -X utf8 -m apps.api.tests.fixtures.openai_gateway_provider`,
       cwd: repoRoot,
       env: { ...inheritedEnvironment, PYTHONUTF8: '1', FIXTURE_PROVIDER_PORT: providerPort },
       url: `http://127.0.0.1:${providerPort}/health`,

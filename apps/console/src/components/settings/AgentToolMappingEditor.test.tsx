@@ -13,7 +13,7 @@ const browserMapping: AgentToolMappingConfig = {
 };
 
 const databaseMapping: AgentToolMappingConfig = {
-  capability: 'code.run',
+  capability: 'file.read',
   argument_mapping: { query: 'code' },
   required_arguments: ['query'],
   risk_hint: 'custom_database_tool',

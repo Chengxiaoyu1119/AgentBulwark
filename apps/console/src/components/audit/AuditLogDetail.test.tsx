@@ -20,7 +20,6 @@ function uncertainAudit(): AuditLog {
     gateway_execution_claim_status: 'unknown',
     tool_output: {
       executed: false,
-      sandboxed: true,
       output: '执行状态未知。'
     },
     timestamp: '2026-08-23T10:00:00Z'

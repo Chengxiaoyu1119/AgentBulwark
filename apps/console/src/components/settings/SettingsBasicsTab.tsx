@@ -1,7 +1,7 @@
 import { UiCol, UiFlex, UiRow, UiSpace, UiTypography } from '../ui';
 import { LabelTag, PanelCard, UiAlert, UiButton, UiFieldLabel, UiInput, UiSelect, UiSwitch } from '../ui';
 import type { ModelProviderProbeResult, ModelRuntimeConfig, ModelStatusByProfile, Overview } from '@/types';
-import { buildProfileRuntimeRows, fallbackModelProviders } from './modelConfigHelpers';
+import { buildProfileRuntimeRows, defaultModelProviders } from './modelConfigHelpers';
 import {
   ProviderProbeAlert,
   ProviderProbeButton,
@@ -46,7 +46,7 @@ export function SettingsBasicsTab({
   profileStatusError,
   profileStatusLoading = false
 }: SettingsBasicsTabProps) {
-  const providers = modelConfig?.allowed_providers?.length ? modelConfig.allowed_providers : fallbackModelProviders;
+  const providers = modelConfig?.allowed_providers?.length ? modelConfig.allowed_providers : defaultModelProviders;
   const providerOptions = providers.map((provider) => ({ label: provider.label, value: provider.id }));
   const providerIds = providers.map((provider) => provider.id);
   const configuredModelCount = overview.models.filter((model) => model.configured && model.mode === 'real-api').length;

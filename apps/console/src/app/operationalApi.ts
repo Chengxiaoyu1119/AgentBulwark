@@ -38,9 +38,7 @@ export function fetchExecutionInventory(limit = 200): Promise<ExecutionInventory
 }
 
 export function fetchApprovalReviews(status = '全部', limit = 100): Promise<ApprovalReviewList> {
-  return request<ApprovalReviewList>(
-    `/api/approvals?status=${encodeURIComponent(status)}&scope=operational&limit=${limit}`
-  );
+  return request<ApprovalReviewList>(`/api/approvals?status=${encodeURIComponent(status)}&limit=${limit}`);
 }
 
 export function decideApprovalReview(

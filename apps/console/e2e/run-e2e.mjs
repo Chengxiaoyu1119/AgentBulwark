@@ -1,13 +1,15 @@
 import { spawn } from 'node:child_process';
 import { rm } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath, URL } from 'node:url';
 
 const e2eRoot = fileURLToPath(new URL('.', import.meta.url));
+const repoRoot = path.resolve(e2eRoot, '../../..');
 const playwrightCli = path.resolve(e2eRoot, '../node_modules/playwright/cli.js');
-const runtimeDir = path.join(os.tmpdir(), `agent-security-supervisor-e2e-${process.pid}-${Date.now()}`);
+const runtimeDir =
+  process.env.AGENT_SUPERVISOR_E2E_RUNTIME_DIR ||
+  path.join(repoRoot, 'apps', 'api', 'runtime', 'e2e', `agent-security-supervisor-e2e-${process.pid}-${Date.now()}`);
 
 function runPlaywright() {
   return new Promise((resolve, reject) => {

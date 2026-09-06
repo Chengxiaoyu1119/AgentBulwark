@@ -7,7 +7,7 @@ import type {
   Overview
 } from '@/types';
 
-export const fallbackModelProviders: ModelProviderOption[] = [
+export const defaultModelProviders: ModelProviderOption[] = [
   { id: 'deepseek', label: 'DeepSeek' },
   { id: 'zhipu', label: '智谱' },
   { id: 'openai-compatible', label: 'OpenAI 兼容接口' }

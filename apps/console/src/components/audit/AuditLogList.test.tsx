@@ -16,7 +16,7 @@ function auditLog(index: number): AuditLog {
     policy_id: 'default',
     reason: `reason-${index}`,
     recommendation: '',
-    tool_output: { executed: true, sandboxed: false, output: '' },
+    tool_output: { executed: true, output: '' },
     timestamp: `2026-08-12T10:${String(index).padStart(2, '0')}:00Z`
   };
 }

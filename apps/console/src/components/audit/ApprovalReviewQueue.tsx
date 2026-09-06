@@ -35,8 +35,7 @@ function executionStatus(status?: ApprovalReview['execution_status']) {
     claimed: { label: 'Agent执行中', color: 'processing' },
     completed: { label: '工具已执行', color: 'success' },
     failed: { label: '恢复执行失败', color: 'error' },
-    rejected: { label: '保持阻断', color: 'error' },
-    sandbox_replayed: { label: '已在隔离环境重放', color: 'cyan' }
+    rejected: { label: '保持阻断', color: 'error' }
   }[status];
 }
 
@@ -64,7 +63,6 @@ export function ApprovalReviewQueue({
     () =>
       [...reviews]
         .filter((review) => effectiveStatusFilter === '全部' || review.status === effectiveStatusFilter)
-        .filter((review) => review.scope === 'operational')
         .sort((left, right) => {
           if (focusAuditId) {
             const focusDiff = Number(right.audit_id === focusAuditId) - Number(left.audit_id === focusAuditId);
@@ -165,15 +163,6 @@ export function ApprovalReviewQueue({
                   {review.standard_capability && review.standard_capability !== review.tool ? (
                     <UiTypography.Text type="secondary">→ {review.standard_capability}</UiTypography.Text>
                   ) : null}
-                  <LabelTag variant="filled" color={review.scope === 'operational' ? 'blue' : 'default'}>
-                    {review.scope === 'operational'
-                      ? '业务'
-                      : review.scope === 'experiment'
-                        ? '实验'
-                        : review.scope === 'demo'
-                          ? '演示'
-                          : '未标注'}
-                  </LabelTag>
                   <UiTypography.Text type="secondary" className="zh-policy-inline">
                     Agent {review.agent_id}
                   </UiTypography.Text>

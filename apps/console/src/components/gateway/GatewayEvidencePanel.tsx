@@ -207,10 +207,10 @@ export function GatewayEvidencePanel({
             >
               <UiFlex justify="space-between" align="center" gap={12} wrap="wrap">
                 <UiTypography.Text type="secondary">
-                  这是闭环中的实际执行步骤，默认进入智安哨本地沙箱，不接受浏览器重新提交的工具参数。
+                  这是闭环中的实际执行步骤，默认进入智安哨受限运行时，不接受浏览器重新提交的工具参数。
                 </UiTypography.Text>
                 <UiButton type="primary" icon={<Play size={16} />} loading={executingTool} onClick={onExecuteTool}>
-                  服务端沙箱执行
+                  服务端受限执行
                 </UiButton>
               </UiFlex>
               {executionError && <UiAlert type="error" showIcon title={executionError} className="zh-mt-12" />}
