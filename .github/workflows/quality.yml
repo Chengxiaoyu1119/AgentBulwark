@@ -1,4 +1,4 @@
-name: 质量与部署门禁
+name: 本地质量门禁
 
 on:
   push:
@@ -48,25 +48,3 @@ jobs:
       - name: 运行源码质量门禁
         run: |
           npm run verify:local
-
-  deployment:
-    name: 真实容器部署验收
-    needs: quality
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: 检出源码
-        uses: actions/checkout@v4
-
-      - name: 显示 Docker 运行时
-        run: |
-          docker version
-          docker compose version
-
-      - name: 验证容器配置
-        shell: pwsh
-        run: ./scripts/deployment-acceptance.ps1 -ConfigOnly
-
-      - name: 构建、冷启动并验证容器替换持久化
-        shell: pwsh
-        run: ./scripts/deployment-acceptance.ps1

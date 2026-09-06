@@ -9,12 +9,9 @@ import ts from '../apps/console/node_modules/typescript/lib/typescript.js';
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.join(repositoryRoot, 'apps', 'console');
 const srcRoot = path.join(root, 'src');
-const allowedSrcDirectories = new Set(['app', 'components', 'design', 'fallback', 'pages', 'test', 'types']);
+const allowedSrcDirectories = new Set(['app', 'components', 'design', 'pages', 'test', 'types']);
 const allowedSrcFiles = new Set([
   'App.tsx',
-  'api.test.ts',
-  'api.ts',
-  'fallback.ts',
   'main.tsx',
   'styles.css',
   'types.ts',
@@ -23,60 +20,22 @@ const allowedSrcFiles = new Set([
   '\u89c6\u89c9\u7cfb\u7edf.css'
 ]);
 const allowedComponentDirectories = new Set([
-  'alerts',
   'audit',
-  'agent',
-  'dashboard',
-  'evidence',
   'gateway',
-  'lab',
-  'policy',
-  'report',
-  'scenarios',
   'settings',
-  'surface',
   'ui'
 ]);
 const allowedComponentRootFiles = new Set(['README.md', 'index.ts']);
 const allowedDesignFiles = new Set(['README.md', 'tokens.css']);
 const allowedDesignDirectories = new Set(['视觉系统']);
-const allowedFallbackFiles = new Set(['index.ts', 'overview.ts']);
 const allowedVisualFiles = new Set([
-  'agent.css',
-  'experiments.css',
   'foundation.css',
   'operations.css',
   'settings.css',
-  'settings-experiments.css',
-  'shared.css',
-  'surface.css'
+  'shared.css'
 ]);
 const allowedPageExtensions = new Set(['.tsx']);
 const scannedExtensions = new Set(['.css', '.ts', '.tsx']);
-const experimentOwnerPrefixes = [
-  'zh-agent-',
-  'zh-attack-',
-  'zh-authorized-',
-  'zh-brief-',
-  'zh-calibration-',
-  'zh-causal-',
-  'zh-comparison-',
-  'zh-competition-',
-  'zh-custom-attack-',
-  'zh-dashboard-',
-  'zh-delivery-',
-  'zh-dual-model-',
-  'zh-feature-map-',
-  'zh-lab-',
-  'zh-report-',
-  'zh-roadmap-',
-  'zh-scenario-',
-  'zh-surface-',
-  'zh-target-',
-  'zh-testset-',
-  'zh-threshold-'
-];
-
 const colorPattern = /(?<!&)#[0-9a-fA-F]{3,8}|rgba?\(/g;
 const cssTokenPattern = /var\(--/g;
 const zhiAnTokenDefinitionPattern = /(--zh-[a-z0-9-]+)\s*:/g;
@@ -464,27 +423,8 @@ const unexpectedVisualEntries = listDirectoryEntries(visualRoot)
   .filter((entry) => entry.isDirectory() || !allowedVisualFiles.has(entry.name))
   .map((entry) => `src/design/视觉系统/${entry.name}`);
 
-const fallbackRoot = path.join(srcRoot, 'fallback');
-const unexpectedFallbackEntries = listDirectoryEntries(fallbackRoot)
-  .filter((entry) => entry.isDirectory() || !allowedFallbackFiles.has(entry.name))
-  .map((entry) => `src/fallback/${entry.name}`);
-const fallbackRuntimeText = Array.from(allowedFallbackFiles, (file) => readMaybe(`src/fallback/${file}`)).join('\n');
-const retiredFallbackMarkers = Array.from(
-  new Set(fallbackRuntimeText.match(/fallback(?:Overview|Policies|Scenarios)|offline(?:Policies|Scenarios)/g) ?? [])
-).sort();
-
 const productionSourceFiles = runtimeSourceClosure('src/main.tsx');
 const productionSourceRelativeFiles = productionSourceFiles.map(toRelativeSourcePath);
-const productionForbiddenModules = new Set([
-  'src/api.ts',
-  'src/app/attackLabApi.ts',
-  'src/app/fallbackReport.ts',
-  'src/app/reportEvaluationApi.ts',
-  'src/app/useAppActions.ts'
-]);
-const productionExperimentModules = productionSourceRelativeFiles
-  .filter((file) => productionForbiddenModules.has(file))
-  .sort();
 const productionClassTokens = classTokensForFiles(productionSourceFiles);
 
 const files = walkFiles(srcRoot)
@@ -565,12 +505,8 @@ const styleEntryText = readMaybe('src/styles.css');
 const visualEntryText = readMaybe('src/视觉系统.css');
 const foundationVisualText = readMaybe('src/design/视觉系统/foundation.css');
 const operationsVisualText = readMaybe('src/design/视觉系统/operations.css');
-const experimentsVisualText = readMaybe('src/design/视觉系统/experiments.css');
 const sharedVisualText = readMaybe('src/design/视觉系统/shared.css');
 const settingsVisualText = readMaybe('src/design/视觉系统/settings.css');
-const settingsExperimentsVisualText = readMaybe('src/design/视觉系统/settings-experiments.css');
-const agentVisualText = readMaybe('src/design/视觉系统/agent.css');
-const surfaceVisualText = readMaybe('src/design/视觉系统/surface.css');
 const productionVisualText = [foundationVisualText, operationsVisualText, sharedVisualText, settingsVisualText].join(
   '\n'
 );
@@ -583,12 +519,6 @@ const referencedProductionZhiAnTokens = Array.from(
 const undefinedProductionZhiAnTokens = referencedProductionZhiAnTokens.filter(
   (token) => !definedZhiAnTokens.has(token)
 );
-const experimentOwnershipText = [
-  experimentsVisualText,
-  settingsExperimentsVisualText,
-  agentVisualText,
-  surfaceVisualText
-].join('\n');
 const sharedCssLiteralSpacingCount = countMatches(sharedVisualText, sharedCssLiteralSpacingPattern);
 const productionCssLiteralSpacingCount = countMatches(productionVisualText, sharedCssLiteralSpacingPattern);
 const appLayoutSelectorCounts = countCssSelectorDefinitions(productionVisualText, criticalAppLayoutSelectors);
@@ -605,35 +535,13 @@ const expectedVisualEntry = [
 ].join('\n');
 const styleEntryMatchesOwnership = styleEntryText.trim() === expectedStyleEntry;
 const visualEntryMatchesOwnership = visualEntryText.trim() === expectedVisualEntry;
-const operationExperimentOwners = Array.from(
-  new Set(
-    cssRuleSelectors([operationsVisualText, settingsVisualText].join('\n'))
-      .flatMap(selectorOwnerClasses)
-      .filter((className) => experimentOwnerPrefixes.some((prefix) => className.startsWith(prefix)))
-  )
-).sort();
-const experimentProductionOwners = Array.from(
-  new Set(
-    cssRuleSelectors(experimentOwnershipText)
-      .flatMap(selectorOwnerClasses)
-      .filter((className) => isClassTokenUsed(className, productionClassTokens))
-  )
-).sort();
-const historicalStyleImport = '../design/视觉系统/experiments.css';
-const missingHistoricalStyleImports = ['src/pages/Dashboard.tsx', 'src/pages/ReportPanel.tsx'].filter(
-  (file) => !readMaybe(file).includes(historicalStyleImport)
-);
 const visualStyleFiles = [
   'src/styles.css',
   'src/视觉系统.css',
   'src/design/视觉系统/foundation.css',
   'src/design/视觉系统/operations.css',
-  'src/design/视觉系统/experiments.css',
   'src/design/视觉系统/shared.css',
-  'src/design/视觉系统/settings.css',
-  'src/design/视觉系统/settings-experiments.css',
-  'src/design/视觉系统/agent.css',
-  'src/design/视觉系统/surface.css'
+  'src/design/视觉系统/settings.css'
 ];
 const visualStyleFileInfo = Object.fromEntries(visualStyleFiles.map((file) => [file, fileInfo(file)]));
 const darkLayoutRules = [
@@ -692,9 +600,6 @@ const budgets = {
   unexpected_page_entry_max: 0,
   unexpected_design_entry_max: 0,
   unexpected_visual_entry_max: 0,
-  unexpected_fallback_entry_max: 0,
-  retired_fallback_marker_max: 0,
-  production_experiment_module_max: 0,
   duplicate_app_layout_selector_max: 0,
   shared_css_literal_spacing_max: 0,
   production_css_literal_spacing_max: 0,
@@ -702,20 +607,13 @@ const budgets = {
   unexpected_runtime_event_subscription_owner_max: 0,
   missing_runtime_event_subscription_owner_max: 0,
   undefined_production_token_max: 0,
-  operation_experiment_owner_max: 0,
-  experiment_production_owner_max: 0,
-  missing_historical_style_import_max: 0,
   visual_file_max_lines: {
     'src/styles.css': 10,
     'src/视觉系统.css': 10,
     'src/design/视觉系统/foundation.css': 250,
     'src/design/视觉系统/operations.css': 1600,
-    'src/design/视觉系统/experiments.css': 3400,
     'src/design/视觉系统/shared.css': 350,
-    'src/design/视觉系统/settings.css': 550,
-    'src/design/视觉系统/settings-experiments.css': 550,
-    'src/design/视觉系统/agent.css': 400,
-    'src/design/视觉系统/surface.css': 1000
+    'src/design/视觉系统/settings.css': 550
   }
 };
 const oversizedVisualFiles = Object.entries(budgets.visual_file_max_lines)
@@ -783,17 +681,6 @@ if (unexpectedDesignEntries.length > budgets.unexpected_design_entry_max) {
 if (unexpectedVisualEntries.length > budgets.unexpected_visual_entry_max) {
   violations.push(`Unexpected visual system entries: ${unexpectedVisualEntries.join(', ')}`);
 }
-if (unexpectedFallbackEntries.length > budgets.unexpected_fallback_entry_max) {
-  violations.push(`Unexpected runtime fallback entries: ${unexpectedFallbackEntries.join(', ')}`);
-}
-if (retiredFallbackMarkers.length > budgets.retired_fallback_marker_max) {
-  violations.push(`Retired demo fallback exports returned to the runtime bundle: ${retiredFallbackMarkers.join(', ')}`);
-}
-if (productionExperimentModules.length > budgets.production_experiment_module_max) {
-  violations.push(
-    `Experiment API modules leaked into the production dependency graph: ${productionExperimentModules.join(', ')}`
-  );
-}
 if (!styleEntryMatchesOwnership) {
   violations.push('src/styles.css must import only foundation.css and operations.css in the documented order');
 }
@@ -806,15 +693,6 @@ if (oversizedVisualFiles.length) {
       .map((item) => `${item.file} ${item.lines}/${item.maxLines}`)
       .join(', ')}`
   );
-}
-if (operationExperimentOwners.length > budgets.operation_experiment_owner_max) {
-  violations.push(`Experiment-owned selectors leaked into operations.css: ${operationExperimentOwners.join(', ')}`);
-}
-if (experimentProductionOwners.length > budgets.experiment_production_owner_max) {
-  violations.push(`Production-owned selectors leaked into experiments.css: ${experimentProductionOwners.join(', ')}`);
-}
-if (missingHistoricalStyleImports.length > budgets.missing_historical_style_import_max) {
-  violations.push(`Historical pages missing explicit experiment styles: ${missingHistoricalStyleImports.join(', ')}`);
 }
 if (duplicateAppLayoutSelectors.length > budgets.duplicate_app_layout_selector_max) {
   violations.push(
@@ -894,10 +772,7 @@ const result = {
   unexpected_page_entries: unexpectedPageEntries,
   unexpected_design_entries: unexpectedDesignEntries,
   unexpected_visual_entries: unexpectedVisualEntries,
-  unexpected_fallback_entries: unexpectedFallbackEntries,
-  retired_fallback_markers: retiredFallbackMarkers,
   production_source_files: productionSourceRelativeFiles,
-  production_experiment_modules: productionExperimentModules,
   runtime_event_subscription_owners: runtimeEventSubscriptionOwners,
   unexpected_runtime_event_subscription_owners: unexpectedRuntimeEventSubscriptionOwners,
   missing_runtime_event_subscription_owners: missingRuntimeEventSubscriptionOwners,
@@ -905,9 +780,6 @@ const result = {
   production_class_prefixes: Array.from(productionClassTokens.prefixes).sort(),
   style_entry_matches_ownership: styleEntryMatchesOwnership,
   visual_entry_matches_ownership: visualEntryMatchesOwnership,
-  operation_experiment_owners: operationExperimentOwners,
-  experiment_production_owners: experimentProductionOwners,
-  missing_historical_style_imports: missingHistoricalStyleImports,
   visual_style_files: visualStyleFileInfo,
   oversized_visual_files: oversizedVisualFiles,
   app_layout_selector_counts: appLayoutSelectorCounts,
@@ -924,7 +796,6 @@ const result = {
     page_file_extensions: Array.from(allowedPageExtensions).sort(),
     design_files: Array.from(allowedDesignFiles).sort(),
     design_directories: Array.from(allowedDesignDirectories).sort(),
-    fallback_files: Array.from(allowedFallbackFiles).sort(),
     visual_files: Array.from(allowedVisualFiles).sort(),
     antd_wrapper_directory: 'src/components/ui'
   },
@@ -936,7 +807,7 @@ const result = {
     'Use Ant Design primitives directly inside src/components/ui only when creating reusable wrappers.',
     'Keep new colors in src/design/tokens.css and consume semantic variables.',
     'Keep src top-level entries within the documented pages/components/design structure.',
-    'Keep production selectors in operations.css and historical research selectors in experiments.css.',
+    'Keep production selectors in operations.css and shared selectors in shared.css.',
     'Keep src/styles.css and src/视觉系统.css as import-only ownership manifests.',
     'Reserve inline styles for values that must be calculated from runtime data.',
     'Split App.tsx by page only after shared UI components are stable.',

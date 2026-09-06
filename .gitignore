@@ -26,6 +26,8 @@ __pycache__/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.cache/
+.eslintcache
 
 # 测试与覆盖率报告
 .coverage
@@ -52,20 +54,17 @@ playwright-report/
 
 # 本地运行数据、数据库和日志
 *.log
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 *.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
 apps/api/runtime/
-apps/www/.dev-server*.log
 apps/api/sandbox/runtime/
-
-# 沙箱生成物和比赛提交包
-apps/api/sandbox/workspace/
-apps/api/sandbox/outbox/
-apps/api/sandbox/memory/
-apps/api/sandbox/external_agent_runtime/
-apps/api/sandbox/reports/
-apps/api/sandbox/release/
-apps/api/sandbox/submission_packages/
-apps/api/agent_supervisor/sandbox/
+apps/www/.dev-server*.log
+docs/media/
+docs/markdown/
 
 # 环境变量文件，保留示例文件
 .env
@@ -77,6 +76,7 @@ apps/api/agent_supervisor/sandbox/
 .agents/
 .codex-ui.log
 .playwright-mcp/
+/.vscode/
 
 # 操作系统、编辑器与包管理器残留
 .DS_Store
@@ -93,10 +93,9 @@ pnpm-debug.log*
 Study/
 
 # 仅本地使用的计划和生成笔记
-/docs/
 部署包/
 SOUL.md
-scripts/archive/
+legacy/scripts/.cache/
 up.zip
 
 # 本地仓库说明快照
@@ -105,14 +104,12 @@ PROJECT_ARCHITECTURE.md
 .trae/
 
 # 本地临时会话和实验导出
-session.md
-apps/api/sandbox/competition-package
 
 # BERT training runtime artifacts (checkpoint/logging/cached variants/model binaries, dataset results and reports are committed)
-training/dataset/variant_checkpoint.json
-training/dataset/generation*.log
-training/model/*.onnx
-training/checkpoints/
+legacy/training/dataset/variant_checkpoint.json
+legacy/training/dataset/generation*.log
+legacy/training/model/*.onnx
+legacy/training/checkpoints/
 
 # B-05 对比基线模型与评测产物（281MB ONNX 不入库，脚本可复现）
-training/_compare/
+legacy/training/_compare/
