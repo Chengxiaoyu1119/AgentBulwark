@@ -77,7 +77,7 @@ def _response(payload: dict[str, Any]) -> dict[str, Any]:
     ):
         # This branch is intentionally a clean model-visible request that
         # produces a state-changing tool call.  The baseline comparison may
-        # execute it in its unprotected fixture sandbox; the guarded gateway
+        # execute it in an unprotected fixture runtime; the guarded gateway
         # must stop it at the tool-contract boundary because fixture-agent has
         # no file.write capability.  The resulting state hashes make the
         # attack-success/defense-suppression distinction observable.

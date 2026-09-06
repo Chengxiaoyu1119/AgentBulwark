@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
-from apps.api.agent_supervisor.domains.runtime.tools import MEMORY_LOCK, _atomic_write_json, default_sandbox_paths
+from apps.api.agent_supervisor.domains.runtime.tools import MEMORY_LOCK, _atomic_write_json, default_runtime_paths
 from apps.api.agent_supervisor.paths import MEMORY_DIR
 from apps.api.agent_supervisor.storage.database import append_runtime_event
 
@@ -117,7 +117,7 @@ def _memory_file_for_agent(agent_id: str | None) -> Any:
     """
 
     if agent_id:
-        return default_sandbox_paths(agent_id).memory / "memory.json"
+        return default_runtime_paths(agent_id).memory / "memory.json"
     return MEMORY_FILE
 
 

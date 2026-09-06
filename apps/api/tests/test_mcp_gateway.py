@@ -1256,9 +1256,9 @@ class EnforcedBlockingTest(unittest.TestCase):
                 self.assertIsNone(self.gateway.handle(notification, session_id="session-notify-audit-fail"))
             self.assertFalse(Path(trace).exists() and Path(trace).read_text(encoding="utf-8").strip())
 
-    def test_quarantine_code_run_never_reaches_upstream(self) -> None:
+    def test_unknown_execution_capability_never_reaches_upstream(self) -> None:
         blocked = _handle(self.gateway,
-            _request("tools/call", {"name": "code.run", "arguments": {"command": "rm -rf /"}}),
+            _request("tools/call", {"name": "runtime.exec", "arguments": {"command": "echo blocked"}}),
         )
         self.assertTrue(blocked["result"]["isError"])
         self.assertEqual(self._trace_events(), [])
@@ -3033,12 +3033,12 @@ class SupervisionLatencyTest(unittest.TestCase):
             "acceptance_p95_ms": 10,
             "passed": p95 < 10,
         }
-        report_path = Path("apps/api/sandbox/reports") / "mcp_gateway_latency_report.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps({"generated_at": _now_iso(), **report}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        with tempfile.TemporaryDirectory(prefix="mcp-latency-") as temp_dir:
+            report_path = Path(temp_dir) / "mcp_gateway_latency_report.json"
+            report_path.write_text(
+                json.dumps({"generated_at": _now_iso(), **report}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
         self.assertLess(p95, 10, f"监督开销 p95={p95:.2f}ms 超过 10ms 验收线")
 
 

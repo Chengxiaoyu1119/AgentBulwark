@@ -378,8 +378,6 @@ def estimate_request_plan(
             prompt_tokens,
             _env_int(RESOURCE_MANAGED_CONTEXT_ENV, _DEFAULT_MANAGED_CONTEXT_TOKENS, minimum=1, maximum=60_000),
         )
-    elif mode == "research":
-        provider_calls = 4
     else:
         provider_calls = 1
     estimated_tokens = provider_calls * (prompt_tokens + output_value * completions)
@@ -391,7 +389,7 @@ def estimate_request_plan(
     )
     return ResourcePlan(
         agent_id=_normalized_agent_id(agent_id),
-        mode=mode if mode in {"managed", "research"} else "transparent",
+        mode="managed" if mode == "managed" else "transparent",
         provider_calls=provider_calls,
         completions=completions,
         prompt_tokens_per_call=prompt_tokens,

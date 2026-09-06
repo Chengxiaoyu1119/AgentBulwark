@@ -27,7 +27,6 @@ TOOL_BASE_SCORES = {
     "file.write": 24,
     "mail.send": 20,
     "api.call": 20,
-    "code.run": 45,
     "memory.write": 28,
     "memory.read": 24,
     "env.read": 18,
@@ -54,7 +53,6 @@ RISK_HINT_SCORES = {
 }
 
 PROMPT_MARKERS = ["忽略", "无约束", "绕过", "ignore previous", "do anything now", "不要解释安全规则"]
-DANGEROUS_COMMAND_MARKERS = ["rm ", "del ", "format", "curl ", "wget ", "powershell -enc", "chmod 777"]
 SENSITIVE_WORDS = ["secret", "token", "team", "flag", "submission", "judge", "session", "队伍", "赛题", "提交物", "密钥", "confidential"]
 SENSITIVE_EGRESS_MARKERS = re.compile(
     r"(?i)(?<![a-z0-9])(?:api[_-]?key|access[_-]?token|token|secret|password|credential|private[_-]?key|flag|authorization|cookie|set-cookie|x-api-key|bearer|session)(?![a-z0-9])"
@@ -139,15 +137,6 @@ def _argument_score(tool: str, args: dict[str, Any], factors: list[str]) -> int:
             if any(SENSITIVE_EGRESS_MARKERS.search(variant) for variant in canonical_text_variants(serialized)):
                 score += 38
                 factors.append("外部 API 写请求包含疑似凭据或敏感数据字段")
-
-    if tool == "code.run":
-        command = canonical_text(args.get("command")).lower()
-        if any(marker in command for marker in DANGEROUS_COMMAND_MARKERS):
-            score += 48
-            factors.append("命令包含危险片段")
-        if command and not command.startswith(("python --version", "python -v", "python scripts/")):
-            score += 18
-            factors.append("命令不在推荐白名单形态")
 
     if tool == "memory.write":
         content = canonical_text(args.get("content")).lower()

@@ -23,7 +23,7 @@ class AnomalyResult:
 
 ANOMALY_REVIEW_THRESHOLD = 55
 ANOMALY_REJECT_THRESHOLD = 90
-HIGH_IMPACT_TOOLS = {"code.run", "file.write", "mail.send", "api.call", "memory.write"}
+HIGH_IMPACT_TOOLS = {"file.write", "mail.send", "api.call", "memory.write"}
 KNOWN_TOOLS = SUPPORTED_TOOLS
 UNTRUSTED_CONTEXT_MARKERS = ["网页", "公告", "工具返回", "外部", "摘要", "metadata", "retrieved", "browser", "赛题附件", "训练平台"]
 SENSITIVE_MARKERS = [
@@ -138,16 +138,7 @@ def _argument_score(tool: str, args: dict[str, Any], signals: list[str]) -> int:
             signals.append("API 调用疑似批量导出")
         if any(marker in endpoint for marker in ["admin", "scoreboard", "challenge", "seed", "judge", "session", "campus-net", "submissions/export", "teams/export"]):
             score += 30
-            signals.append("API 调用指向高敏比赛或管理域")
-
-    if tool == "code.run":
-        command = canonical_text(args.get("command")).lower()
-        if command and not command.startswith(("python --version", "python -v", "python scripts/")):
-            score += 30
-            signals.append("代码执行命令不在低风险白名单形态")
-        if any(marker in command for marker in ["powershell", "cmd", "bash", "sh ", "rm ", "del ", "curl", "wget"]):
-            score += 35
-            signals.append("代码执行命令包含系统或网络动作")
+            signals.append("API 调用指向高敏管理或批量导出域")
 
     if tool == "memory.write":
         content = canonical_text(args.get("content")).lower()

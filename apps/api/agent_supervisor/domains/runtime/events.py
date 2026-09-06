@@ -7,9 +7,9 @@ from time import perf_counter
 from typing import Any
 from uuid import uuid4
 
-from apps.api.agent_supervisor.domains.evaluations.outcomes import evaluate_tool_effect
 from apps.api.agent_supervisor.domains.governance.approvals import create_approval_review
 from apps.api.agent_supervisor.domains.governance.correlation import assess_cross_agent_chain
+from apps.api.agent_supervisor.domains.governance.effect import evaluate_tool_effect
 from apps.api.agent_supervisor.domains.governance.integrity import attach_audit_hashes
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision, decide
@@ -25,7 +25,7 @@ from apps.api.agent_supervisor.domains.runtime.execution_receipts import (
     tool_result_hash,
     verify_execution_receipt,
 )
-from apps.api.agent_supervisor.domains.runtime.tools import SandboxPaths, default_sandbox_paths, execute_tool
+from apps.api.agent_supervisor.domains.runtime.tools import RuntimePaths, default_runtime_paths, execute_tool
 from apps.api.agent_supervisor.storage.database import (
     append_runtime_event,
     claim_gateway_execution,
@@ -47,9 +47,9 @@ class ServerExecutionUncertainError(ValueError):
 def evaluate_agent_event(
     event: dict[str, Any],
     guard_enabled: bool = True,
-    execute_in_sandbox: bool = False,
-    review_scope: str = "operational",
-    sandbox: SandboxPaths | None = None,
+    execute_managed: bool = False,
+    receipt_required: bool = True,
+    runtime: RuntimePaths | None = None,
 ) -> dict[str, Any]:
     """Evaluate a real agent tool-call event and persist it as audit evidence."""
     raw_tool_call = event.get("tool_call") or {}
@@ -127,25 +127,22 @@ def evaluate_agent_event(
             decision.reason = "同一会话内出现敏感读取、批量导出或记忆访问后继续发送结果，疑似跨 Agent 分步外泄链。"
             decision.recommendation = "暂停自动执行，人工确认前序数据来源、当前收件人和业务授权。"
     detection_latency_ms = round((perf_counter() - decision_started) * 1000, 3)
-    should_execute = execute_in_sandbox and decision.decision in {"允许", "隔离"}
+    should_execute = execute_managed and decision.decision in {"允许", "隔离"}
     # This marker is written only by the authenticated supervisor-owned
-    # execution route.  ``execute_in_sandbox`` by itself is also accepted by
-    # local labs and caller-controlled fixtures, so it cannot be used as proof
-    # that the server owned the execution decision or observed non-execution.
+    # The flag only requests local managed execution; durable server evidence
+    # still comes from the authenticated server-owned route below.
     execution_pending = bool(server_owned_execution and should_execute)
     execution_started = perf_counter()
-    # The authenticated server-owned route must not fall back to the legacy
-    # process-wide sandbox.  Keep explicit comparison/test sandboxes intact,
-    # but derive the production default from the bound Agent identity.
-    effective_sandbox = sandbox
-    if effective_sandbox is None and server_owned_execution:
-        effective_sandbox = default_sandbox_paths(agent_id)
+    # The authenticated server-owned route always derives its runtime from the
+    # bound Agent identity so files and queued effects stay isolated.
+    effective_runtime = runtime
+    if effective_runtime is None and server_owned_execution:
+        effective_runtime = default_runtime_paths(agent_id)
 
     tool_output = (
         {
             "executed": False,
             "pending": True,
-            "sandboxed": True,
             "execution_target": "none",
             "output": "服务端已建立执行意图，等待工具执行边界。",
         }
@@ -153,17 +150,16 @@ def evaluate_agent_event(
         else execute_tool(
             tool_call,
             decision.decision,
-            sandbox=effective_sandbox,
+            runtime=effective_runtime,
             network_addresses=network_addresses,
             memory_namespace=agent_id,
         )
         if should_execute
         else {
             "executed": False,
-            "sandboxed": True,
             "output": (
                 f"工具调用未执行，监督决策为：{decision.decision}。"
-                if execute_in_sandbox
+                if execute_managed
                 else "监督已完成，等待外部 Agent 按决策执行并提交回执。"
             ),
         }
@@ -203,8 +199,8 @@ def evaluate_agent_event(
         "standard_capability": tool_call["tool"],
         "standard_arguments": audit_standard_arguments,
         "tool_mapping": tool_resolution.mapping,
-        "execution_receipt_expected": review_scope == "operational" or should_execute,
-        # ``execute_in_sandbox=True`` means this process owns the executor and
+        "execution_receipt_expected": receipt_required or should_execute,
+        # ``execute_managed=True`` means this process owns the executor and
         # can observe the resulting tool output.  In the normal external-Agent
         # path the caller owns execution, so a later receipt is an attestation,
         # not server-observed evidence.
@@ -213,7 +209,7 @@ def evaluate_agent_event(
         else "server-observed"
         if server_owned_execution or (should_execute and bool(raw_tool_output.get("executed")))
         else "caller-declared-required"
-        if review_scope == "operational" and not should_execute
+        if receipt_required and not should_execute
         else "not-executed-observed",
         # For a server-owned route, a controlled non-execution is also an
         # observed enforcement result.  It is distinct from a caller-declared
@@ -236,7 +232,7 @@ def evaluate_agent_event(
             "none"
             if execution_pending
             else
-            str(raw_tool_output.get("execution_target") or "sandbox")
+            str(raw_tool_output.get("execution_target") or "local-runtime")
             if execution_completed or (should_execute and raw_tool_output.get("executed") and not executor_unavailable)
             else "none"
         ),
@@ -311,7 +307,7 @@ def evaluate_agent_event(
             "外部智能体生成工具调用意图",
             "在执行工具前转发到智安哨监督接口",
             "监督器根据策略输出允许、拒绝、询问或隔离",
-            "调用方按决策执行、阻断、人工确认或沙箱隔离",
+            "调用方按决策执行、阻断、人工确认或受限隔离",
         ],
         "attack_path": [
             "外部智能体上下文",
@@ -365,7 +361,7 @@ def evaluate_agent_event(
         "attack_success": attack_success,
         "attack_outcome": {
             "attack_success": attack_success,
-            "source": "observed-sandbox-effect" if should_execute else "pre-execution-no-effect-observed",
+            "source": "observed-local-runtime-effect" if should_execute else "pre-execution-no-effect-observed",
             "assertions": [observed_effect],
         },
         "metrics": {
@@ -429,10 +425,10 @@ def evaluate_agent_event(
                 tool_call,
                 decision.decision,
                 # Reuse the identity-bound path selected before the intent is
-                # persisted.  Falling back to ``sandbox=None`` here would
-                # silently route the second phase to the process-wide fixture
+                # persisted.  Falling back to ``runtime=None`` here would
+                # silently route the second phase to the process-wide runtime
                 # workspace and break the Agent isolation invariant.
-                sandbox=effective_sandbox,
+                runtime=effective_runtime,
                 network_addresses=network_addresses,
                 memory_namespace=agent_id,
             )
@@ -470,7 +466,7 @@ def evaluate_agent_event(
                     else "failed"
                 ),
                 "execution_target": (
-                    str(raw_tool_output.get("execution_target") or "sandbox")
+                    str(raw_tool_output.get("execution_target") or "local-runtime")
                     if raw_tool_output.get("executed") and not executor_unavailable
                     else "none"
                 ),
@@ -489,7 +485,7 @@ def evaluate_agent_event(
         result["attack_success"] = attack_success
         result["attack_outcome"] = {
             "attack_success": attack_success,
-            "source": "observed-sandbox-effect",
+            "source": "observed-local-runtime-effect",
             "assertions": [observed_effect],
         }
         existing_metrics = result.get("metrics")
@@ -532,9 +528,9 @@ def evaluate_agent_event(
         "reason": audit_reason,
         "recommendation": audit_recommendation,
         "execution_mode": _execution_mode(decision.decision),
-        "execution_receipt_required": review_scope == "operational" and not should_execute,
-        "execution_status": audit_log["execution_status"] if execute_in_sandbox else "awaiting_receipt",
-        "execution_target": audit_log["execution_target"] if execute_in_sandbox else "none",
+        "execution_receipt_required": receipt_required and not should_execute,
+        "execution_status": audit_log["execution_status"] if execute_managed else "awaiting_receipt",
+        "execution_target": audit_log["execution_target"] if execute_managed else "none",
         "execution_evidence": audit_log["execution_evidence"],
         "execution_observed_by_server": audit_log["execution_observed_by_server"],
         "execution_duration_ms": execution_duration_ms,
@@ -626,7 +622,7 @@ def evaluate_agent_event(
                 raise ServerExecutionUncertainError(
                     "服务端回执已写入但执行占用状态不确定，已冻结执行占用，需先完成核查"
                 ) from exc
-    response["approval_review"] = create_approval_review(event, response, review_scope=review_scope)
+    response["approval_review"] = create_approval_review(event, response)
     publish_runtime_event(
         "supervisor-decision",
         {
@@ -679,7 +675,7 @@ def _execution_mode(decision: str) -> str:
         "允许": "允许真实外部系统继续执行，但保留审计记录",
         "拒绝": "阻断工具调用",
         "询问": "暂停并等待人工确认",
-        "隔离": "只允许在沙箱或低权限环境执行",
+        "隔离": "只允许在受限权限边界内执行",
     }.get(decision, "记录后继续")
 
 
@@ -703,7 +699,7 @@ def _surface_from_event(tool_call: dict[str, Any], policy_id: str) -> str:
         or policy_id in {"environment-trust", "tool-return-trust"}
     ):
         return "environment-pollution"
-    if tool in {"file.read", "api.call", "code.run", "mail.send"}:
+    if tool in {"file.read", "api.call", "mail.send"}:
         return "tool-hijack"
     return "tool-hijack"
 

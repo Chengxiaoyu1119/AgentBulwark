@@ -33,14 +33,13 @@ class ConsoleBootstrapTest(unittest.TestCase):
         self.assertEqual(authenticated_response.json()["role"], "admin")
         self.assertEqual(authenticated_response.json()["permissions"]["can_generate"], True)
 
-    def test_operational_instance_hides_experiment_routes(self) -> None:
+    def test_operational_instance_exposes_only_current_routes(self) -> None:
         with patch.dict(
             os.environ,
             {
                 "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
                 "AGENT_SUPERVISOR_API_TOKEN": "operator-token",
                 "AGENT_SUPERVISOR_API_HOST": "127.0.0.1",
-                "AGENT_SUPERVISOR_LABS_ENABLED": "false",
             },
             clear=False,
         ):
@@ -52,38 +51,12 @@ class ConsoleBootstrapTest(unittest.TestCase):
 
         self.assertEqual(lab_response.status_code, 404)
         self.assertEqual(overview_response.status_code, 200)
-        self.assertEqual(overview_response.json()["attack_surfaces"], [])
-        self.assertEqual(overview_response.json()["scenarios"], [])
-        self.assertEqual(overview_response.json()["student_competition_attack_map"], [])
-        self.assertEqual(overview_response.json()["summary"]["scenario_count"], 0)
+        self.assertIn("recent_runs", overview_response.json())
+        self.assertIn("audit_logs", overview_response.json())
+        self.assertNotIn("scenarios", overview_response.json())
         self.assertEqual(runtime_response.status_code, 200)
         self.assertEqual(runtime_response.json()["backend"]["data_plane"], "operational")
-        self.assertEqual(runtime_response.json()["backend"]["labs_enabled"], False)
-
-    def test_dedicated_lab_instance_can_enable_experiment_routes(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
-                "AGENT_SUPERVISOR_API_TOKEN": "operator-token",
-                "AGENT_SUPERVISOR_API_HOST": "127.0.0.1",
-                "AGENT_SUPERVISOR_LABS_ENABLED": "true",
-            },
-            clear=False,
-        ):
-            with TestClient(app) as client:
-                response = client.get(
-                    "/api/scenarios",
-                    headers={"Authorization": "Bearer operator-token"},
-                )
-                overview_response = client.get(
-                    "/api/overview",
-                    headers={"Authorization": "Bearer operator-token"},
-                )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertGreater(len(response.json()), 0)
-        self.assertGreater(len(overview_response.json()["scenarios"]), 0)
+        self.assertNotIn("labs_enabled", runtime_response.json()["backend"])
 
 
 if __name__ == "__main__":

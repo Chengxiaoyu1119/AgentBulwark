@@ -27,7 +27,7 @@ from apps.api.agent_supervisor.storage.database import (
 )
 
 EXECUTION_STATUSES = frozenset({"completed", "failed", "not_executed"})
-EXECUTION_TARGETS = frozenset({"real", "sandbox", "none"})
+EXECUTION_TARGETS = frozenset({"real", "external", "local-runtime", "none"})
 KNOWN_DECISIONS = frozenset({"允许", "拒绝", "询问", "隔离"})
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -267,25 +267,23 @@ def _validate_execution_state(decision: str, status: str, execution_target: str)
     if status not in EXECUTION_STATUSES:
         raise ValueError("status 必须是 completed、failed 或 not_executed")
     if execution_target not in EXECUTION_TARGETS:
-        raise ValueError("execution_target 必须是 real、sandbox 或 none")
+        raise ValueError("execution_target 必须是 real、external、local-runtime 或 none")
 
     if decision in {"拒绝", "询问"}:
         if status != "not_executed" or execution_target != "none":
             raise ValueError("拒绝或询问决策只能提交 not_executed/none 回执")
         return
     if decision == "隔离":
-        if execution_target == "real":
-            raise ValueError("隔离决策不得提交真实执行回执")
+        if execution_target in {"real", "local-runtime"}:
+            raise ValueError("隔离决策不得提交真实或本地运行回执")
         if execution_target == "none" and status != "not_executed":
             raise ValueError("未配置隔离执行器时只能提交 not_executed/none 回执")
-        if execution_target == "sandbox" and status == "not_executed":
-            raise ValueError("not_executed 回执的 execution_target 必须是 none")
         return
 
     if status == "not_executed" and execution_target != "none":
         raise ValueError("not_executed 回执的 execution_target 必须是 none")
-    if status in {"completed", "failed"} and execution_target not in {"real", "sandbox"}:
-        raise ValueError("允许决策的 completed/failed 回执必须指向 real 或 sandbox")
+    if status in {"completed", "failed"} and execution_target not in {"real", "external", "local-runtime"}:
+        raise ValueError("允许决策的 completed/failed 回执必须指向 real、external 或 local-runtime")
 
 
 def _agent_followed_decision(decision: str, status: str, execution_target: str) -> bool:
@@ -294,7 +292,7 @@ def _agent_followed_decision(decision: str, status: str, execution_target: str) 
     if decision == "隔离":
         return execution_target != "real"
     if decision == "允许":
-        return (status == "not_executed" and execution_target == "none") or execution_target in {"real", "sandbox"}
+        return (status == "not_executed" and execution_target == "none") or execution_target in {"real", "external", "local-runtime"}
     return False
 
 
@@ -302,7 +300,7 @@ def _control_verified(decision: str, status: str, execution_target: str) -> bool
     if decision in {"拒绝", "询问"}:
         return status == "not_executed" and execution_target == "none"
     if decision == "隔离":
-        return (execution_target == "sandbox" and status in {"completed", "failed"}) or (
+        return (execution_target in {"external", "local-runtime"} and status in {"completed", "failed"}) or (
             execution_target == "none" and status == "not_executed"
         )
     return False

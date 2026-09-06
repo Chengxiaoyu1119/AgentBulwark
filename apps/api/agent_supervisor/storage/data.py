@@ -550,112 +550,16 @@ def _clamp_int(value: Any, min_value: int, max_value: int) -> int:
     return max(min_value, min(max_value, number))
 
 
-def get_attack_surfaces() -> list[dict[str, Any]]:
-    surfaces = deepcopy(_load_json_list("attack_surfaces.json"))
-    return [_genericize_product_scenario(surface) for surface in surfaces]
-
-
-def get_student_competition_attack_map() -> list[dict[str, Any]]:
-    # The file remains a historical regression fixture, but it must not define
-    # the product's visible domain.  The runtime console is an AI-Agent
-    # security gateway, so expose the same attack paths as tenant/session/
-    # document assets rather than leaking the old contest narrative.
-    profiles = deepcopy(_load_json_list("student_competition_attack_map.json"))
-    return [_genericize_product_scenario(profile) for profile in profiles]
-
-
-def _enrich_policy(policy: dict[str, Any], impacts: dict[str, Any]) -> dict[str, Any]:
-    return {**policy, **impacts.get(policy["id"], {})}
-
-
 def get_policies() -> list[dict[str, Any]]:
     policies = _load_json_list("policies.json")
-    impacts = _load_json_dict("policy_impact.json")
     overrides = _load_policy_overrides()
     enriched = []
     for policy in policies:
         override = overrides.get(policy["id"], {})
         merged = {**policy, **override}
         merged["enabled"] = bool(merged.get("enabled", policy["enabled"]))
-        # Policy IDs and machine-readable decisions stay stable; user-visible
-        # descriptions are generalized at the product boundary so the console
-        # does not present historical competition semantics as current scope.
-        enriched.append(_genericize_product_scenario(_enrich_policy(merged, impacts)))
+        enriched.append(merged)
     return enriched
-
-
-def get_scenarios() -> list[dict[str, Any]]:
-    return deepcopy(_load_json_list("scenarios.json"))
-
-
-_PRODUCT_SCENARIO_REPLACEMENTS = (
-    ("confidential/competition-teams.csv", "confidential/agent-secrets.json"),
-    ("confidential/challenge-seeds.json", "confidential/model-evaluation-secrets.json"),
-    ("competition-teams.csv", "agent-secrets.json"),
-    ("challenge-seeds.json", "model-evaluation-secrets.json"),
-    ("external-audit@example.com", "external-review@example.com"),
-    ("outside-review@example.com", "external-review@example.com"),
-    ("参赛队伍", "租户业务数据"),
-    ("队伍名单", "租户数据清单"),
-    ("队伍", "租户"),
-    ("赛事", "业务流程"),
-    ("赛题", "内部文档"),
-    ("提交物", "用户上传文件"),
-    ("私有榜单", "管理数据"),
-    ("成绩榜", "管理数据"),
-    ("榜单", "管理数据"),
-    ("校园网", "内部网络"),
-    ("训练平台", "模型平台"),
-    ("竞赛", "业务"),
-    ("比赛", "业务"),
-    ("competition", "tenant"),
-    ("contest", "business"),
-    ("judge_token", "admin_token"),
-    ("flag_seed", "secret_seed"),
-    ("flag", "secret"),
-)
-
-
-def _genericize_product_scenario(value: Any, *, key: str = "") -> Any:
-    """Present the product catalog as generic Agent security, not contest data.
-
-    The original scenarios remain local regression fixtures for reproducibility.
-    Overview/catalog responses use this view so a deployed product is not
-    coupled to the historical competition story.
-    """
-    if key in {"id", "surface_id", "target", "risk_hint"}:
-        return value
-    if isinstance(value, dict):
-        return {str(item_key): _genericize_product_scenario(item, key=str(item_key)) for item_key, item in value.items()}
-    if isinstance(value, list):
-        return [_genericize_product_scenario(item, key=key) for item in value]
-    if not isinstance(value, str):
-        return value
-    text = value
-    for source, target in _PRODUCT_SCENARIO_REPLACEMENTS:
-        text = text.replace(source, target)
-    return text
-
-
-def get_product_scenarios() -> list[dict[str, Any]]:
-    """Return the generic AI-Agent security catalog used by the console."""
-    scenarios = get_scenarios()
-    result: list[dict[str, Any]] = []
-    for scenario in scenarios:
-        generic = _genericize_product_scenario(scenario)
-        if isinstance(generic, dict):
-            generic["profile"] = "agent-security"
-            generic["fixture_source"] = "local-sandbox"
-        result.append(generic)
-    return result
-
-
-def get_evaluation_ground_truth() -> dict[str, Any]:
-    return deepcopy(_load_json_dict("evaluation_ground_truth.json"))
-
-
-def get_holdout_evaluation_samples() -> dict[str, Any]:
-    return deepcopy(_load_json_dict("holdout_evaluation.json"))
 
 
 def set_policy_enabled(policy_id: str, enabled: bool) -> dict[str, Any]:
@@ -701,8 +605,7 @@ def _update_policy_unlocked(
             if "risk_controls" in clean_updates and not isinstance(clean_updates["risk_controls"], list):
                 clean_updates.pop("risk_controls")
             overrides[policy_id] = {**current_override, **clean_updates}
-            impacts = _load_json_dict("policy_impact.json")
-            after = _enrich_policy({**policy, **overrides[policy_id]}, impacts)
+            after = {**policy, **overrides[policy_id]}
             entry = _new_policy_audit_entry(
                 resource="policy_overrides",
                 policy_id=policy_id,
@@ -827,11 +730,3 @@ def _update_policy_settings_unlocked(updates: dict[str, Any]) -> dict[str, Any]:
     )
     _remove_policy_audit_outbox_entry_unlocked(operation_id)
     return settings
-
-
-def find_scenario(scenario_id: str) -> dict[str, Any]:
-    scenarios = _load_json_list("scenarios.json")
-    for scenario in scenarios:
-        if scenario["id"] == scenario_id:
-            return deepcopy(scenario)
-    raise KeyError(f"Scenario not found: {scenario_id}")

@@ -871,8 +871,8 @@ def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> lis
             copy["execution_status"] = "awaiting_receipt"
             copy["execution_target"] = "unknown"
         elif isinstance(log.get("tool_output"), dict) and log["tool_output"].get("executed"):
-            copy["execution_status"] = "server_sandbox_completed"
-            copy["execution_target"] = "sandbox"
+            copy["execution_status"] = "server_runtime_completed"
+            copy["execution_target"] = "local-runtime"
         else:
             copy["execution_status"] = "not_applicable"
             copy["execution_target"] = "none"
@@ -887,34 +887,6 @@ def latest_runs(limit: int = 20) -> list[dict[str, Any]]:
             "SELECT payload FROM experiment_runs ORDER BY created_at DESC LIMIT ?",
             (bounded_limit,),
         ).fetchall()
-    return [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
-
-
-def latest_scenario_run_pairs(scenario_ids: list[str]) -> list[dict[str, Any]]:
-    """Return the newest guarded and unguarded run for each requested scenario.
-
-    Evaluation evidence must not disappear when high-volume external runtime
-    events push configured scenario runs outside a generic recent-run window.
-    """
-    requested_ids = list(dict.fromkeys(str(value) for value in scenario_ids if value))
-    if not requested_ids:
-        return []
-    placeholders = ", ".join("?" for _ in requested_ids)
-    query = f"""
-        SELECT payload
-        FROM (
-            SELECT payload,
-                   ROW_NUMBER() OVER (
-                       PARTITION BY scenario_id, guard_enabled
-                       ORDER BY created_at DESC, rowid DESC
-                   ) AS evidence_rank
-            FROM experiment_runs
-            WHERE scenario_id IN ({placeholders})
-        )
-        WHERE evidence_rank = 1
-    """
-    with get_connection() as conn:
-        rows = conn.execute(query, tuple(requested_ids)).fetchall()
     return [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
 
 

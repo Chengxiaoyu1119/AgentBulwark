@@ -39,7 +39,7 @@ def require_api_token(
             status_code=503,
             detail=(
                 "API token is not configured. Set AGENT_SUPERVISOR_AGENT_TOKENS_JSON or AGENT_SUPERVISOR_API_TOKEN, "
-                "or set AGENT_SUPERVISOR_AUTH_DISABLED=true for local demos only."
+                "or set AGENT_SUPERVISOR_AUTH_DISABLED=true for local development only."
             ),
         )
 

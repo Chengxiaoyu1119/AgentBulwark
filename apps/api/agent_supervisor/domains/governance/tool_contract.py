@@ -20,7 +20,6 @@ SUPPORTED_TOOLS = frozenset(
         "file.write",
         "mail.send",
         "api.call",
-        "code.run",
         "memory.write",
         "memory.read",
         "env.read",
@@ -113,8 +112,6 @@ def normalize_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     elif tool == "api.call":
         arguments["endpoint"] = normalize_endpoint(arguments.get("endpoint"))
         arguments["method"] = canonical_text(arguments.get("method") or "GET").upper()
-    elif tool == "code.run":
-        arguments["command"] = canonical_text(arguments.get("command"))
     elif tool == "env.read":
         arguments["key"] = canonical_text(arguments.get("key"))
 

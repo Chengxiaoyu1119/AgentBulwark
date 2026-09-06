@@ -28,13 +28,11 @@ GATEWAY_EVIDENCE_SOURCE_FILES: tuple[str, ...] = (
     "apps/api/agent_supervisor/auth.py",
     "apps/api/agent_supervisor/main.py",
     "apps/api/agent_supervisor/routers/core.py",
-    "apps/api/agent_supervisor/routers/evaluations.py",
+    "apps/api/agent_supervisor/routers/approvals.py",
     "apps/api/agent_supervisor/routers/proxy.py",
     "apps/api/agent_supervisor/routers/mcp.py",
-    # Persisted release evidence is only trustworthy while both the probe
-    # writer and its readiness verifier are bound to the same contract.
-    "apps/api/agent_supervisor/commands/cli.py",
-    "apps/api/agent_supervisor/domains/reports/readiness_checks.py",
+    # Persisted release evidence is bound to the same production gateway
+    # contract as the application entry point.
     "apps/api/agent_supervisor/adapters/proxy/openai_proxy.py",
     "apps/api/agent_supervisor/adapters/proxy/proxy_security.py",
     "apps/api/agent_supervisor/adapters/proxy/responses_compat.py",
@@ -52,18 +50,12 @@ GATEWAY_EVIDENCE_SOURCE_FILES: tuple[str, ...] = (
     "apps/api/agent_supervisor/domains/governance/supervisor.py",
     "apps/api/agent_supervisor/domains/governance/tool_contract.py",
     "apps/api/agent_supervisor/domains/governance/tool_registry.py",
-    "apps/api/agent_supervisor/domains/evaluations/outcomes.py",
-    "apps/api/agent_supervisor/domains/attacks/target_lab.py",
     "apps/api/agent_supervisor/domains/runtime/execution_receipts.py",
     # The generic Agent event path is also used to persist Provider response
     # audits and the supervisor-owned execution contract.  It must participate
     # in the startup fingerprint so a changed execution boundary cannot reuse
     # an older green HTTP probe.
     "apps/api/agent_supervisor/domains/runtime/events.py",
-    # Same-request baseline/protected comparison is an evidence-producing
-    # gateway surface.  A probe generated before its authorization or
-    # persistence rules changed must not be accepted as current evidence.
-    "apps/api/agent_supervisor/domains/runtime/gateway_comparison.py",
     "apps/api/agent_supervisor/domains/runtime/gateway_execution.py",
     "apps/api/agent_supervisor/domains/runtime/agent_credentials.py",
     "apps/api/agent_supervisor/domains/runtime/route_scope.py",
@@ -75,7 +67,7 @@ GATEWAY_EVIDENCE_SOURCE_FILES: tuple[str, ...] = (
     "apps/api/agent_supervisor/domains/runtime/runtime_status.py",
     "apps/api/agent_supervisor/domains/runtime/mcp_access.py",
     "apps/api/agent_supervisor/domains/runtime/event_stream.py",
-    "apps/api/agent_supervisor/domains/reports/gateway_evidence.py",
+    "apps/api/agent_supervisor/domains/evidence/gateway_evidence.py",
     "apps/api/agent_supervisor/mcp_gateway/config.py",
     "apps/api/agent_supervisor/mcp_gateway/audit.py",
     "apps/api/agent_supervisor/mcp_gateway/gateway.py",
@@ -88,6 +80,7 @@ GATEWAY_EVIDENCE_SOURCE_FILES: tuple[str, ...] = (
     "apps/api/agent_supervisor/storage/data.py",
     "apps/api/agent_supervisor/storage/database.py",
     "apps/api/agent_supervisor/routers/integrations.py",
+    "apps/api/agent_supervisor/domains/governance/effect.py",
     "apps/api/agent_supervisor/schemas/main_models.py",
     "apps/api/agent_supervisor/config/policies.json",
 )

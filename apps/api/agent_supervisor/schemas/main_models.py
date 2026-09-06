@@ -12,7 +12,6 @@ ToolCapability = Literal[
     "file.write",
     "mail.send",
     "api.call",
-    "code.run",
     "memory.write",
     "memory.read",
     "env.read",
@@ -46,11 +45,6 @@ def _validate_tool_call_node(value: Any, *, depth: int) -> None:
             raise ValueError(f"tool_call 单个数组不能超过 {MAX_TOOL_CALL_ARRAY_ITEMS} 项")
         for item in value:
             _validate_tool_call_node(item, depth=depth + 1)
-
-
-class RunRequest(BaseModel):
-    scenario_id: str = Field(..., max_length=120)
-    guard_enabled: bool = True
 
 
 class PolicyUpdate(BaseModel):
@@ -92,25 +86,16 @@ class PolicySettingsUpdate(BaseModel):
     comment: str = Field(default="", max_length=500)
 
 
-class BatchCompareRequest(BaseModel):
-    scenario_ids: list[str] | None = Field(default=None, max_length=100)
-
-
-class AttackChainRunRequest(BaseModel):
-    guard_enabled: bool = True
-
-
 class AgentToolEvent(BaseModel):
-    conversation_id: str = Field(default="demo-conversation", max_length=160)
-    agent_id: str = Field(default="target-agent", max_length=160)
-    agent_role: str = Field(default="target-agent", max_length=80)
-    source_app: str = Field(default="generic-agent", max_length=120)
+    conversation_id: str = Field(default="conversation", max_length=160)
+    agent_id: str = Field(default="agent", max_length=160)
+    agent_role: str = Field(default="agent", max_length=80)
+    source_app: str = Field(default="agent", max_length=120)
     model_input: str = Field(default="", max_length=20000)
     model_output: str = Field(default="", max_length=20000)
     tool_call: dict[str, Any]
     context_sources: list[str] = Field(default_factory=list, max_length=20)
     guard_enabled: bool = True
-    execute_in_sandbox: bool = False
 
     _tool_call_within_limits = field_validator("tool_call")(_validate_tool_call)
 
@@ -120,7 +105,7 @@ class ExecutionReceiptRequest(BaseModel):
     agent_id: str = Field(..., min_length=1, max_length=160)
     tool_call: dict[str, Any]
     status: Literal["completed", "failed", "not_executed"]
-    execution_target: Literal["real", "sandbox", "none"]
+    execution_target: Literal["real", "external", "local-runtime", "none"]
     result_hash: str = Field(default="", max_length=128)
     duration_ms: float = Field(default=0, ge=0, le=86_400_000)
     error: str = Field(default="", max_length=2000)
@@ -128,140 +113,10 @@ class ExecutionReceiptRequest(BaseModel):
     _tool_call_within_limits = field_validator("tool_call")(_validate_tool_call)
 
 
-class GatewayToolExecutionRequest(BaseModel):
-    """Execute one Provider-generated tool call in the supervisor-owned sandbox.
-
-    The request intentionally carries only the audit binding.  The tool name and
-    arguments are loaded from the immutable gateway audit record instead of being
-    accepted again from the browser or Agent.
-    """
-
-    agent_id: str = Field(default="openai-compatible-proxy", min_length=1, max_length=160)
-    session_id: str = Field(..., min_length=1, max_length=160)
-    provider_call_id: str = Field(default="", max_length=256)
-
-
-class ModelDrivenAgentRequest(BaseModel):
-    task: str = Field(..., min_length=1, max_length=4000)
-    force_real_model: bool = False
-    target_model: str = Field(default="", max_length=160)
-
-
-class BatchAgentToolEvents(BaseModel):
-    events: list[AgentToolEvent] = Field(..., min_length=1, max_length=50)
-    guard_enabled: bool = True
-    execute_in_sandbox: bool = False
-
-
-class AttackLabRunRequest(BaseModel):
-    surface_id: str = Field(..., max_length=80)
-    attack_input: str = Field(default="", max_length=12000)
-    target_model: str = Field(default="", max_length=160)
-    execute_in_sandbox: bool = True
-    planner_mode: Literal["fixed", "model"] = "fixed"
-    force_real_model: bool = False
-    options: dict[str, Any] = Field(default_factory=dict)
-
-
-class CustomAttackCompareRequest(BaseModel):
-    """A user-authored tool call executed against two identical local fixtures."""
-
-    payload: str = Field(default="", max_length=20000)
-    tool: str = Field(..., min_length=1, max_length=160)
-    arguments: dict[str, Any] = Field(default_factory=dict)
-    command: str = Field(default="", max_length=4000)
-    agent_id: str = Field(default="custom-attack-agent", min_length=1, max_length=160)
-    agent_role: str = Field(default="attacker", min_length=1, max_length=160)
-    context_sources: list[str] = Field(default_factory=lambda: ["user-payload"], max_length=20)
-    execution_mode: Literal["sandbox", "external_receipt"] = "sandbox"
-
-    @field_validator("arguments")
-    @classmethod
-    def _arguments_within_limits(cls, value: dict[str, Any]) -> dict[str, Any]:
-        _validate_tool_call({"tool": "custom", "arguments": value})
-        return value
-
-    @field_validator("tool")
-    @classmethod
-    def _tool_name_normalized(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if not normalized:
-            raise ValueError("tool 不能为空")
-        return normalized
-
-
-class CustomAttackChainRequest(CustomAttackCompareRequest):
-    """A caller-authored tool call continued as a guarded multi-Agent chain stage."""
-
-    execution_mode: Literal["sandbox"] = "sandbox"
-    source_comparison_id: str = Field(..., min_length=1, max_length=160)
-
-
-class JailbreakRedteamRequest(BaseModel):
-    task: str = Field(default="", max_length=4000)
-    block_terms: str = Field(default="绕过,忽略,无约束,token,secret,flag", max_length=1000)
-    target_model: str = Field(default="", max_length=160)
-    force_real_model: bool = False
-    variant_limit: int = Field(default=5, ge=1, le=6)
-
-
-class DualModelJailbreakRequest(BaseModel):
-    task: str = Field(default="", max_length=4000)
-    block_terms: str = Field(default="绕过,忽略,无约束,token,secret,flag", max_length=1000)
-    optimizer_model: str = Field(default="", max_length=160)
-    target_model: str = Field(default="", max_length=160)
-    optimizer_provider_profile: str = Field(default="optimizer", max_length=40)
-    target_provider_profile: str = Field(default="target", max_length=40)
-    optimizer_role: str = Field(default="", max_length=3000)
-    force_real_optimizer: bool = True
-    force_real_target: bool = True
-    iteration_count: int = Field(default=1, ge=1, le=5)
-
-
-class RefusalRewriteEvasionRequest(BaseModel):
-    task: str = Field(default="", max_length=4000)
-    refusal_terms: str = Field(default="抱歉,不能帮助你,无法协助你,不能提供,无法提供,i can't,i cannot,cannot assist", max_length=1000)
-    optimizer_model: str = Field(default="", max_length=160)
-    target_model: str = Field(default="", max_length=160)
-    optimizer_provider_profile: str = Field(default="optimizer", max_length=40)
-    target_provider_profile: str = Field(default="target", max_length=40)
-    optimizer_role: str = Field(default="", max_length=3000)
-    force_real_optimizer: bool = True
-    force_real_target: bool = True
-    iteration_count: int = Field(default=1, ge=1, le=5)
-
-
-class AttackTestsetRunRequest(BaseModel):
-    surface_id: str = Field(default="all", max_length=80)
-    sample_ids: list[str] = Field(default_factory=list, max_length=50)
-    sample_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    execute_in_sandbox: bool = True
-    planner_mode: Literal["fixed", "model"] = "fixed"
-    force_real_model: bool = False
-
-
-class AuthorizedTargetRunRequest(BaseModel):
-    target_url: str = Field(..., max_length=1000)
-    attack_input: str = Field(default="", max_length=8000)
-    surface_id: str = Field(default="prompt-injection", max_length=80)
-    target_type: str = Field(default="openai-compatible", max_length=80)
-    target_model: str = Field(default="authorized-target-model", max_length=160)
-    authorization_confirmed: bool = False
-    authorization_note: str = Field(default="", max_length=1200)
-    bearer_token: str = Field(default="", max_length=2000)
-
-
-class LearningLabRunRequest(BaseModel):
-    scenario_id: str = Field(default="system-prompt-leak", max_length=80)
-    attack_input: str = Field(default="", max_length=8000)
-    execute_in_sandbox: bool = True
-
-
 class ApprovalDecisionRequest(BaseModel):
     action: Literal["approve", "reject", "批准", "驳回"]
     operator: str = Field(default="operator", max_length=80)
     comment: str = Field(..., min_length=1, max_length=2000)
-    execute_in_sandbox: bool = False
 
 
 class ApprovalExecutionClaimRequest(BaseModel):
@@ -276,10 +131,6 @@ class ApprovalExecutionCompleteRequest(BaseModel):
     claim_id: str = Field(..., min_length=1, max_length=160)
     succeeded: bool
     result_hash: str = Field(default="", max_length=128)
-
-
-class RealModelEvaluationRequest(BaseModel):
-    force_real: bool = True
 
 
 class ModelProfileRuntimeConfigUpdate(BaseModel):

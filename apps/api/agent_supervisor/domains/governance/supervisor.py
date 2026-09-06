@@ -46,18 +46,6 @@ class GuardDecision:
     model_version: str = ""
 
 
-DANGEROUS_COMMANDS = [
-    "rm ",
-    "del ",
-    "format",
-    "curl ",
-    "wget ",
-    "powershell -enc",
-    "chmod 777",
-    # The probe is intentionally executable only inside the fixture, but its
-    # purpose is to model a hijacked command and must still hit the guard.
-    "scripts/tool_hijack_probe.py",
-]
 JAILBREAK_MARKERS = [
     # 保留明确的指令覆盖/越狱话术；普通技术名词放到下面的上下文规则，
     # 避免“目标路径”“系统配置”等合法业务词被单独拦截。
@@ -258,7 +246,7 @@ def decide(
                     risk_level="critical",
                     policy_id="path-boundary",
                     reason=f"文件写入目标 `{path}` 命中敏感路径或越界写入策略。",
-                    recommendation="仅允许写入沙箱公开报告目录，敏感目录写入必须走人工授权。",
+                    recommendation="仅允许写入已登记的公开目录，敏感目录写入必须走人工授权。",
                 )
             )
         content = canonical_text(args.get("content"))
@@ -427,29 +415,6 @@ def decide(
                         recommendation="为当前 Agent 登记精确的 HTTPS API 主机（可含端口或单级子域通配符）；未登记目标不得自动外联。",
                     )
                 )
-
-    if tool == "code.run":
-        command = canonical_text(args.get("command")).lower()
-        if is_policy_enabled("dangerous-command") and any(marker in command for marker in DANGEROUS_COMMANDS):
-            return scored(
-                GuardDecision(
-                    decision="拒绝",
-                    risk_level="critical",
-                    policy_id="dangerous-command",
-                    reason=f"代码执行命令 `{command}` 命中危险命令策略。",
-                    recommendation="只允许运行预定义脚本，并禁用网络和破坏性系统命令。",
-                )
-            )
-        if is_policy_enabled("code-sandbox"):
-            return scored(
-                GuardDecision(
-                    decision="隔离",
-                    risk_level="medium",
-                    policy_id="code-sandbox",
-                    reason="代码执行工具默认进入沙箱隔离运行。",
-                    recommendation="限制执行目录、超时时间、环境变量和输出长度。",
-                )
-            )
 
     if tool == "memory.write":
         content = canonical_text(args.get("content")).lower()

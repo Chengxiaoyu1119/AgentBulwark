@@ -17,7 +17,6 @@ from apps.api.agent_supervisor.auth import (
 )
 from apps.api.agent_supervisor.domains.governance.tool_contract import SUPPORTED_TOOLS
 from apps.api.agent_supervisor.domains.runtime.agent_credentials import can_execute_managed_tools
-from apps.api.agent_supervisor.domains.runtime.lab_access import labs_enabled
 from apps.api.agent_supervisor.domains.runtime.mcp_access import mcp_access_capabilities
 from apps.api.agent_supervisor.domains.runtime.memory_governance import (
     memory_governance_snapshot,
@@ -32,25 +31,19 @@ from apps.api.agent_supervisor.schemas.main_models import (
     PolicyUpdate,
 )
 from apps.api.agent_supervisor.storage.data import (
-    get_attack_surfaces,
     get_policies,
     get_policy_settings,
-    get_product_scenarios,
-    get_scenarios,
-    get_student_competition_attack_map,
     update_policy,
     update_policy_settings,
 )
 from apps.api.agent_supervisor.storage.database import (
     latest_audit_logs,
     latest_runs,
-    latest_scenario_run_pairs,
     list_policy_versions,
     runtime_metrics_snapshot,
 )
 
 from ..adapters.models.model_adapter import probe_provider, provider_status
-from ..services.package_service import load_competition_package_snapshot, write_competition_package_snapshot
 
 router = APIRouter(dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)])
 
@@ -233,33 +226,6 @@ def _redact_observer_policy_settings(settings: dict[str, Any]) -> dict[str, Any]
     return safe
 
 
-def _redact_observer_surface(surface: dict[str, Any]) -> dict[str, Any]:
-    """Expose only catalog metadata, never attack guidance, to observers."""
-    return {
-        key: surface[key]
-        for key in ("id", "name", "risk", "status", "samples", "scripts")
-        if key in surface
-    }
-
-
-def _redact_observer_scenario(scenario: dict[str, Any]) -> dict[str, Any]:
-    """Keep scenario inventory useful without returning prompts or attack paths."""
-    return {
-        key: scenario[key]
-        for key in ("id", "surface_id", "severity", "target", "profile", "fixture_source")
-        if key in scenario
-    }
-
-
-def _competition_package_runs() -> list[dict[str, Any]]:
-    """Use the same fixed scenario evidence set as /api/report.
-
-    Runtime telemetry is intentionally excluded from the competition package so
-    the snapshot digest has one stable meaning across report and delivery APIs.
-    """
-    return latest_scenario_run_pairs([scenario["id"] for scenario in get_scenarios()])
-
-
 @router.get("/api/health")
 def health() -> dict:
     return {"ok": True, "service": "agent-security-supervisor"}
@@ -304,25 +270,12 @@ def overview(role: str = Depends(current_security_role)) -> dict:
     guarded_runs = [run for run in runs if run.get("guard_enabled")]
     guarded_controlled = sum(1 for run in guarded_runs if not run.get("attack_success"))
     attack_successes = sum(1 for run in runs if run["attack_success"])
-    # The catalog is experiment input, not operational telemetry.  Returning
-    # its fixed scenarios from the production overview made a fresh gateway
-    # look as if it already contained verified traffic and attack evidence.
-    # Keep the two planes explicit: lab instances receive the catalog, while
-    # operational instances expose only persisted runtime facts.
-    lab_catalog_enabled = labs_enabled()
-    attack_surfaces = get_attack_surfaces() if lab_catalog_enabled else []
-    product_scenarios = get_product_scenarios() if lab_catalog_enabled else []
     payload = {
-        "attack_surfaces": attack_surfaces,
-        "student_competition_attack_map": get_student_competition_attack_map() if lab_catalog_enabled else [],
-        "scenarios": product_scenarios,
         "models": _provider_status_for_role(role),
         "recent_runs": runs,
         "alerts": alerts,
         "audit_logs": audit_logs,
         "summary": {
-            "surface_count": len(attack_surfaces),
-            "scenario_count": len(product_scenarios),
             "recent_run_count": total,
             "block_rate": round((controlled_actions / total) * 100) if total else 0,
             "guarded_run_count": len(guarded_runs),
@@ -333,13 +286,6 @@ def overview(role: str = Depends(current_security_role)) -> dict:
         },
     }
     if role == "observer":
-        payload["attack_surfaces"] = [
-            _redact_observer_surface(item) for item in payload["attack_surfaces"] if isinstance(item, dict)
-        ]
-        payload["scenarios"] = [
-            _redact_observer_scenario(item) for item in payload["scenarios"] if isinstance(item, dict)
-        ]
-        payload.pop("student_competition_attack_map", None)
         payload["recent_runs"] = [_redact_observer_run(run) for run in runs]
         payload["alerts"] = [
             {
@@ -353,11 +299,6 @@ def overview(role: str = Depends(current_security_role)) -> dict:
         payload["audit_logs"] = [_redact_observer_audit(item) for item in audit_logs if isinstance(item, dict)]
         payload["access_scope"] = "summary-redacted"
     return payload
-
-
-@router.get("/api/student_competition_attack_map", dependencies=[Depends(_require_analyst_access)])
-def student_competition_attack_map() -> list[dict]:
-    return get_student_competition_attack_map()
 
 
 @router.get("/api/policies")
@@ -414,7 +355,7 @@ def tool_registry(role: str = Depends(current_security_role)) -> dict:
         "agent_model_allowlists": settings.get("agent_model_allowlists", {}),
         "mapping_contract": {
             "original_tool": "外部 Agent 的真实工具名称，例如 browser.open 或 database.query",
-            "capability": "file.read、api.call、code.run 等标准能力之一",
+                "capability": "file.read、api.call 等标准能力之一",
             "argument_mapping": "原始参数名到标准参数名的映射，例如 url -> endpoint",
             "required_arguments": "服务端校验的必填原始参数",
         },
@@ -665,19 +606,3 @@ def alerts(
             for item in result
         ]
     return result
-
-
-@router.get("/api/deliverables", dependencies=[Depends(_require_analyst_access)])
-def deliverables() -> dict:
-    runs = _competition_package_runs()
-    snapshot = load_competition_package_snapshot(runs)
-    if snapshot is None:
-        raise HTTPException(status_code=404, detail="交付材料快照尚未生成或已过期；请由 analyst 调用刷新接口。")
-    return snapshot
-
-
-@router.post("/api/deliverables/refresh")
-def refresh_deliverables(role: str = Depends(current_security_role)) -> dict:
-    require_role("analyst", role)
-    return write_competition_package_snapshot(_competition_package_runs())
-

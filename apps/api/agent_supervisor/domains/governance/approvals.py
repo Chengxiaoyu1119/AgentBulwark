@@ -11,18 +11,17 @@ from uuid import uuid4
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.tool_contract import normalize_tool_call
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
-from apps.api.agent_supervisor.paths import SANDBOX_REPORTS_DIR
+from apps.api.agent_supervisor.paths import RUNTIME_DIR
 from apps.api.agent_supervisor.storage.data import get_policy_settings
 from apps.api.agent_supervisor.storage.database import get_connection
 
-REPORT_ROOT = SANDBOX_REPORTS_DIR
+REPORT_ROOT = RUNTIME_DIR / "evidence"
 
 PENDING_STATUS = "待复核"
 APPROVED_STATUS = "已批准"
 REJECTED_STATUS = "已驳回"
 
 STATUS_VALUES = {PENDING_STATUS, APPROVED_STATUS, REJECTED_STATUS}
-SCOPE_VALUES = {"operational", "experiment", "demo"}
 ACTION_MAP = {
     "approve": (APPROVED_STATUS, "允许", "人工批准后，原始Agent可以领取并恢复一次该工具调用。"),
     "批准": (APPROVED_STATUS, "允许", "人工批准后，原始Agent可以领取并恢复一次该工具调用。"),
@@ -34,7 +33,6 @@ ACTION_MAP = {
 def create_approval_review(
     event: dict[str, Any],
     supervisor_result: dict[str, Any],
-    review_scope: str = "operational",
 ) -> dict[str, Any] | None:
     """Create a review ticket for decisions that require human confirmation."""
     if supervisor_result.get("decision") != "询问":
@@ -59,7 +57,6 @@ def create_approval_review(
         "audit_id": str(audit_log["id"]),
         "run_id": str(supervisor_result.get("run_id", audit_log.get("run_id", ""))),
         "status": PENDING_STATUS,
-        "scope": _normalize_scope(review_scope),
         "final_decision": "等待人工确认",
         "approval_action": "",
         "tool": str(audit_log.get("tool", tool_call.get("tool", ""))),
@@ -114,9 +111,6 @@ def create_approval_review(
         "execution_claimed_at": "",
         "execution_completed_at": "",
         "execution_result_hash": "",
-        "sandbox_replay_requested": False,
-        "sandbox_replayed_at": "",
-        "sandbox_replay": None,
         "hash_valid": True,
     }
     review["review_hash"] = _review_hash(review)
@@ -127,10 +121,8 @@ def create_approval_review(
 def list_approval_reviews(
     status: str | None = None,
     limit: int = 100,
-    scope: str | None = None,
 ) -> dict[str, Any]:
     selected_status = _normalize_status(status)
-    selected_scope = _normalize_scope(scope, allow_all=True)
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT payload FROM approval_reviews ORDER BY rowid DESC",
@@ -138,8 +130,6 @@ def list_approval_reviews(
         reviews: list[dict[str, Any]] = []
         for row in rows:
             review = _restore_hash_state(json.loads(row["payload"]))
-            if selected_scope and review.get("scope") != selected_scope:
-                continue
             if selected_status and review.get("status") != selected_status:
                 continue
             reviews.append(review)
@@ -150,7 +140,6 @@ def list_approval_reviews(
     return {
         "generated_at": _now(),
         "status_filter": selected_status or "全部",
-        "scope_filter": selected_scope or "全部",
         "summary": summary,
         "reviews": reviews,
     }
@@ -174,7 +163,6 @@ def redact_approval_review_for_observer(review: dict[str, Any]) -> dict[str, Any
         "model_output_excerpt",
         "comment",
         "execution_note",
-        "sandbox_replay",
     ):
         if key in redacted:
             redacted[key] = {} if key.endswith("arguments") or key == "tool_mapping" else ""
@@ -207,13 +195,10 @@ def decide_approval_review(
     action: str,
     operator: str = "operator",
     comment: str = "",
-    execute_in_sandbox: bool = False,
 ) -> dict[str, Any]:
     normalized_action = action.strip().lower() if action else ""
     if normalized_action not in ACTION_MAP:
         raise ValueError("action 必须是 approve/reject，或中文“批准/驳回”")
-    if execute_in_sandbox:
-        raise ValueError("审批决策只改变恢复状态，不在数据库事务内执行工具")
 
     with get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -224,9 +209,6 @@ def decide_approval_review(
             raise ValueError("该复核单已经处理，不能重复批准或驳回")
 
         status, final_decision, execution_note = ACTION_MAP[normalized_action]
-        sandbox_replay = review.get("sandbox_replay")
-        sandbox_replayed_at = review.get("sandbox_replayed_at", "")
-
         updated = {
             **review,
             "status": status,
@@ -236,9 +218,6 @@ def decide_approval_review(
             "comment": comment,
             "reviewed_at": _now(),
             "execution_note": execution_note,
-            "sandbox_replay_requested": False,
-            "sandbox_replayed_at": sandbox_replayed_at,
-            "sandbox_replay": sandbox_replay,
             "execution_status": (
                 "ready_to_resume"
                 if status == APPROVED_STATUS
@@ -255,7 +234,6 @@ def decide_approval_review(
             "status": status,
             "final_decision": final_decision,
             "operator": updated["operator"],
-            "sandbox_replay": sandbox_replay,
         },
     )
     return {
@@ -291,7 +269,7 @@ def claim_approval_execution(review_id: str, agent_id: str, tool_call: dict[str,
         if review.get("execution_status") != "ready_to_resume":
             return {
                 "granted": False,
-                "reason": "该审批调用尚未进入可恢复状态，或已经被领取、执行、驳回或沙箱重放。",
+                "reason": "该审批调用尚未进入可恢复状态，或已经被领取、执行、驳回或重复恢复。",
                 "review": review,
             }
 
@@ -355,10 +333,8 @@ def complete_approval_execution(
 
 
 def build_approval_review_markdown(data: dict[str, Any] | None = None) -> str:
-    inventory = None
     if data is None:
-        inventory = list_approval_reviews(limit=200)
-        data = list_approval_reviews(limit=200, scope="demo")
+        data = list_approval_reviews(limit=200)
     summary = data["summary"]
     lines = [
         "# 人工复核队列与审批闭环报告",
@@ -373,7 +349,6 @@ def build_approval_review_markdown(data: dict[str, Any] | None = None) -> str:
         f"- 已驳回：{summary['rejected_count']}",
         f"- 高危/极高：{summary['high_risk_count']}",
         f"- hash 有效：{summary['hash_valid_count']} / {summary['total']}",
-        f"- 队列范围：{data.get('scope_filter', '全部')}（业务 {summary['scope_counts']['operational']}、实验 {summary['scope_counts']['experiment']}、演示 {summary['scope_counts']['demo']}）",
         "",
         "## 复核明细",
         "",
@@ -403,25 +378,11 @@ def build_approval_review_markdown(data: dict[str, Any] | None = None) -> str:
             "",
             "## 验收口径",
             "",
-            "- 外部智能体调用 `/api/runtime/evaluate` 后，如果策略返回“询问”，系统自动生成待复核单。",
+            "- OpenAI 或 MCP 网关收到 Tool Call 后，如果策略返回“询问”，系统自动生成待复核单。",
             "- 监督端可以通过 `/api/approvals/{review_id}/decision` 执行批准或驳回。",
             "- 审批结论、操作人、备注、原始审计 hash 和复核 hash 都会写入本地数据库。",
         ]
     )
-    if inventory is not None:
-        inventory_summary = inventory["summary"]
-        scope_counts = inventory_summary["scope_counts"]
-        lines.extend(
-            [
-                "",
-                "## 队列隔离清单",
-                "",
-                f"- 业务记录：{scope_counts['operational']}，待复核 {sum(1 for item in inventory['reviews'] if item.get('scope') == 'operational' and item.get('status') == PENDING_STATUS)}。",
-                f"- 实验记录：{scope_counts['experiment']}，待复核 {sum(1 for item in inventory['reviews'] if item.get('scope') == 'experiment' and item.get('status') == PENDING_STATUS)}。",
-                f"- 演示记录：{scope_counts['demo']}，当前正文仅用演示记录验证批准、驳回和复核Hash闭环。",
-                "- 实验积压与业务待办分开统计，避免批量评测污染日常复核SLA。",
-            ]
-        )
     return "\n".join(lines)
 
 
@@ -516,7 +477,6 @@ def _load_review_by_audit_id(audit_id: str) -> dict[str, Any] | None:
 
 def _restore_hash_state(review: dict[str, Any]) -> dict[str, Any]:
     review["hash_valid"] = review.get("review_hash") == _review_hash(review)
-    review["scope"] = _review_scope(review)
     due_at = str(review.get("due_at", ""))
     if review.get("status") == PENDING_STATUS and due_at:
         try:
@@ -551,10 +511,6 @@ def _summary(reviews: list[dict[str, Any]]) -> dict[str, Any]:
         "sla_breached_count": sum(
             1 for item in reviews if item.get("status") == PENDING_STATUS and item.get("sla_breached")
         ),
-        "scope_counts": {
-            scope: sum(1 for item in reviews if item.get("scope") == scope)
-            for scope in sorted(SCOPE_VALUES)
-        },
     }
 
 
@@ -564,49 +520,6 @@ def _normalize_status(status: str | None) -> str | None:
     if status not in STATUS_VALUES:
         raise ValueError(f"未知复核状态：{status}")
     return status
-
-
-def _normalize_scope(scope: str | None, *, allow_all: bool = False) -> str | None:
-    if allow_all and (not scope or scope == "全部"):
-        return None
-    normalized = (scope or "operational").strip().lower()
-    if normalized not in SCOPE_VALUES:
-        raise ValueError("scope 必须是 operational、experiment 或 demo")
-    return normalized
-
-
-def _review_scope(review: dict[str, Any]) -> str:
-    source_app = str(review.get("source_app", ""))
-    agent_id = str(review.get("agent_id", ""))
-    conversation_id = str(review.get("conversation_id", ""))
-    if (
-        source_app == "generic-agent"
-        and agent_id in {"sender-agent", "collector-agent"}
-        and conversation_id == "chain-test"
-    ):
-        return "experiment"
-
-    explicit = str(review.get("scope", "")).strip().lower()
-    if explicit in SCOPE_VALUES:
-        return explicit
-
-    if source_app == "JudgeDemo" and agent_id == "judge-demo-agent" and conversation_id.startswith("judge-demo-"):
-        return "demo"
-    if (
-        (source_app == "generic-agent" and agent_id in {"sender-agent", "collector-agent"} and conversation_id.startswith("chain-"))
-        or (
-            source_app in {"智安哨本地渗透学习受控实验环境", "智安哨本地渗透学习靶场"}
-            and agent_id == "vulnerable-learning-agent"
-            and conversation_id.startswith("learning-")
-        )
-        or (
-            source_app == "智安哨攻击功能实验台"
-            and agent_id == "attack-lab-agent"
-            and conversation_id.startswith("attack-")
-        )
-    ):
-        return "experiment"
-    return "operational"
 
 
 def _now() -> str:

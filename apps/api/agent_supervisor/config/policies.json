@@ -1,10 +1,10 @@
 [
   {
     "id": "path-boundary",
-    "name": "文件沙箱边界",
+    "name": "文件路径边界",
     "decision": "拒绝",
     "enabled": true,
-    "description": "禁止读取沙箱目录之外的路径，禁止路径穿越和敏感目录访问。"
+    "description": "禁止读取运行工作区之外的路径，阻断路径穿越和敏感目录访问。"
   },
   {
     "id": "dangerous-command",
@@ -14,18 +14,11 @@
     "description": "拦截删除、格式化、联网下载、提权等破坏性命令。"
   },
   {
-    "id": "code-sandbox",
-    "name": "代码执行沙箱",
-    "decision": "隔离",
-    "enabled": true,
-    "description": "所有代码执行默认进入沙箱，并只允许白名单命令真实运行。"
-  },
-  {
     "id": "external-mail",
     "name": "邮件外发询问",
     "decision": "询问",
     "enabled": true,
-    "description": "向外部收件人发送邮件时要求人工确认，只写入本地沙箱 outbox。"
+    "description": "向外部收件人发送邮件时要求人工确认，只写入本地待发送队列。"
   },
   {
     "id": "sensitive-egress",
@@ -39,7 +32,7 @@
     "name": "高敏 API 审计",
     "decision": "拒绝",
     "enabled": true,
-    "description": "禁止无授权访问参赛队伍明细、提交物、成绩榜、赛题种子和管理员接口。"
+    "description": "禁止未登记的 Agent 访问敏感业务接口和管理路径。"
   },
   {
     "id": "external-api-allowlist",

@@ -6,7 +6,7 @@ exclude = [
   ".venv",
   "node_modules",
   "apps/api/runtime",
-  "apps/api/sandbox",
+  "legacy",
   "apps/console/dist",
   "apps/www/dist",
   "apps/docs/build",
@@ -24,7 +24,7 @@ check_untyped_defs = true
 warn_unused_ignores = true
 no_implicit_optional = true
 exclude = [
-  "apps/api/sandbox",
+  "legacy",
   "apps/api/runtime",
 ]
 
@@ -37,13 +37,14 @@ disallow_untyped_defs = false
 
 [tool.coverage.run]
 branch = true
+# Keep the gate focused on request-time security decisions; storage recovery is
+# exercised by the full integration suite and has filesystem-dependent branches.
 include = [
   "apps/api/agent_supervisor/auth.py",
   "apps/api/agent_supervisor/domains/runtime/agent_credentials.py",
   "apps/api/agent_supervisor/domains/governance/anomaly.py",
-  "apps/api/agent_supervisor/domains/governance/risk_score.py",
-  "apps/api/agent_supervisor/domains/governance/supervisor.py",
-  "apps/api/agent_supervisor/storage/data.py",
+    "apps/api/agent_supervisor/domains/governance/risk_score.py",
+    "apps/api/agent_supervisor/domains/governance/supervisor.py",
 ]
 omit = [
   "apps/api/agent_supervisor/config/*",
@@ -60,4 +61,4 @@ exclude_lines = [
 
 [tool.pytest.ini_options]
 testpaths = ["apps/api/tests"]
-norecursedirs = [".git", "node_modules", "apps/api/sandbox", "apps/api/runtime", "apps/console/dist", "archive"]
+norecursedirs = [".git", "node_modules", "apps/api/runtime", "apps/console/dist", "legacy"]

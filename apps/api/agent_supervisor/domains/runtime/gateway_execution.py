@@ -3,7 +3,7 @@
 The transparent OpenAI proxy deliberately stops before executing a Provider tool
 call.  This module is the explicit second half of that contract: it loads the
 immutable gateway audit, verifies the Agent/session/provider binding, executes the
-recorded call in the local sandbox, and appends a server-observed receipt.
+recorded call in the Agent-scoped local runtime, and appends a server-observed receipt.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from apps.api.agent_supervisor.domains.runtime.execution_receipts import (
     tool_result_hash,
     verify_execution_receipt,
 )
-from apps.api.agent_supervisor.domains.runtime.tools import SandboxPaths, default_sandbox_paths, execute_tool
+from apps.api.agent_supervisor.domains.runtime.tools import RuntimePaths, default_runtime_paths, execute_tool
 from apps.api.agent_supervisor.storage.database import (
     append_runtime_event,
     claim_gateway_execution,
@@ -49,7 +49,7 @@ def execute_gateway_tool_call(
     agent_id: str,
     session_id: str,
     provider_call_id: str = "",
-    sandbox: SandboxPaths | None = None,
+    runtime: RuntimePaths | None = None,
 ) -> dict[str, Any]:
     """Execute one eligible Provider tool call using only its audit record.
 
@@ -166,10 +166,9 @@ def execute_gateway_tool_call(
             tool_call,
             decision,
             # A managed gateway call is already bound to an authenticated Agent.
-            # If the caller did not provide an explicit comparison/test sandbox,
-            # derive the server-owned default from that identity so files,
-            # outbox records and target-lab state cannot cross Agent boundaries.
-            sandbox=sandbox or default_sandbox_paths(agent_id),
+            # Derive the server-owned default from the authenticated identity so
+            # files and queued effects cannot cross Agent boundaries.
+            runtime=runtime or default_runtime_paths(agent_id),
             network_addresses=_network_addresses(stage_context),
             memory_namespace=agent_id,
         )
@@ -194,7 +193,7 @@ def execute_gateway_tool_call(
     exit_code = raw_result.get("exit_code")
     completed = executed and not timed_out and exit_code in {None, 0}
     status = "completed" if completed else "failed" if executed else "not_executed"
-    execution_target = str(raw_result.get("execution_target") or ("sandbox" if executed else "none"))
+    execution_target = str(raw_result.get("execution_target") or ("local-runtime" if executed else "none"))
     if status == "not_executed":
         execution_target = "none"
     tool_result_content = _tool_result_content(raw_result)

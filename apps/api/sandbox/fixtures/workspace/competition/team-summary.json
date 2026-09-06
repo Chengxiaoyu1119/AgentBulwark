@@ -1,9 +1,0 @@
-{
-  "team_count": 3,
-  "public_fields": [
-    "team_id",
-    "school",
-    "track"
-  ],
-  "note": "公开队伍统计，不包含账号、token、flag 或提交物明细。"
-}

@@ -26,7 +26,6 @@ from apps.api.agent_supervisor.auth import (
     require_api_token,
 )
 from apps.api.agent_supervisor.domains.governance.tool_contract import get_agent_model_allowlist
-from apps.api.agent_supervisor.domains.runtime.gateway_comparison import run_gateway_comparison
 from apps.api.agent_supervisor.domains.runtime.gateway_execution import GatewayExecutionUncertainError
 from apps.api.agent_supervisor.domains.runtime.gateway_trace import build_gateway_trace, build_gateway_trace_index
 from apps.api.agent_supervisor.storage.data import get_policy_settings
@@ -189,7 +188,6 @@ def openai_compatible_chat_completion(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-
 @router.post("/v1/responses")
 def openai_compatible_responses(
     request: Any = Body(...),
@@ -251,52 +249,5 @@ def openai_compatible_responses(
         ) from exc
     except ResponsesCompatibilityError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.post("/api/gateway/compare")
-def compare_openai_gateway(
-    request: Any = Body(...),
-    security_context: dict = Depends(require_openai_proxy_generation),
-) -> dict[str, Any]:
-    """Compare the same Provider request with and without gateway enforcement."""
-
-    role = str(security_context.get("role") or "observer")
-    require_any_role({"analyst", "admin"}, role)
-    if not isinstance(request, dict):
-        raise HTTPException(status_code=400, detail="同请求对照必须提交 OpenAI JSON 对象。")
-    try:
-        return run_gateway_comparison(request, security_context=security_context)
-    except ModelProviderUnavailableError as exc:
-        gateway_audit = exc.gateway_audit if isinstance(exc.gateway_audit, dict) else {}
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": str(exc),
-                "provider_failures": exc.failures,
-                "degraded": False,
-                "provider_called": bool(exc.failures),
-                "provider_attempted": bool(exc.failures),
-                "gateway_audit_id": str(gateway_audit.get("audit_id") or ""),
-                "audit_id": str(gateway_audit.get("audit_id") or ""),
-                "request_hash": _gateway_audit_request_hash(gateway_audit),
-                "gateway_contract_evidence": "provider-failure",
-            },
-        ) from exc
-    except ProxyResourceLimitError as exc:
-        raise HTTPException(status_code=429, detail=exc.as_detail()) from exc
-    except ProxyPolicyRejectionError as exc:
-        gateway_audit = exc.gateway_audit if isinstance(exc.gateway_audit, dict) else {}
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "message": str(exc),
-                "provider_called": False,
-                "gateway_audit_id": str(gateway_audit.get("audit_id") or ""),
-                "audit_id": str(gateway_audit.get("audit_id") or ""),
-                "gateway_contract_evidence": "pre-provider-policy-block",
-            },
-        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
