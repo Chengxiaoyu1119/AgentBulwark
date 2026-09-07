@@ -1,81 +1,100 @@
-# 智安哨
+<div align="center">
+  <img src="apps/console/public/favicon.svg" alt="智安哨" width="96" />
+  <h1>智安哨</h1>
+  <p><strong>Agent Security Supervisor</strong><br />让每一次 Agent 行动可控、可见、可验证。</p>
+  <p>
+    <a href="https://github.com/Chengxiaoyu1119/agent-security-supervisor/actions/workflows/quality.yml"><img src="https://github.com/Chengxiaoyu1119/agent-security-supervisor/actions/workflows/quality.yml/badge.svg" alt="Quality" /></a>
+    <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2f6fed.svg" alt="Apache-2.0" /></a>
+    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11-3776ab.svg" alt="Python 3.11" /></a>
+    <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22-5fa04e.svg" alt="Node.js 22" /></a>
+  </p>
+</div>
 
-智安哨是一个本地优先的 Agent 行动控制网关。它把 OpenAI 兼容请求和 MCP 工具调用接入同一条可审计链路，在执行前给出策略决策，在执行后验证回执与证据。
+智安哨是一个本地优先的 Agent 行动安全网关。它把 OpenAI 兼容请求与 MCP 工具调用放进同一条控制链：执行前做策略判断，执行中保留可追踪状态，执行后验证回执与证据。
 
-## 当前能力
+## 核心能力
 
-- OpenAI 兼容 `POST /v1/chat/completions`，支持流式和非流式请求。
-- OpenAI `POST /v1/responses` 非流式兼容入口。
-- MCP Gateway：stdio 与 Streamable HTTP。
-- 工具策略：`允许`、`拒绝`、`询问`、`隔离`。
-- 精确绑定的审批、一次性执行回执和 Hash/HMAC 审计链。
-- Provider 固定出口校验，拒绝重定向、私网解析和未绑定目标。
-- 本地 React 控制台：防护、事件、设置三页；loopback 默认免登录。
-- 本地运行时只提供受限文件、记忆和外发队列操作，不执行任意命令或代码。
+| 能力 | 说明 |
+| --- | --- |
+| OpenAI Gateway | `/v1/chat/completions` 支持流式与非流式；`/v1/responses` 支持非流式。 |
+| MCP Gateway | 支持 stdio 与 Streamable HTTP，按 Agent + Session 隔离会话。 |
+| 行动决策 | `ALLOW`、`DENY`、`ASK`、`ISOLATE` 四态策略，冲突按拒绝优先。 |
+| 审批与回执 | 参数 Hash、策略版本、Agent、会话和有效期绑定；审批凭证一次性消费。 |
+| 证据链 | 请求、响应、工具参数、策略和执行结果写入 Hash/HMAC 审计链，支持离线验证。 |
+| 本地控制台 | 防护、事件、设置三页，实时查看行动状态、审批和证据。 |
 
-## 目录
+## 工作流
 
 ```text
-apps/api/agent_supervisor/  FastAPI 服务与运行内核
-apps/api/tests/             后端契约、策略、网关和回执测试
-apps/api/runtime/           本地运行数据、备份、E2E 与质量产物（忽略）
-apps/console/               React + Vite 控制台
-docs/product/               产品定位与方案
-docs/engineering/           本地启动、接入和安全配置
-docs/research/              研究资料与技术审查
-docs/media/                 视频、图标等不参与构建的媒体
-legacy/                     只读历史资料，不被生产入口导入
-scripts/                    本地启动、维护和质量检查
+Agent
+  -> OpenAI Gateway
+  -> Provider 固定出口
+  -> Tool Call 标准化
+  -> 策略决策 / 审批
+  -> MCP Gateway 或受限运行时
+  -> 执行回执
+  -> Hash/HMAC 证据
+  -> 控制台
 ```
 
-## 本地启动
+## 快速开始
 
-首次使用先安装依赖（控制台依赖安装在 `apps/console/`，不会在仓库根目录生成 `node_modules/`）：
-
-```powershell
-npm --prefix apps/console ci
-python -m pip install -r apps/api/requirements-dev.txt
-```
-
-启动单机服务：
+要求：Node.js 22+、Python 3.11+。
 
 ```powershell
+git clone https://github.com/Chengxiaoyu1119/agent-security-supervisor.git
+cd agent-security-supervisor
+npm run install:all
+Copy-Item .env.example .env
 npm run dev
 ```
 
-服务默认监听 `127.0.0.1:8012`，构建后的控制台由 API 同源提供。开发时需要 Vite 热更新，可在第二个终端运行 `npm run dev:console`，然后打开 `http://127.0.0.1:5178`。
+打开 [http://127.0.0.1:8012](http://127.0.0.1:8012)。默认只监听本机回环地址；Provider 密钥和 MCP 凭证由后端读取，不进入浏览器构建产物。
 
-## Provider 与 MCP
+## 接入与验证
 
-复制 `.env.example` 为 `.env`，填写真实 Provider 的 API Key、固定 Base URL 和模型名。密钥只在后端环境中使用，不会写入浏览器产物。MCP stdio 命令和上游环境变量也只从后端配置读取。
-
-常用接口：
+将 Agent 的 OpenAI Base URL 指向 `http://127.0.0.1:8012/v1`，再在 `.env` 登记 Provider 和 MCP。常用入口：
 
 ```text
-GET  /api/public/status
-GET  /api/health
-GET  /api/overview
 POST /v1/chat/completions
 POST /v1/responses
 POST /api/mcp
-GET  /api/events/stream
-GET  /api/runtime/executions
+GET  /api/overview
 GET  /api/gateway/traces
+GET  /api/runtime/executions
 ```
 
-需要人工处理的行动在控制台“事件”页完成审批；完整 Hash、回执和验证结果也可通过运行时接口读取。
-
-## 验证
+本地质量门禁：
 
 ```powershell
-npm run console:test
-npm run console:build
-python -X utf8 -m unittest discover -s apps/api/tests -t . -p "test_*.py"
-npm run verify:local
+npm run verify
 ```
 
-`verify:local` 只执行本机检查，不依赖外部部署环境。运行数据和质量工具输出统一放在 `apps/api/runtime/`，该目录已加入 Git 忽略规则；根目录不会保留覆盖率、审计报告或工具缓存。
+可选闭环烟测默认不访问外部服务；只有显式设置 `AGENT_SUPERVISOR_LIVE_SMOKE=true` 才会运行，并将结果写入被忽略的 `apps/api/runtime/quality/live-closure/`。
+
+## 文档
+
+- [产品定位](docs/product/产品定位.md)
+- [安全边界](docs/engineering/安全边界.md)
+- [研究与决策](docs/research/大模型防火墙研究证据与产品决策.md)
+- [贡献指南](CONTRIBUTING.md)
+- [协作与编码代理指南](AGENTS.md)
+
+## 项目结构
+
+```text
+apps/api/agent_supervisor/  FastAPI 服务与运行内核
+apps/api/tests/             后端测试与协议夹具
+apps/console/               React + Vite 控制台
+docs/                       产品、工程与研究文档
+legacy/                     历史资料
+scripts/                    启动、维护与质量检查
+```
+
+## 参与贡献
+
+请先阅读 [AGENTS.md](AGENTS.md) 和 [CONTRIBUTING.md](CONTRIBUTING.md)，提交前运行 `npm run verify`。
 
 ## 许可证
 
-Apache-2.0，见 [LICENSE](LICENSE)。
+Apache-2.0，详见 [LICENSE](LICENSE)。
