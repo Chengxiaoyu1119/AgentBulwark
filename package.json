@@ -35,6 +35,7 @@
     "api:coverage": "python -m coverage run --data-file=apps/api/runtime/quality/.coverage -m unittest discover -s apps/api/tests -t . -p \"test_*.py\" && python -m coverage report --data-file=apps/api/runtime/quality/.coverage --fail-under=85",
     "api:perf": "python -X utf8 -m unittest apps.api.tests.test_mcp_gateway.SupervisionLatencyTest.test_interceptor_overhead_p95_under_10ms",
     "audit:security": "node scripts/dependency-security-audit.mjs",
+    "verify:live": "node scripts/live-closure-smoke.mjs",
     "audit:raw:console": "npm audit --prefix apps/console --audit-level=low --registry=https://registry.npmjs.org",
     "verify": "npm run console:lint:strict && npm run console:format:check && npm run ui:audit && npm run console:test && npm run api:lint && npm run api:typecheck && npm run api:check && npm run api:architecture && npm run api:coverage && npm run api:perf && npm run build && npm run console:test:e2e && npm run audit:security",
     "verify:local": "npm run verify",

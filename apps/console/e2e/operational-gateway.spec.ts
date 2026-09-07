@@ -159,6 +159,29 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(clean.agent_supervisor?.provider_called).toBe(true);
     const cleanRequestId = String(clean.agent_supervisor?.request_id ?? '');
     expect(cleanRequestId).not.toBe('');
+    for (const field of ['request_hash', 'provider_request_hash', 'provider_response_hash']) {
+      expect(String(clean.agent_supervisor?.[field] ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+    }
+    const cleanTraceResponse = await page.request.get(`/api/gateway/traces/${encodeURIComponent(cleanRequestId)}`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
+    });
+    expect(cleanTraceResponse.status()).toBe(200);
+    const cleanTrace = (await cleanTraceResponse.json()) as {
+      request_id?: string;
+      provider_called?: boolean;
+      request_hash?: string;
+      provider_request_hash?: string;
+      provider_response_hash?: string;
+      evidence?: { request_hash_bound?: boolean; provider_hash_bound?: boolean };
+    };
+    expect(cleanTrace).toMatchObject({
+      request_id: cleanRequestId,
+      provider_called: true,
+      request_hash: clean.agent_supervisor?.request_hash,
+      provider_request_hash: clean.agent_supervisor?.provider_request_hash,
+      provider_response_hash: clean.agent_supervisor?.provider_response_hash,
+      evidence: { request_hash_bound: true, provider_hash_bound: true }
+    });
     await expect(page.getByRole('button', { name: new RegExp(cleanRequestId) })).toBeVisible();
 
     const beforeInjection = await providerRequestCount(page);
@@ -296,6 +319,19 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(managed.agent_supervisor?.managed_status).toBe('completed');
     expect(managed.agent_supervisor?.tool_receipts_server_observed).toBeGreaterThanOrEqual(1);
     expect(await providerRequestCount(page)).toBe(beforeManaged + 2);
+    const managedRequestId = String(managed.agent_supervisor?.request_id ?? '');
+    const managedTraceResponse = await page.request.get(`/api/gateway/traces/${encodeURIComponent(managedRequestId)}`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
+    });
+    expect(managedTraceResponse.status()).toBe(200);
+    const managedTrace = (await managedTraceResponse.json()) as {
+      request_id?: string;
+      server_observed_execution_count?: number;
+      receipt_count?: number;
+    };
+    expect(managedTrace).toMatchObject({ request_id: managedRequestId });
+    expect(Number(managedTrace.server_observed_execution_count ?? 0)).toBeGreaterThanOrEqual(1);
+    expect(Number(managedTrace.receipt_count ?? 0)).toBeGreaterThanOrEqual(1);
     await expect(page.getByText('服务端托管执行回执')).toBeVisible();
 
     await page.getByRole('button', { name: 'Close' }).click();
