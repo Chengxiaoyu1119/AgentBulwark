@@ -2007,6 +2007,7 @@ def _record_gateway_response_audit(
     session_id: str,
     agent_id: str,
     request_id: str,
+    request_hash: str,
     prompt: str,
     response: dict[str, Any],
     provider_result: dict[str, Any],
@@ -2041,7 +2042,7 @@ def _record_gateway_response_audit(
                 "provider_profile": provider_profile or provider_result.get("provider_profile", ""),
                 "provider_model": provider_result.get("model", ""),
                 "provider_response_id": provider_result.get("provider_response_id", ""),
-                "request_hash": provider_result.get("request_hash", ""),
+                "request_hash": request_hash,
                 "provider_request_hash": provider_result.get("request_hash", ""),
                 "provider_response_hash": provider_result.get("provider_response_hash", ""),
                 "provider_called": True,
@@ -2793,6 +2794,7 @@ def _run_managed_proxy_completion(
             security_context=security_context,
             receipt_messages=receipt_messages,
             force_tool_receipts=bool(receipts),
+            request_id_override=request_id,
         )
         last_result = result
         metadata = result.get("agent_supervisor")
@@ -3939,6 +3941,7 @@ def _run_transparent_proxy_completion(
             session_id=session_id,
             agent_id=agent_id,
             request_id=request_id,
+            request_hash=request_hash,
             prompt=prompt,
             response=response,
             provider_result=provider_result,

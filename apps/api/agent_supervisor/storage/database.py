@@ -965,7 +965,7 @@ def load_gateway_request_audit_logs(
         if stage_context.get("provider_called") is not True:
             continue
         result.append(payload)
-    return result
+    return enrich_audit_logs_with_execution_receipts(result)
 
 
 def latest_gateway_audit_logs(
@@ -1082,7 +1082,7 @@ def load_gateway_request_audit_events(
         if normalized_session_id and str(stage_context.get("session_id") or "") != normalized_session_id:
             continue
         result.append(payload)
-    return result
+    return enrich_audit_logs_with_execution_receipts(result)
 
 
 def load_audit_logs_by_conversation_ids(conversation_ids: set[str]) -> list[dict[str, Any]]:

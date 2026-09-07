@@ -178,6 +178,8 @@ def _safe_stage(row: dict[str, Any]) -> dict[str, Any]:
     raw_context = row.get("stage_context")
     context: dict[str, Any] = raw_context if isinstance(raw_context, dict) else {}
     receipt = row.get("execution_receipt")
+    receipt_payload = receipt if isinstance(receipt, dict) else {}
+    receipt_observed = receipt_payload.get("execution_observed_by_server") is True
     return {
         "audit_id": _safe_identifier(str(row.get("id") or "")),
         "audit_hash": _safe_hash(row.get("audit_hash")),
@@ -198,9 +200,9 @@ def _safe_stage(row: dict[str, Any]) -> dict[str, Any]:
         "request_hash": _safe_hash(context.get("request_hash")),
         "provider_request_hash": _safe_hash(context.get("provider_request_hash")),
         "provider_response_hash": _safe_hash(context.get("provider_response_hash")),
-        "execution_status": str(row.get("execution_status") or "")[:40],
-        "execution_evidence": str(row.get("execution_evidence") or "")[:40],
-        "execution_observed_by_server": row.get("execution_observed_by_server") is True,
+        "execution_status": str(row.get("execution_status") or receipt_payload.get("status") or "")[:40],
+        "execution_evidence": str(row.get("execution_evidence") or receipt_payload.get("execution_evidence") or "")[:40],
+        "execution_observed_by_server": row.get("execution_observed_by_server") is True or receipt_observed,
         "execution_receipt_present": isinstance(receipt, dict) or bool(row.get("receipt_id")),
         "provider_failure": bool(context.get("provider_failure_kind") or context.get("provider_attempted")),
     }
