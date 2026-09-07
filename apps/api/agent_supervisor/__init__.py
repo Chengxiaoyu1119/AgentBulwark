@@ -1,1 +1,1 @@
-"""Agent Security Supervisor API package."""
+"""AgentBulwark API package."""

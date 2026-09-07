@@ -15,7 +15,7 @@ from apps.api.agent_supervisor.domains.runtime.request_limits import (
 from .paths import REPO_ROOT
 from .routers import approvals, core, integrations, mcp, proxy, public
 
-app = FastAPI(title="智安哨 API", version="0.1.0", lifespan=app_lifespan)
+app = FastAPI(title="智垒 API", version="0.1.0", lifespan=app_lifespan)
 
 
 def _cors_origins() -> list[str]:

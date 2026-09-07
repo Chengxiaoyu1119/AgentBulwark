@@ -3427,9 +3427,9 @@ def _run_transparent_proxy_completion(
                     "message": {
                         "role": "assistant",
                          "content": (
-                             "本次请求已由智安哨阻断：Agent 工具能力未登记。"
+                             "[智垒] 本次请求已阻断：Agent 工具能力未登记。"
                              if tool_allowlist_audit is not None
-                             else "本次请求已由智安哨隔离：工具定义命中投毒扫描策略。"
+                             else "[智垒] 本次请求已隔离：工具定义命中投毒扫描策略。"
                          ),
                     },
                     "finish_reason": "content_filter",
@@ -4255,7 +4255,7 @@ def _stream_error_payload(error: BaseException) -> dict[str, Any]:
         message = "网关资源预算不足，本次流式请求未继续执行。"
     elif isinstance(error, ProxyPolicyRejectionError):
         code = "policy_rejection"
-        message = "请求在到达Provider前被安全策略阻断。"
+        message = "[智垒] 请求在到达 Provider 前被安全策略阻断。"
     elif isinstance(error, ModelProviderUnavailableError):
         code = "provider_stream_error"
         message = "Provider流式响应失败或在完成前中断。"
@@ -4807,7 +4807,7 @@ def _replace_blocked_choices(response: dict[str, Any], decision: dict[str, Any])
     message = {
         "role": "assistant",
         "content": (
-            "本次模型响应已由智安哨阻断。"
+            "[智垒] 本次模型响应已阻断。"
             f"处置：{decision.get('decision', '拒绝')}；"
             f"策略：{decision.get('policy_id', 'tool-contract')}；"
             f"原因：{decision.get('reason', '命中安全边界。')}"
@@ -5417,7 +5417,7 @@ def _safe_tool_boundary_reason(policy_id: str) -> str:
 def _final_proxy_content(filtered_content: str, supervisor: dict[str, Any], output_blocked: bool) -> str:
     if output_blocked or supervisor["decision"] in CONTROL_DECISIONS:
         return (
-            "智安哨已拦截或降级本次模型输出。\n"
+            "[智垒] 已拦截或降级本次模型输出。\n"
             f"处置：{supervisor['decision']}；策略：{supervisor['policy_id']}；"
             f"原因：{supervisor['reason']}\n"
             "可继续进行授权本地受控环境评测，但不会返回系统提示词、token、flag、危险命令或第三方攻击步骤。"

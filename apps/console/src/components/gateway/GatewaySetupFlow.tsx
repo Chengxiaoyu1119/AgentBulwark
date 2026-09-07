@@ -33,7 +33,7 @@ export function GatewaySetupFlow({
           <SetupStep
             icon={readiness.provider ? <CircleCheck size={22} /> : <CircleDashed size={22} />}
             title="先连接真实模型"
-            description="智安哨把检查通过的请求转发给你的模型服务。密钥只保存在后端，不进入浏览器。"
+            description="智垒把检查通过的请求转发给你的模型服务。密钥只保存在后端，不进入浏览器。"
           >
             <UiAlert
               type={readiness.provider ? 'success' : 'warning'}
@@ -49,7 +49,7 @@ export function GatewaySetupFlow({
         {step === 1 ? (
           <SetupStep
             icon={<PlugZap size={22} />}
-            title="把应用的模型地址指向智安哨"
+            title="把应用的模型地址指向智垒"
             description="Base URL 是模型客户端发送请求的入口。模型名和其余代码保持不变。"
           >
             <div className="zh-copy-field">

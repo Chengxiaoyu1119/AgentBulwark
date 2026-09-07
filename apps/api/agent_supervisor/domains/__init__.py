@@ -1,1 +1,1 @@
-"""Domain modules for Agent Security Supervisor."""
+"""Domain modules for AgentBulwark."""

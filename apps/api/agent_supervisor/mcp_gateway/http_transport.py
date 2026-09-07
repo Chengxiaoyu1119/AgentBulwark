@@ -261,7 +261,7 @@ def build_modern_discover_response(request_id: Any, *, server_name: str, server_
                     "version": server_version,
                 }
             },
-            "instructions": "工具、资源、提示词和工具结果均经过智安哨安全边界与审计。",
+            "instructions": "工具、资源、提示词和工具结果均经过智垒安全边界与审计。",
             "ttlMs": 60_000,
             "cacheScope": "private",
         },

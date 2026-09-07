@@ -91,7 +91,7 @@ def build_blocked_result(decision: GuardDecision) -> dict[str, Any]:
         json.dumps(reason_text, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     text = (
-        f"[智安哨] 工具调用已被{decision.decision}（策略 {decision.policy_id}）阻断。"
+        f"[智垒] 工具调用已被{decision.decision}（策略 {decision.policy_id}）阻断。"
         "详细原因仅保存在审计记录中，请通过 audit_id 复核。"
     )
     metadata = {

@@ -15,7 +15,7 @@ from apps.api.agent_supervisor.domains.runtime.security_profile import productio
 DEFAULT_TIMEOUT_SECONDS = 10.0
 MIN_TIMEOUT_SECONDS = 0.1
 MAX_TIMEOUT_SECONDS = 300.0
-DEFAULT_SERVER_NAME = "zhiAn-sentinel-mcp-gateway"
+DEFAULT_SERVER_NAME = "智垒 MCP Gateway"
 DEFAULT_MAX_MESSAGE_BYTES = 1 * 1024 * 1024
 DEFAULT_MAX_PENDING_RESPONSES = 256
 DEFAULT_RESOURCE_LIMITS_ENABLED = True

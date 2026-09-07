@@ -305,14 +305,14 @@ def evaluate_agent_event(
         "defense": audit_recommendation,
         "script_steps": [
             "外部智能体生成工具调用意图",
-            "在执行工具前转发到智安哨监督接口",
+            "在执行工具前转发到智垒监督接口",
             "监督器根据策略输出允许、拒绝、询问或隔离",
             "调用方按决策执行、阻断、人工确认或受限隔离",
         ],
         "attack_path": [
             "外部智能体上下文",
             "工具调用参数",
-            "智安哨监督器",
+            "智垒监督器",
             _execution_mode(decision.decision),
         ],
         "detection_points": _detection_points(event, tool_call, decision.policy_id)

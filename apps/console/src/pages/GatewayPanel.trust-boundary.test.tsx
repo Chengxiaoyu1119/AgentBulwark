@@ -138,6 +138,6 @@ describe('GatewayPanel trust boundary', () => {
     await userEvent.click(screen.getByRole('button', { name: '发送到网关' }));
 
     expect(await screen.findByText('本次工具结果仅有调用方声明')).toBeInTheDocument();
-    expect(screen.getByText(/不代表智安哨观察到实际工具执行/)).toBeInTheDocument();
+    expect(screen.getByText(/不代表智垒观察到实际工具执行/)).toBeInTheDocument();
   });
 });

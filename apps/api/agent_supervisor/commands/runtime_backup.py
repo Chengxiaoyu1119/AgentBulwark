@@ -17,7 +17,7 @@ from apps.api.agent_supervisor.domains.runtime.server_security import load_envir
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="智安哨运营数据一致性备份、验证与离线恢复")
+    parser = argparse.ArgumentParser(description="智垒运营数据一致性备份、验证与离线恢复")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     create = subparsers.add_parser("create", help="创建 SQLite 一致性快照和运行文件归档")

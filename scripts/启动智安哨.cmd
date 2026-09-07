@@ -8,6 +8,6 @@ if not errorlevel 1 (
 )
 if errorlevel 1 (
   echo.
-  echo 智安哨启动失败，请把上面的错误信息发给开发者排查。
+  echo 智垒启动失败，请把上面的错误信息发给开发者排查。
   pause
 )

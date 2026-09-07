@@ -1,6 +1,6 @@
 """MCP Gateway：Model Context Protocol 代理层强制监督。
 
-Agent 连接智安哨 MCP Gateway（Streamable HTTP 入口），Gateway 转发到真实
+Agent 连接智垒 MCP Gateway（Streamable HTTP 入口），Gateway 转发到真实
 MCP Server（stdio 上游），所有 tools/call 必须经过 supervisor.decide()，
 拒绝 / 隔离 / 询问时直接返回阻断结果，不转发上游。
 

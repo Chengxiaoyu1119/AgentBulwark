@@ -184,7 +184,7 @@ export function GatewayEvidencePanel({
               type="warning"
               showIcon
               title="本次工具结果仅有调用方声明"
-              description="Hash/HMAC 只证明声明内容与审计记录绑定，不代表智安哨观察到实际工具执行。"
+              description="Hash/HMAC 只证明声明内容与审计记录绑定，不代表智垒观察到实际工具执行。"
             />
           ) : null}
           {toolDecisions.length > 0 && <EvidenceBlock title="Tool call 处置" value={toolDecisions} />}
@@ -207,7 +207,7 @@ export function GatewayEvidencePanel({
             >
               <UiFlex justify="space-between" align="center" gap={12} wrap="wrap">
                 <UiTypography.Text type="secondary">
-                  这是闭环中的实际执行步骤，默认进入智安哨受限运行时，不接受浏览器重新提交的工具参数。
+                  这是闭环中的实际执行步骤，默认进入智垒受限运行时，不接受浏览器重新提交的工具参数。
                 </UiTypography.Text>
                 <UiButton type="primary" icon={<Play size={16} />} loading={executingTool} onClick={onExecuteTool}>
                   服务端受限执行

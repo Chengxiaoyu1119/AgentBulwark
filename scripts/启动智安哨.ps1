@@ -12,7 +12,7 @@ $env:AGENT_SUPERVISOR_API_PORT = "8012"
 # authentication remains available through an explicit direct server launch.
 $env:AGENT_SUPERVISOR_AUTH_DISABLED = "true"
 
-Write-Host "智安哨本地运行环境启动中..."
+Write-Host "智垒本地运行环境启动中..."
 
 function Test-LocalPortAvailable {
   param(
@@ -37,7 +37,7 @@ function Test-LocalPortAvailable {
 }
 
 if (-not (Test-LocalPortAvailable -HostAddress $env:AGENT_SUPERVISOR_API_HOST -Port ([int]$env:AGENT_SUPERVISOR_API_PORT))) {
-  throw "本地端口 $($env:AGENT_SUPERVISOR_API_PORT) 已被占用，智安哨未启动。请先关闭占用该端口的程序后重试。"
+  throw "本地端口 $($env:AGENT_SUPERVISOR_API_PORT) 已被占用，智垒未启动。请先关闭占用该端口的程序后重试。"
 }
 
 # The API serves the production console bundle. Always rebuild it before a

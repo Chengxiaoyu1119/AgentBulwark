@@ -204,10 +204,10 @@ export function AuthGate({ children }: AuthGateProps) {
       <main className="zh-auth-page">
         <section className="zh-auth-shell" aria-labelledby="console-login-title">
           <div className="zh-auth-brand">
-            <img src="/favicon.svg" alt="" className="zh-app-logo" />
+            <img src="/favicon.png" alt="" className="zh-app-logo" />
             <div>
-              <UiTypography.Text strong>智安哨</UiTypography.Text>
-              <UiTypography.Text type="secondary">AI Agent Runtime Security</UiTypography.Text>
+              <UiTypography.Text strong>智垒</UiTypography.Text>
+              <UiTypography.Text type="secondary">AI Agent Firewall</UiTypography.Text>
             </div>
           </div>
 

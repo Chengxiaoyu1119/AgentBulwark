@@ -9,7 +9,7 @@ def build_agent_integration_bundle() -> dict[str, Any]:
     """Return the small, production-facing integration contract."""
 
     return {
-        "name": "智安哨 Agent 网关接入契约",
+        "name": "智垒 Agent 网关接入契约",
         "version": "1.0.0",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "purpose": "让模型请求、工具决策和执行回执沿着同一条可审计链路运行。",
@@ -113,7 +113,7 @@ def _openai_example() -> str:
 def _mcp_example() -> str:
     return dedent(
         """
-        # 将 MCP 客户端的 POST /mcp 地址替换为智安哨的 /api/mcp。
+        # 将 MCP 客户端的 POST /mcp 地址替换为智垒的 /api/mcp。
         # stdio 连接器由网关进程管理，Streamable HTTP 使用同一 Bearer Token。
         headers = {
             "Authorization": f"Bearer {os.environ['AGENT_TOKEN']}",

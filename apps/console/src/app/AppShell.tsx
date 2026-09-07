@@ -53,9 +53,9 @@ export function AppLoading() {
   return (
     <div className="zh-app-loading">
       <div className="zh-app-loading__panel">
-        <img src="/favicon.svg" alt="logo" className="zh-app-logo" />
+        <img src="/favicon.png" alt="logo" className="zh-app-logo" />
         <div>
-          <div className="zh-app-loading__title">智安哨</div>
+          <div className="zh-app-loading__title">智垒</div>
           <div className="zh-app-loading__text">正在加载工作台...</div>
         </div>
         <div className="zh-app-loading__spin">
@@ -117,13 +117,13 @@ export function AppShell({
           className={`desktop-sider zh-app-sider zh-app-sider--${theme}`}
         >
           <div className={`zh-app-brand zh-app-brand--${theme}`}>
-            <img src="/favicon.svg" alt="logo" className="zh-app-logo" />
+            <img src="/favicon.png" alt="logo" className="zh-app-logo" />
             <div>
               <UiTypography.Title level={4} className="zh-title-flush">
-                智安哨
+                智垒
               </UiTypography.Title>
               <UiTypography.Text type="secondary" className="zh-text-meta">
-                Agent 防火墙
+                AI Agent 防火墙
               </UiTypography.Text>
             </div>
           </div>
@@ -133,9 +133,9 @@ export function AppShell({
         <UiDrawer
           title={
             <div className="zh-app-drawer-title">
-              <img src="/favicon.svg" alt="logo" className="zh-app-logo zh-app-logo--small" />
+              <img src="/favicon.png" alt="logo" className="zh-app-logo zh-app-logo--small" />
               <UiTypography.Title level={5} className="zh-title-flush">
-                智安哨
+                智垒
               </UiTypography.Title>
             </div>
           }
