@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢你对智安哨（agent-security-supervisor）的关注！欢迎以任何形式参与贡献。
+感谢你对 AgentBulwark / 智垒（agent-security-supervisor）的关注！欢迎以任何形式参与贡献。
 
 ## 行为准则
 

@@ -1,10 +1,10 @@
-# 智安哨项目协作指南
+# AgentBulwark / 智垒项目协作指南
 
 本文件面向参与仓库开发的工程师和编码代理。用户可先阅读 [README.md](README.md) 了解产品与启动方式。
 
 ## 项目定位
 
-智安哨是本地优先的 Agent 行动安全网关。OpenAI 兼容请求和 MCP 工具调用共享策略、审批、执行回执与 Hash/HMAC 证据边界。
+AgentBulwark（智垒）是本地优先的 AI Agent 防火墙。OpenAI 兼容请求和 MCP 工具调用共享策略、审批、执行回执与 Hash/HMAC 证据边界。
 
 ## 代码边界
 
@@ -47,6 +47,7 @@ npm run console:test
 npm run api:test
 npm run verify
 npm run verify:live
+npm run verify:live:fixture
 ```
 
 `verify:live` 默认写入 `not_run`；只有显式设置 `AGENT_SUPERVISOR_LIVE_SMOKE=true` 才会发起闭环烟测。烟测报告位于 `apps/api/runtime/quality/live-closure/`。

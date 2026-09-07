@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="apps/console/public/favicon.svg" alt="Zhi An Shao" width="96" />
-  <h1>Zhi An Shao</h1>
-  <p><strong>Agent Security Supervisor</strong><br />Control every agent action before, during, and after execution.</p>
+  <img src="apps/console/public/favicon.png" alt="AgentBulwark" width="96" />
+  <h1>AgentBulwark · 智垒</h1>
+  <p><strong>AI Agent Firewall</strong><br />A verifiable runtime boundary for requests, context, model output, and tool calls.</p>
   <p>
     <a href="https://github.com/Chengxiaoyu1119/agent-security-supervisor/actions/workflows/quality.yml"><img src="https://github.com/Chengxiaoyu1119/agent-security-supervisor/actions/workflows/quality.yml/badge.svg" alt="Quality" /></a>
     <a href="./LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2f6fed.svg" alt="Apache-2.0" /></a>
@@ -10,32 +10,19 @@
   </p>
 </div>
 
-Zhi An Shao is a local-first agent action security gateway. OpenAI-compatible requests and MCP tool calls share one control path for policy decisions, approvals, execution receipts, and verifiable evidence.
-
-## Core capabilities
-
-| Capability             | What it provides                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------------ |
-| OpenAI Gateway         | Streaming and non-streaming `/v1/chat/completions`; non-streaming `/v1/responses`.               |
-| MCP Gateway            | stdio and Streamable HTTP with Agent + Session isolation.                                        |
-| Action decisions       | `ALLOW`, `DENY`, `ASK`, and `ISOLATE`, with deny-first conflict handling.                        |
-| Approvals and receipts | One-time approvals bound to arguments, policy version, agent, session, and expiry.               |
-| Evidence chain         | Hash/HMAC audit evidence for requests, responses, tool arguments, policy, and execution results. |
-| Local console          | Protection, events, and settings pages for live status, approvals, and evidence.                 |
-
-## Request flow
+AgentBulwark is a local-first AI Agent Firewall. OpenAI-compatible requests and MCP tool calls share one observable, enforceable, and auditable control path.
 
 ```text
-Agent
-  -> OpenAI Gateway
-  -> Pinned Provider egress
-  -> Tool Call normalization
-  -> Policy decision / approval
-  -> MCP Gateway or bounded runtime
-  -> Execution receipt
-  -> Hash/HMAC evidence
-  -> Console
+Request → Policy → Provider → Tool Gate → MCP → Receipt
 ```
+
+## Capabilities
+
+- **Request protection**: inspect prompts, external context, model output, and tool definitions before risky traffic reaches the Provider.
+- **Action control**: decide `ALLOW`, `DENY`, `ASK`, or `ISOLATE` using the Agent, Session, Schema, target, and policy.
+- **MCP Gateway**: support stdio and Streamable HTTP with session isolation and guarded tool execution.
+- **Verifiable evidence**: bind request/response hashes, an HMAC audit chain, and server-observed execution receipts.
+- **Local console**: inspect live actions, approvals, execution state, and evidence in Protection, Events, and Settings.
 
 ## Quick start
 
@@ -49,11 +36,11 @@ Copy-Item .env.example .env
 npm run dev
 ```
 
-Open [http://127.0.0.1:8012](http://127.0.0.1:8012). The service listens on loopback by default. Provider keys and MCP credentials are read by the backend and are not placed in browser bundles.
+Open [http://127.0.0.1:8012](http://127.0.0.1:8012). The service listens on loopback by default; Provider keys and MCP credentials are read only by the backend.
 
-## Integration and verification
+## Integration
 
-Point an agent's OpenAI Base URL to `http://127.0.0.1:8012/v1`, then register the Provider and MCP settings in `.env`.
+Point an Agent's OpenAI Base URL to `http://127.0.0.1:8012/v1`, then register Provider and MCP settings in `.env`.
 
 ```text
 POST /v1/chat/completions
@@ -68,9 +55,10 @@ Run the local quality gate before sharing changes:
 
 ```powershell
 npm run verify
+npm run verify:live:fixture
 ```
 
-The optional closure smoke does not contact external services by default. Set `AGENT_SUPERVISOR_LIVE_SMOKE=true` explicitly to run it; reports are written under ignored `apps/api/runtime/quality/live-closure/`.
+`verify:live:fixture` runs a deterministic closure with the repository's real HTTP Provider and MCP stdio fixtures without rewriting operational data. `verify:live` does not contact external services by default; set `AGENT_SUPERVISOR_LIVE_SMOKE=true` explicitly for an external Provider smoke test.
 
 ## Documentation
 
