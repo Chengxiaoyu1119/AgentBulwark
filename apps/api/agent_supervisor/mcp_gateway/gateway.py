@@ -539,7 +539,7 @@ class McpGateway:
         *,
         router: UpstreamRouter | None = None,
         guard_enabled: bool = True,
-        server_name: str = "zhiAn-sentinel-mcp-gateway",
+        server_name: str = "智垒 MCP Gateway",
         audit_enabled: bool = True,
         allow_side_effect_notifications: bool = False,
         session_isolation: bool = False,
@@ -2140,6 +2140,10 @@ class McpGateway:
         execution_outcome = str(audit_ref.get("execution_outcome") or "").strip()
         if execution_outcome:
             marker["execution_outcome"] = execution_outcome
+        for field in ("receipt_id", "receipt_hash", "receipt_signature"):
+            value = str(audit_ref.get(field) or "").strip()
+            if value:
+                marker[field] = value
 
     def _handle_initialize(self, params: dict[str, Any], client_id: Any) -> dict[str, Any]:
         # A logical Gateway session fronts every configured MCP child.  Sending

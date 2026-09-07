@@ -9,7 +9,15 @@ const repoRoot = path.resolve(e2eRoot, '../../..');
 const playwrightCli = path.resolve(e2eRoot, '../node_modules/playwright/cli.js');
 const runtimeDir =
   process.env.AGENT_SUPERVISOR_E2E_RUNTIME_DIR ||
-  path.join(repoRoot, 'apps', 'api', 'runtime', 'e2e', `agent-security-supervisor-e2e-${process.pid}-${Date.now()}`);
+  path.join(
+    repoRoot,
+    'apps',
+    'api',
+    'runtime',
+    'quality',
+    'live-closure-fixture',
+    `agent-security-supervisor-e2e-${process.pid}-${Date.now()}`
+  );
 
 function runPlaywright() {
   return new Promise((resolve, reject) => {

@@ -9,12 +9,13 @@ source_app 固定为 `mcp-gateway`，使网关拦截与外部事件在
   上游结果脱敏后写入 tool_output；
 - 拒绝/隔离/询问：execution_status=not_executed，execution_target=none，
   上游从未收到该调用；
-- 回执不外发（execution_receipt_expected=False）：网关自身完成了
-  转发闭环，结果已内联在审计记录中，无需接入方补交回执。
+- 放行转发会追加服务端观察回执：结果既写入网关审计链，也写入统一
+  execution-receipt 事件，供控制台和离线验证器复核。
 """
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -22,7 +23,11 @@ from uuid import uuid4
 from apps.api.agent_supervisor.domains.governance.integrity import attach_audit_hashes
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision
-from apps.api.agent_supervisor.domains.runtime.execution_receipts import tool_call_hash
+from apps.api.agent_supervisor.domains.runtime.execution_receipts import (
+    complete_execution,
+    tool_call_hash,
+    tool_result_hash,
+)
 from apps.api.agent_supervisor.storage.database import get_connection, write_run
 
 SOURCE_APP = "mcp-gateway"
@@ -167,7 +172,9 @@ def record_gateway_tool_call(
         "standard_capability": tool_name,
         "standard_arguments": audit_arguments,
         "tool_mapping": None,
-        "execution_receipt_expected": False,
+        "execution_receipt_expected": bool(is_intent or forwarded),
+        "execution_evidence": "server-observed" if forwarded and not is_intent else "not-executed-observed",
+        "execution_observed_by_server": bool(forwarded and not is_intent),
         "execution_status": (
             "pending"
             if is_intent
@@ -305,6 +312,30 @@ def record_gateway_tool_call(
         },
     }
     write_run(result)
+
+    receipt: dict[str, Any] | None = None
+    if execution_phase == "result" and forwarded:
+        receipt_status = "failed" if upstream_error else "completed"
+        receipt_content = _receipt_content(upstream_result, upstream_error)
+        receipt_result = complete_execution(
+            audit_id,
+            {
+                "receipt_id": f"mcp-{uuid4().hex}",
+                "agent_id": agent_id,
+                "tool_call": {"tool": tool_name, "arguments": arguments},
+                "status": receipt_status,
+                "execution_target": "external",
+                "result_hash": tool_result_hash(receipt_content),
+                "result_content": receipt_content,
+                "duration_ms": 0,
+                "error": upstream_error or "",
+            },
+            server_observed=True,
+        )
+        receipt = receipt_result.get("receipt")
+        if not isinstance(receipt, dict):
+            raise ValueError("MCP 工具已执行但未生成有效服务端回执")
+
     return {
         "run_id": run_id,
         "audit_id": audit_id,
@@ -312,4 +343,15 @@ def record_gateway_tool_call(
         "execution_outcome": execution_outcome,
         "persisted": True,
         "source_app": SOURCE_APP,
+        "receipt_id": str(receipt.get("receipt_id") or "") if receipt else "",
+        "receipt_hash": str(receipt.get("receipt_hash") or "") if receipt else "",
+        "receipt_signature": str(receipt.get("receipt_signature") or "") if receipt else "",
     }
+
+
+def _receipt_content(upstream_result: dict[str, Any] | None, upstream_error: str | None) -> str:
+    """Serialize bounded, redacted MCP result content for the signed receipt."""
+
+    payload: Any = redact_sensitive(upstream_result) if upstream_result is not None else {"error": upstream_error or ""}
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":"))
+    return serialized[:12_000]

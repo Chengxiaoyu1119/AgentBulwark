@@ -79,6 +79,9 @@ test.describe.serial('运营网关黑盒验收', () => {
 
     await page.goto('/#/gateway');
     await expect(page.getByRole('heading', { name: '连接安全控制台' })).toBeVisible();
+    await expect(page.getByText('智垒', { exact: true })).toBeVisible();
+    await expect(page.getByText('智安哨', { exact: true })).toHaveCount(0);
+    await expect(page).toHaveTitle('智垒 · AI Agent Firewall');
     await expect(page.getByText('后端在线')).toBeVisible();
     await expect(page.locator('.zh-auth-page')).toHaveCSS('display', 'flex');
     expect([...new Set(bootstrapApiPaths)]).toEqual(['/api/public/status']);
@@ -328,10 +331,47 @@ test.describe.serial('运营网关黑盒验收', () => {
       request_id?: string;
       server_observed_execution_count?: number;
       receipt_count?: number;
+      request_hash?: string;
+      provider_response_hash?: string;
     };
     expect(managedTrace).toMatchObject({ request_id: managedRequestId });
     expect(Number(managedTrace.server_observed_execution_count ?? 0)).toBeGreaterThanOrEqual(1);
     expect(Number(managedTrace.receipt_count ?? 0)).toBeGreaterThanOrEqual(1);
+    expect(String(managedTrace.request_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+    expect(String(managedTrace.provider_response_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+    const managedAuditIds = Array.isArray(managed.agent_supervisor?.managed_audit_ids)
+      ? managed.agent_supervisor.managed_audit_ids.map((value) => String(value)).filter(Boolean)
+      : [];
+    expect(managedAuditIds.length).toBeGreaterThan(0);
+    const receiptResponse = await page.request.get(
+      `/api/runtime/executions/${encodeURIComponent(managedAuditIds[0])}`,
+      {
+        headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
+      }
+    );
+    expect(receiptResponse.status()).toBe(200);
+    const receiptBody = (await receiptResponse.json()) as {
+      audit_id?: string;
+      receipt?: {
+        audit_id?: string;
+        status?: string;
+        execution_evidence?: string;
+        execution_observed_by_server?: boolean;
+        receipt_hash?: string;
+        receipt_signature?: string;
+        result_hash?: string;
+      } | null;
+    };
+    expect(receiptBody.audit_id).toBe(managedAuditIds[0]);
+    expect(receiptBody.receipt).toMatchObject({
+      audit_id: managedAuditIds[0],
+      status: 'completed',
+      execution_evidence: 'server-observed',
+      execution_observed_by_server: true
+    });
+    expect(String(receiptBody.receipt?.receipt_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+    expect(String(receiptBody.receipt?.result_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+    expect(String(receiptBody.receipt?.receipt_signature ?? '')).not.toBe('');
     await expect(page.getByText('服务端托管执行回执')).toBeVisible();
 
     await page.getByRole('button', { name: 'Close' }).click();

@@ -330,7 +330,7 @@ class InterceptorTest(unittest.TestCase):
         self.assertTrue(result["isError"])
         self.assertTrue(result["structuredContent"]["blocked"])
         self.assertEqual(result["structuredContent"]["decision"], decision.decision)
-        self.assertTrue(result["content"][0]["text"].startswith("[智安哨]"))
+        self.assertTrue(result["content"][0]["text"].startswith("[智垒]"))
 
     def test_blocked_result_does_not_reflect_caller_controlled_reason(self) -> None:
         decision = GuardDecision(
@@ -1402,7 +1402,8 @@ class GatewayAuditTest(unittest.TestCase):
         self.assertEqual(self.gateway.stats()["audit_records"], 1)
 
     def test_forwarded_call_audits_completed_with_upstream_result(self) -> None:
-        from apps.api.agent_supervisor.storage.database import load_audit_log
+        from apps.api.agent_supervisor.domains.runtime.execution_receipts import verify_execution_receipt
+        from apps.api.agent_supervisor.storage.database import load_audit_log, load_execution_receipt
 
         response = _handle(self.gateway, _benign_call("public/readme.md", request_id="audit-ok-1"))
         marker = response["result"]["zhiAnSentinel"]
@@ -1415,6 +1416,13 @@ class GatewayAuditTest(unittest.TestCase):
         self.assertEqual(log["execution_target"], "mcp-upstream")
         self.assertTrue(log["tool_output"]["executed"])
         self.assertIn("path", json.dumps(log["tool_output"], ensure_ascii=False))
+        receipt = load_execution_receipt(str(marker.get("audit_id")))
+        self.assertIsNotNone(receipt)
+        assert receipt is not None
+        self.assertEqual(receipt["execution_evidence"], "server-observed")
+        self.assertTrue(receipt["execution_observed_by_server"])
+        self.assertTrue(verify_execution_receipt(receipt))
+        self.assertEqual(marker["receipt_hash"], receipt["receipt_hash"])
 
     def test_forwarded_call_persists_intent_before_result(self) -> None:
         from apps.api.agent_supervisor.mcp_gateway.audit import record_gateway_tool_call as real_record

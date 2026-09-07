@@ -1,13 +1,20 @@
 import { defineConfig } from 'playwright/test';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import os from 'node:os';
 
 const consoleRoot = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = path.resolve(consoleRoot, '../..');
 const runtimeDir =
   process.env.AGENT_SUPERVISOR_E2E_RUNTIME_DIR ||
-  path.join(os.tmpdir(), `agent-security-supervisor-e2e-${process.pid}`);
+  path.join(
+    repoRoot,
+    'apps',
+    'api',
+    'runtime',
+    'quality',
+    'live-closure-fixture',
+    `agent-security-supervisor-e2e-${process.pid}`
+  );
 const providerPort = '18081';
 const apiPort = '8016';
 const consolePort = '5180';
@@ -70,14 +77,17 @@ const apiEnvironment: Record<string, string> = {
 
 export default defineConfig({
   testDir: './e2e',
-  outputDir: '../../apps/api/runtime/e2e/test-results',
+  outputDir: '../../apps/api/runtime/quality/live-closure-fixture/test-results',
   fullyParallel: false,
   workers: 1,
   timeout: 120_000,
   expect: { timeout: 15_000 },
   retries: 0,
   globalTeardown: './e2e/global-teardown.ts',
-  reporter: [['line'], ['html', { outputFolder: '../../apps/api/runtime/e2e/playwright-report', open: 'never' }]],
+  reporter: [
+    ['line'],
+    ['html', { outputFolder: '../../apps/api/runtime/quality/live-closure-fixture/playwright-report', open: 'never' }]
+  ],
   use: {
     baseURL: `http://127.0.0.1:${consolePort}`,
     ...(browserChannel ? { channel: browserChannel } : {}),

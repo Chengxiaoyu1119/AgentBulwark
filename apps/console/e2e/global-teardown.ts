@@ -4,15 +4,17 @@ import { fileURLToPath } from 'node:url';
 export default async function globalTeardown() {
   const candidate = process.env.AGENT_SUPERVISOR_E2E_RUNTIME_DIR;
   if (!candidate) return;
-  const runtimeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../api/runtime/e2e');
+  const apiRuntimeRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../api/runtime');
+  const runtimeRoots = [
+    path.resolve(apiRuntimeRoot, 'quality/live-closure-fixture'),
+    path.resolve(apiRuntimeRoot, 'e2e')
+  ];
   const resolved = path.resolve(candidate);
-  const relative = path.relative(runtimeRoot, resolved);
-  if (
-    !relative ||
-    relative.startsWith('..') ||
-    path.isAbsolute(relative) ||
-    !path.basename(resolved).startsWith('agent-security-supervisor-e2e-')
-  ) {
+  const isAllowedRoot = runtimeRoots.some((runtimeRoot) => {
+    const relative = path.relative(runtimeRoot, resolved);
+    return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+  });
+  if (!isAllowedRoot || !path.basename(resolved).startsWith('agent-security-supervisor-e2e-')) {
     throw new Error(`拒绝清理非 E2E 临时目录：${resolved}`);
   }
   // Directory removal is owned by run-e2e.mjs after Playwright has stopped
