@@ -867,15 +867,17 @@ def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> lis
             # merely because they have no generic execution receipt.
             copy["execution_status"] = str(log.get("execution_status"))
             copy["execution_target"] = str(log.get("execution_target") or "mcp-upstream")
-        elif log.get("execution_receipt_expected"):
+        elif log.get("execution_receipt_expected") and str(log.get("decision") or "") in {"允许", "隔离"}:
             copy["execution_status"] = "awaiting_receipt"
             copy["execution_target"] = "unknown"
+            copy["execution_receipt_expected"] = True
         elif isinstance(log.get("tool_output"), dict) and log["tool_output"].get("executed"):
             copy["execution_status"] = "server_runtime_completed"
             copy["execution_target"] = "local-runtime"
         else:
             copy["execution_status"] = "not_applicable"
             copy["execution_target"] = "none"
+            copy["execution_receipt_expected"] = False
         enriched.append(copy)
     return enriched
 

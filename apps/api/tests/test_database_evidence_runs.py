@@ -178,6 +178,63 @@ database.init_db()
         self.assertEqual(audit["execution_status"], "completed")
         self.assertEqual(audit["execution_receipt"]["receipt_id"], "old-receipt")
 
+    def test_audit_reader_does_not_mark_controlled_actions_as_waiting_for_receipt(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="database-receipt-state-") as temp_dir:
+            runtime_dir = Path(temp_dir)
+            with (
+                patch.object(database, "RUNTIME_DIR", runtime_dir),
+                patch.object(database, "DB_PATH", runtime_dir / "receipt-state.sqlite3"),
+            ):
+                database.init_db()
+                with database.get_connection() as conn:
+                    conn.executemany(
+                        """
+                        INSERT INTO audit_logs (id, run_id, tool, decision, risk_level, reason, payload)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                "denied-audit",
+                                "run-denied",
+                                "api.call",
+                                "拒绝",
+                                "critical",
+                                "fixture",
+                                json.dumps(
+                                    {
+                                        "id": "denied-audit",
+                                        "decision": "拒绝",
+                                        "execution_status": "not_executed",
+                                        "execution_receipt_expected": True,
+                                    }
+                                ),
+                            ),
+                            (
+                                "allowed-audit",
+                                "run-allowed",
+                                "file.read",
+                                "允许",
+                                "low",
+                                "fixture",
+                                json.dumps(
+                                    {
+                                        "id": "allowed-audit",
+                                        "decision": "允许",
+                                        "execution_status": "not_executed",
+                                        "execution_receipt_expected": True,
+                                    }
+                                ),
+                            ),
+                        ],
+                    )
+
+                rows = {item["id"]: item for item in database.latest_audit_logs(10)}
+
+        self.assertEqual(rows["denied-audit"]["execution_status"], "not_applicable")
+        self.assertFalse(rows["denied-audit"]["execution_receipt_expected"])
+        self.assertEqual(rows["allowed-audit"]["execution_status"], "awaiting_receipt")
+        self.assertTrue(rows["allowed-audit"]["execution_receipt_expected"])
+
     def test_gateway_audit_identity_filter_is_applied_before_limit(self) -> None:
         """A noisy Agent must not evict another Agent's scoped Trace window."""
         with tempfile.TemporaryDirectory(prefix="database-gateway-agent-window-") as temp_dir:

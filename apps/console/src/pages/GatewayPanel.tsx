@@ -65,14 +65,19 @@ export function GatewayPanel({ onOpenSettings }: { onOpenSettings?: () => void }
     runtimeStatus.mcp.enabled === true &&
     runtimeStatus.mcp.guard_enabled === true;
   const channelReady = channel === 'openai' ? protectionReady : mcpReady;
+  const channelStatus = channelReady
+    ? '防护已配置'
+    : channel === 'openai' && readiness.provider && readiness.gateway
+      ? '回执边界待闭合'
+      : channel === 'mcp' && runtimeStatus?.mcp?.configured === true
+        ? 'MCP 防护待启用'
+        : '等待接入';
 
   return (
     <div className="zh-product-page">
       <PageHeader
         title="请求防护"
-        badge={
-          <LabelTag color={channelReady ? 'green' : 'warning'}>{channelReady ? '防护已配置' : '等待接入'}</LabelTag>
-        }
+        badge={<LabelTag color={channelReady ? 'green' : 'warning'}>{channelStatus}</LabelTag>}
         description="统一验证模型 API 与 MCP 工具调用，实时查看放行、阻断、隔离和执行证据。"
         actions={
           channel === 'openai' ? (

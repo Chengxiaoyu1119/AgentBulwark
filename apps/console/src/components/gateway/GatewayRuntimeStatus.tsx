@@ -46,6 +46,11 @@ export type RuntimeStatus = {
     fingerprint?: string;
     started_at?: string;
   };
+  audit_integrity?: {
+    hmac_configured?: boolean;
+    receipt_signatures_required?: boolean;
+    key_id?: string;
+  };
   semantic_detector?: {
     enabled?: boolean;
     loaded?: boolean;
@@ -82,6 +87,7 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
   const toolReceiptsRequired = status?.proxy?.tool_receipts_required === true;
   const serverObservedReceiptsRequired = status?.proxy?.server_observed_receipts_required === true;
   const strictReceiptBoundary = toolReceiptsRequired && serverObservedReceiptsRequired;
+  const hmacConfigured = status?.audit_integrity?.hmac_configured === true;
   const receiptTrustLabel = strictReceiptBoundary
     ? '仅接受服务端观察'
     : serverObservedReceiptsRequired
@@ -197,6 +203,13 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
                 label="网关运行证据"
                 value={gatewayFingerprint ? `已绑定 · ${gatewayFingerprint.slice(0, 12)}` : '未绑定'}
                 tone={gatewayFingerprint ? 'green' : 'red'}
+              />
+            </UiCol>
+            <UiCol xs={24} sm={12} lg={6}>
+              <StatusCard
+                label="证据签名"
+                value={hmacConfigured ? `HMAC 已启用 · ${status.audit_integrity?.key_id || '已配置'}` : '未配置 HMAC'}
+                tone={hmacConfigured ? 'green' : 'amber'}
               />
             </UiCol>
             <UiCol xs={24} sm={12} lg={6}>

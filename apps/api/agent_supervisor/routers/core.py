@@ -256,9 +256,12 @@ def auth_context(
 
 @router.get("/api/overview")
 def overview(role: str = Depends(current_security_role)) -> dict:
-    runs = latest_runs(12)
-    alerts = [alert for run in runs for alert in run.get("alerts", [])][:8]
-    audit_logs = latest_audit_logs(12)
+    # ``experiment_runs`` is a legacy evidence store.  The operational
+    # console uses gateway traces and must not present those historical
+    # scenario payloads as current runtime traffic.
+    runs: list[dict[str, Any]] = []
+    alerts: list[dict[str, Any]] = []
+    audit_logs: list[dict[str, Any]] = []
     total = len(runs)
     controlled_actions = sum(
         1

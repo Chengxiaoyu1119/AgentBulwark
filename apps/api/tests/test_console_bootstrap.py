@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -49,14 +50,42 @@ class ConsoleBootstrapTest(unittest.TestCase):
                 overview_response = client.get("/api/overview", headers=headers)
                 runtime_response = client.get("/api/runtime_status", headers=headers)
 
-        self.assertEqual(lab_response.status_code, 404)
-        self.assertEqual(overview_response.status_code, 200)
-        self.assertIn("recent_runs", overview_response.json())
-        self.assertIn("audit_logs", overview_response.json())
-        self.assertNotIn("scenarios", overview_response.json())
+                self.assertEqual(lab_response.status_code, 404)
+                self.assertEqual(overview_response.status_code, 200)
+        overview = overview_response.json()
+        self.assertIn("recent_runs", overview)
+        self.assertIn("audit_logs", overview)
+        self.assertEqual(overview["recent_runs"], [])
+        self.assertEqual(overview["alerts"], [])
+        self.assertEqual(overview["audit_logs"], [])
+        self.assertNotIn("scenarios", overview)
         self.assertEqual(runtime_response.status_code, 200)
         self.assertEqual(runtime_response.json()["backend"]["data_plane"], "operational")
         self.assertNotIn("labs_enabled", runtime_response.json()["backend"])
+
+    def test_runtime_status_exposes_evidence_integrity_without_secret(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN": "operator-token",
+                "AGENT_SUPERVISOR_AUDIT_HMAC_KEY": "private-hmac-value",
+                "AGENT_SUPERVISOR_AUDIT_HMAC_KEY_ID": "operator-hmac-v2",
+                "AGENT_SUPERVISOR_API_HOST": "127.0.0.1",
+            },
+            clear=False,
+        ):
+            with TestClient(app) as client:
+                response = client.get("/api/runtime_status", headers={"Authorization": "Bearer operator-token"})
+
+        body = response.json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(body["audit_integrity"], {
+            "hmac_configured": True,
+            "receipt_signatures_required": True,
+            "key_id": "operator-hmac-v2",
+        })
+        self.assertNotIn("private-hmac-value", json.dumps(body, ensure_ascii=False))
 
 
 if __name__ == "__main__":

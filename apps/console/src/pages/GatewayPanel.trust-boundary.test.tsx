@@ -82,7 +82,7 @@ describe('GatewayPanel trust boundary', () => {
 
     render(<GatewayPanel />);
 
-    expect(await screen.findByText('等待接入')).toBeInTheDocument();
+    expect(await screen.findByText('回执边界待闭合')).toBeInTheDocument();
     expect(screen.queryByText('防护已配置')).not.toBeInTheDocument();
     expect(screen.queryByText('防护运行中')).not.toBeInTheDocument();
   });
@@ -97,7 +97,7 @@ describe('GatewayPanel trust boundary', () => {
     render(<GatewayPanel />);
     await userEvent.click(screen.getByRole('tab', { name: 'MCP 工具' }));
 
-    expect(await screen.findByText('等待接入')).toBeInTheDocument();
+    expect(await screen.findByText('MCP 防护待启用')).toBeInTheDocument();
     expect(screen.queryByText('防护已配置')).not.toBeInTheDocument();
     expect(screen.queryByText('防护运行中')).not.toBeInTheDocument();
   });

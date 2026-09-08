@@ -150,7 +150,7 @@ export function GatewayTracePanel({
         subtitle={
           mode === 'events'
             ? '点击一条事件，查看输入、模型、工具与执行的完整处置链'
-            : '这里展示运营数据库的实时流量；实验样本与历史报告在对应页面查看'
+            : '这里展示经过智垒网关的真实请求；点击请求可查看完整处置链'
         }
         className="zh-traffic-panel"
         extra={

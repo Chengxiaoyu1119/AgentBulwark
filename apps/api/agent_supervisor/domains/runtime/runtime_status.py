@@ -61,6 +61,7 @@ def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict[str,
     except ValueError:
         stream_window_value = 256
     snapshot = evidence.get("snapshot") if isinstance(evidence.get("snapshot"), dict) else None
+    hmac_configured = bool(os.getenv("AGENT_SUPERVISOR_AUDIT_HMAC_KEY", "").strip())
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "backend": {
@@ -96,6 +97,11 @@ def build_runtime_status(*, expose_provider_endpoints: bool = True) -> dict[str,
             "source_fingerprint": gateway_source_fingerprint(snapshot),
             "code_fingerprint": str(evidence.get("code_fingerprint") or gateway_code_fingerprint(snapshot)),
             "started_at": str(evidence.get("started_at") or ""),
+        },
+        "audit_integrity": {
+            "hmac_configured": hmac_configured,
+            "receipt_signatures_required": hmac_configured,
+            "key_id": os.getenv("AGENT_SUPERVISOR_AUDIT_HMAC_KEY_ID", "local-hmac-v1") if hmac_configured else "",
         },
         "semantic_detector": semantic_detector_status(),
         "mcp": {

@@ -34,6 +34,11 @@ describe('GatewayPanel', () => {
           },
           semantic_detector: { enabled: true, loaded: false },
           mcp: { configured: false, enabled: false, guard_enabled: false, resource_limits: { os_enforced: false } },
+          audit_integrity: {
+            hmac_configured: true,
+            receipt_signatures_required: true,
+            key_id: 'fixture-hmac-v1'
+          },
           gateway_evidence: { fingerprint: 'fixture-gateway-fingerprint', started_at: '2026-08-16T19:00:00Z' }
         };
       }
@@ -98,6 +103,8 @@ describe('GatewayPanel', () => {
     expect(screen.getByText('Tool call 处置')).toBeInTheDocument();
     expect(screen.getByText('Provider 工具参数扫描')).toBeInTheDocument();
     expect(screen.getByText('源码/配置指纹')).toBeInTheDocument();
+    expect(screen.getByText('证据签名')).toBeInTheDocument();
+    expect(screen.getByText(/HMAC 已启用/)).toBeInTheDocument();
     expect(screen.getByText('审计精确定位')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '打开本次审计' })).toBeInTheDocument();
   });

@@ -128,6 +128,7 @@ def evaluate_agent_event(
             decision.recommendation = "暂停自动执行，人工确认前序数据来源、当前收件人和业务授权。"
     detection_latency_ms = round((perf_counter() - decision_started) * 1000, 3)
     should_execute = execute_managed and decision.decision in {"允许", "隔离"}
+    external_receipt_required = receipt_required and decision.decision in {"允许", "隔离"}
     # This marker is written only by the authenticated supervisor-owned
     # The flag only requests local managed execution; durable server evidence
     # still comes from the authenticated server-owned route below.
@@ -199,7 +200,7 @@ def evaluate_agent_event(
         "standard_capability": tool_call["tool"],
         "standard_arguments": audit_standard_arguments,
         "tool_mapping": tool_resolution.mapping,
-        "execution_receipt_expected": receipt_required or should_execute,
+        "execution_receipt_expected": external_receipt_required or should_execute,
         # ``execute_managed=True`` means this process owns the executor and
         # can observe the resulting tool output.  In the normal external-Agent
         # path the caller owns execution, so a later receipt is an attestation,
@@ -209,7 +210,7 @@ def evaluate_agent_event(
         else "server-observed"
         if server_owned_execution or (should_execute and bool(raw_tool_output.get("executed")))
         else "caller-declared-required"
-        if receipt_required and not should_execute
+        if external_receipt_required and not should_execute
         else "not-executed-observed",
         # For a server-owned route, a controlled non-execution is also an
         # observed enforcement result.  It is distinct from a caller-declared
@@ -528,8 +529,12 @@ def evaluate_agent_event(
         "reason": audit_reason,
         "recommendation": audit_recommendation,
         "execution_mode": _execution_mode(decision.decision),
-        "execution_receipt_required": receipt_required and not should_execute,
-        "execution_status": audit_log["execution_status"] if execute_managed else "awaiting_receipt",
+        "execution_receipt_required": external_receipt_required and not execute_managed,
+        "execution_status": (
+            audit_log["execution_status"]
+            if execute_managed or not external_receipt_required
+            else "awaiting_receipt"
+        ),
         "execution_target": audit_log["execution_target"] if execute_managed else "none",
         "execution_evidence": audit_log["execution_evidence"],
         "execution_observed_by_server": audit_log["execution_observed_by_server"],

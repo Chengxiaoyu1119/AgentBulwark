@@ -14,9 +14,9 @@ export const defaultModelProviders: ModelProviderOption[] = [
 ];
 
 export const modelProfileMeta: Array<{ id: ModelProfileId; title: string; description: string }> = [
-  { id: 'target', title: '主模型', description: 'Agent 任务规划与安全攻防验证默认使用的模型链路。' },
+  { id: 'target', title: '主模型', description: 'Agent 任务规划与业务请求默认使用的模型链路。' },
   { id: 'optimizer', title: '副模型', description: '提示词优化、语言变体生成默认走智谱优先链路。' },
-  { id: 'global', title: '全局默认模型', description: '普通模型调用、工具调用盲测与兜底评估统一使用。' }
+  { id: 'global', title: '全局默认模型', description: '普通模型请求和工具调用统一使用。' }
 ];
 
 export function normalizeProviderId(provider: string): string {

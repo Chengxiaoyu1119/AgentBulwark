@@ -493,6 +493,46 @@ class RuntimeGovernanceTest(unittest.TestCase):
         self.assertNotIn("abcdefghijklmnop", serialized)
         self.assertNotIn("reviewer@example.com", serialized)
 
+    def test_external_receipt_wait_is_limited_to_executable_decisions(self):
+        with patch("apps.api.agent_supervisor.domains.runtime.events.write_run"):
+            allowed = evaluate_agent_event(
+                {
+                    "conversation_id": "receipt-state-allowed",
+                    "agent_id": "receipt-state-agent",
+                    "source_app": "openai-compatible-proxy",
+                    "tool_call": {
+                        "tool": "file.read",
+                        "arguments": {"path": "public/readme.md"},
+                    },
+                },
+                guard_enabled=True,
+                execute_managed=False,
+                receipt_required=True,
+            )
+            denied = evaluate_agent_event(
+                {
+                    "conversation_id": "receipt-state-denied",
+                    "agent_id": "receipt-state-agent",
+                    "source_app": "openai-compatible-proxy",
+                    "tool_call": {
+                        "tool": "api.call",
+                        "arguments": {"endpoint": "/api/admin/scoreboard"},
+                    },
+                },
+                guard_enabled=True,
+                execute_managed=False,
+                receipt_required=True,
+            )
+
+        self.assertEqual(allowed["decision"], "允许")
+        self.assertEqual(allowed["execution_status"], "awaiting_receipt")
+        self.assertTrue(allowed["execution_receipt_required"])
+        self.assertEqual(denied["decision"], "拒绝")
+        self.assertEqual(denied["execution_status"], "not_executed")
+        self.assertFalse(denied["execution_receipt_required"])
+        self.assertFalse(denied["audit_log"]["execution_receipt_expected"])
+        self.assertEqual(denied["audit_log"]["execution_evidence"], "not-executed-observed")
+
     def test_runtime_audit_redacts_free_form_system_prompt_secret(self):
         with patch("apps.api.agent_supervisor.domains.runtime.events.write_run"):
             result = evaluate_agent_event(
