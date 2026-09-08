@@ -56,6 +56,7 @@ class LocalLauncherTest(unittest.TestCase):
             )
             environment = os.environ.copy()
             environment["PATH"] = f"{bin_dir};{environment['PATH']}"
+            environment["AGENT_SUPERVISOR_PYTHON"] = "python"
             npm_result = subprocess.run(
                 [npm, "run", "start:local"],
                 cwd=temporary_root,

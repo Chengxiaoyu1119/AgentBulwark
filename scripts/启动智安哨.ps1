@@ -52,6 +52,19 @@ if ($LASTEXITCODE -ne 0) {
 $consoleUrl = "http://127.0.0.1:8012"
 $statusUrl = "$consoleUrl/api/public/status"
 $browserJob = $null
+$pythonCommand = $env:AGENT_SUPERVISOR_PYTHON
+$pythonArguments = @()
+if (-not $pythonCommand) {
+  $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+  if ($pyLauncher) {
+    $pythonCommand = $pyLauncher.Source
+    $pythonArguments = @("-3")
+  }
+}
+if (-not $pythonCommand) {
+  $pythonLauncher = Get-Command python -ErrorAction Stop
+  $pythonCommand = $pythonLauncher.Source
+}
 try {
   $browserJob = Start-Job -ArgumentList $consoleUrl, $statusUrl -ScriptBlock {
     param($url, $healthUrl)
@@ -71,7 +84,7 @@ try {
 
   Write-Host "服务就绪后浏览器将打开 $consoleUrl"
   Write-Host "关闭本窗口即可停止本地服务。"
-  python -X utf8 -m apps.api.dev_server
+  & $pythonCommand @pythonArguments -X utf8 -m apps.api.dev_server
   $serverExitCode = $LASTEXITCODE
 } finally {
   if ($browserJob) {

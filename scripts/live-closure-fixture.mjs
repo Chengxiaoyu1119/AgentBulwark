@@ -1,11 +1,26 @@
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const python = process.env.AGENT_SUPERVISOR_PYTHON || "python";
+function resolvePython() {
+  const explicit = String(process.env.AGENT_SUPERVISOR_PYTHON || "").trim();
+  if (explicit) return { command: explicit, args: [] };
+  if (process.platform === "win32") {
+    const probe = spawnSync("py", ["-3", "-c", "import uvicorn"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    if (!probe.error && probe.status === 0) return { command: "py", args: ["-3"] };
+  }
+  return { command: "python", args: [] };
+}
+
+const pythonRuntime = resolvePython();
+const python = pythonRuntime.command;
+const pythonArgs = pythonRuntime.args;
 const runtime = resolve(
   repoRoot,
   "apps/api/runtime/quality/live-closure-fixture",
@@ -55,11 +70,11 @@ async function waitForApi() {
 
 async function main() {
   await mkdir(runtime, { recursive: true });
-  start(python, ["-X", "utf8", "-m", "apps.api.tests.fixtures.openai_gateway_provider"], {
+  start(python, [...pythonArgs, "-X", "utf8", "-m", "apps.api.tests.fixtures.openai_gateway_provider"], {
     FIXTURE_PROVIDER_PORT: providerPort,
   }, "provider.log");
 
-  start(python, ["-X", "utf8", "-m", "apps.api.dev_server"], {
+  start(python, [...pythonArgs, "-X", "utf8", "-m", "apps.api.dev_server"], {
     AGENT_SUPERVISOR_API_HOST: "127.0.0.1",
     AGENT_SUPERVISOR_API_PORT: apiPort,
     AGENT_SUPERVISOR_RUNTIME_DIR: runtime,
@@ -86,7 +101,9 @@ async function main() {
     AGENT_SUPERVISOR_PROVIDER_DNS_MODE: "system",
     MCP_GATEWAY_ENABLED: "true",
     MCP_GATEWAY_GUARD_ENABLED: "true",
-    MCP_GATEWAY_UPSTREAM_COMMAND: `${python} -X utf8 -m apps.api.tests.fixtures.mcp_echo_server`,
+    MCP_GATEWAY_UPSTREAM_COMMAND: [python, ...pythonArgs, "-X", "utf8", "-m", "apps.api.tests.fixtures.mcp_echo_server"]
+      .map((item) => (String(item).includes(" ") ? `"${item}"` : item))
+      .join(" "),
     MCP_GATEWAY_SESSION_ISOLATION: "true",
     MCP_GATEWAY_RESOURCE_LIMITS_ENABLED: "true",
     MCP_GATEWAY_NETWORK_MODE: "reject-unpinned",
