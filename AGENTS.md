@@ -19,6 +19,16 @@ AgentBulwark（智垒）是本地优先的 AI Agent 防火墙。OpenAI 兼容请
 
 `apps/api/runtime/`、`.env`、控制台依赖、构建产物和媒体文件属于本地运行边界，不进入 Git 提交。
 
+运行目录只按以下职责使用：
+
+| 子目录 | 允许内容 | 管理规则 |
+| --- | --- | --- |
+| `apps/api/runtime/operational/` | SQLite、策略、审批、审计和本地状态 | 正式运行数据，不能由清理脚本删除或迁移 |
+| `apps/api/runtime/quality/` | 测试报告、闭环验证、审计输出和临时验证文件 | 可重建；缓存由 `scripts/clean-local-artifacts.ps1` 清理 |
+| `apps/api/runtime/backups/` | 明确创建的运行数据备份 | 只通过备份命令管理，不作为缓存清理 |
+
+可选语义模型放在 `apps/api/runtime/operational/models/`；`legacy/` 不再作为活动代码或模型加载路径。
+
 ## 开发流程
 
 1. 先阅读与任务直接相关的源码、测试和文档，记录可验证的成功标准。
