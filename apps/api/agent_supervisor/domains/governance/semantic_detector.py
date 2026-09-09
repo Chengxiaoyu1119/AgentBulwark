@@ -19,8 +19,9 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[5]
-MODEL_DIR = PROJECT_ROOT / "legacy" / "training" / "model"
+from apps.api.agent_supervisor.paths import RUNTIME_DIR
+
+MODEL_DIR = RUNTIME_DIR / "models"
 MODEL_PATH = MODEL_DIR / "jailbreak_bert.onnx"
 TOKENIZER_PATH = MODEL_DIR / "tokenizer.json"
 
@@ -219,8 +220,8 @@ def semantic_detector_status() -> dict[str, object]:
         # Do not disclose the server's absolute filesystem path through a
         # read-only status endpoint; the relative artifact names are enough
         # to explain which evidence is missing.
-        "model_path": "legacy/training/model/jailbreak_bert.onnx",
-        "tokenizer_path": "legacy/training/model/tokenizer.json",
+        "model_path": "runtime/models/jailbreak_bert.onnx",
+        "tokenizer_path": "runtime/models/tokenizer.json",
         "model_file_present": MODEL_PATH.exists(),
         "tokenizer_file_present": TOKENIZER_PATH.exists(),
         "load_attempted": detector._load_attempted,
