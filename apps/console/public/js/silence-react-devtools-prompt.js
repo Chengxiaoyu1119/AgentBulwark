@@ -32,7 +32,7 @@
     'color:#f59e0b;font-family:Consolas,Menlo,Monaco,monospace;font-size:13px;line-height:1.05;font-weight:700;'
   );
   console.log(
-    '%c\u7f51\u5740: https://xa.chengxiaoyu.top\nGithub: https://github.com/Chengxiaoyu1119/agent-security-supervisor',
+    '%c\u7f51\u5740: https://xa.chengxiaoyu.top\nGithub: https://github.com/Chengxiaoyu1119/AgentBulwark',
     'color:#2f81f7;font-family:Consolas,Menlo,Monaco,monospace;font-size:13px;line-height:1.45;font-weight:700;'
   );
 })();
