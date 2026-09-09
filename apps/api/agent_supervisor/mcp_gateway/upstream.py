@@ -663,7 +663,8 @@ def windows_job_objects_available() -> bool:
     try:
         import ctypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ctypes_api = cast(Any, ctypes)
+        kernel32 = ctypes_api.WinDLL("kernel32", use_last_error=True)
         return all(
             getattr(kernel32, name, None) is not None
             for name in ("CreateJobObjectW", "SetInformationJobObject", "AssignProcessToJobObject")
@@ -679,6 +680,7 @@ def _attach_windows_job_object(proc: subprocess.Popen[str]) -> Any:
 
     import ctypes
     from ctypes import wintypes
+    ctypes_api = cast(Any, ctypes)
 
     class _LargeInteger(ctypes.Structure):
         _fields_ = [("QuadPart", ctypes.c_longlong)]
@@ -716,7 +718,7 @@ def _attach_windows_job_object(proc: subprocess.Popen[str]) -> Any:
             ("PeakJobMemoryUsed", ctypes.c_size_t),
         ]
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes_api.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE
     kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, wintypes.INT, wintypes.LPVOID, wintypes.DWORD]
@@ -728,7 +730,7 @@ def _attach_windows_job_object(proc: subprocess.Popen[str]) -> Any:
 
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
-        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+        raise OSError(ctypes_api.get_last_error(), "CreateJobObjectW failed")
 
     # JOB_OBJECT_LIMIT_JOB_TIME, ACTIVE_PROCESS, PROCESS_MEMORY, JOB_MEMORY and
     # KILL_ON_JOB_CLOSE.  Limits are intentionally conservative and mirror the
@@ -754,13 +756,13 @@ def _attach_windows_job_object(proc: subprocess.Popen[str]) -> Any:
         ctypes.byref(limits),
         ctypes.sizeof(limits),
     ):
-        error = ctypes.get_last_error()
+        error = ctypes_api.get_last_error()
         kernel32.CloseHandle(job)
         raise OSError(error, "SetInformationJobObject failed")
 
     process_handle = wintypes.HANDLE(getattr(proc, "_handle", 0))
     if not process_handle.value or not kernel32.AssignProcessToJobObject(job, process_handle):
-        error = ctypes.get_last_error()
+        error = ctypes_api.get_last_error()
         kernel32.CloseHandle(job)
         raise OSError(error, "AssignProcessToJobObject failed")
     return job
@@ -773,7 +775,8 @@ def _terminate_windows_job_object(job_handle: Any) -> None:
         import ctypes
         from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        ctypes_api = cast(Any, ctypes)
+        kernel32 = ctypes_api.WinDLL("kernel32", use_last_error=True)
         kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         kernel32.TerminateJobObject.restype = wintypes.BOOL
         kernel32.CloseHandle.argtypes = [wintypes.HANDLE]

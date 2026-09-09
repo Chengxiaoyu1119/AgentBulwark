@@ -11,7 +11,7 @@ import tempfile
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile, ZipInfo
 
@@ -421,10 +421,11 @@ def _windows_pid_is_alive(pid: int) -> bool:
 
     import ctypes
 
+    ctypes_api = cast(Any, ctypes)
     process_query_limited_information = 0x1000
     still_active = 259
     error_invalid_parameter = 87
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes_api.WinDLL("kernel32", use_last_error=True)
     open_process = kernel32.OpenProcess
     open_process.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
     open_process.restype = ctypes.c_void_p
@@ -440,7 +441,7 @@ def _windows_pid_is_alive(pid: int) -> bool:
         # ERROR_INVALID_PARAMETER is the normal response for a PID that no
         # longer exists.  Access denied and unexpected query failures must not
         # be interpreted as proof that the runtime is offline.
-        return ctypes.get_last_error() != error_invalid_parameter
+        return ctypes_api.get_last_error() != error_invalid_parameter
     try:
         exit_code = ctypes.c_uint32()
         if not get_exit_code_process(handle, ctypes.byref(exit_code)):

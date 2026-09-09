@@ -103,7 +103,8 @@ def _lock_handle(handle: Any) -> None:
     if os.name == "nt":
         import msvcrt
 
-        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        msvcrt_api = cast(Any, msvcrt)
+        msvcrt_api.locking(handle.fileno(), msvcrt_api.LK_NBLCK, 1)
     else:
         fcntl = _fcntl_module()
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -122,7 +123,8 @@ def _unlock_handle(handle: Any) -> None:
     if os.name == "nt":
         import msvcrt
 
-        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        msvcrt_api = cast(Any, msvcrt)
+        msvcrt_api.locking(handle.fileno(), msvcrt_api.LK_UNLCK, 1)
     else:
         fcntl = _fcntl_module()
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
