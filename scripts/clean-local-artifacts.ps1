@@ -14,7 +14,8 @@ $cutoff = (Get-Date).AddHours(-$MinimumAgeHours)
 $protectedPaths = @(
     (Join-Path $repoRoot ".git"),
     (Join-Path $repoRoot ".env"),
-    (Join-Path $repoRoot "apps\api\runtime"),
+    (Join-Path $repoRoot "apps\api\runtime\operational"),
+    (Join-Path $repoRoot "apps\api\runtime\backups"),
     (Join-Path $repoRoot "docs\media"),
     (Join-Path $repoRoot "apps\console\dist"),
     (Join-Path $repoRoot "apps\console\node_modules")
@@ -58,6 +59,41 @@ Get-ChildItem -LiteralPath $repoRoot -Force |
     if (Test-Path -LiteralPath $path) {
         $candidates.Add((Get-Item -LiteralPath $path -Force))
     }
+}
+
+# Quality and browser output is reproducible and must stay separate from the
+# operational database and backups. Only named generated directories are eligible.
+@(
+    "apps\api\runtime\quality\mypy",
+    "apps\api\runtime\quality\ruff",
+    "apps\api\runtime\quality\pytest",
+    "apps\api\runtime\quality\.coverage",
+    "apps\api\runtime\quality\baseline-worktree",
+    "apps\api\runtime\quality\favicon-check",
+    "apps\api\runtime\quality\live-closure-real",
+    "apps\api\runtime\e2e"
+) | ForEach-Object {
+    $path = Join-Path $repoRoot $_
+    if (Test-Path -LiteralPath $path) {
+        $candidates.Add((Get-Item -LiteralPath $path -Force))
+    }
+}
+
+Get-ChildItem -LiteralPath (Join-Path $repoRoot "apps\api\runtime\quality") -Directory -Filter "preview-*" -Force -ErrorAction SilentlyContinue |
+    ForEach-Object { $candidates.Add($_) }
+
+foreach ($sourceRoot in @("apps\api\agent_supervisor", "apps\api\tests")) {
+    $sourcePath = Join-Path $repoRoot $sourceRoot
+    if (Test-Path -LiteralPath $sourcePath) {
+        Get-ChildItem -LiteralPath $sourcePath -Directory -Recurse -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -in @("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache") } |
+            ForEach-Object { $candidates.Add($_) }
+    }
+}
+
+$apiCachePath = Join-Path $repoRoot "apps\api\__pycache__"
+if (Test-Path -LiteralPath $apiCachePath) {
+    $candidates.Add((Get-Item -LiteralPath $apiCachePath -Force))
 }
 
 $rootNodeModulesPath = Join-Path $repoRoot "node_modules"
