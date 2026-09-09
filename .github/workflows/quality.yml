@@ -27,7 +27,10 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: apps/console/package-lock.json
+          cache-dependency-path: |
+            apps/console/package-lock.json
+            apps/www/package-lock.json
+            apps/docs/package-lock.json
 
       - name: 配置 Python
         uses: actions/setup-python@v5
@@ -39,6 +42,8 @@ jobs:
       - name: 安装项目依赖
         run: |
           npm --prefix apps/console ci
+          npm --prefix apps/www ci
+          npm --prefix apps/docs ci
           python -m pip install -r apps/api/requirements-dev.txt
 
       - name: 安装 Chromium
@@ -47,4 +52,6 @@ jobs:
 
       - name: 运行源码质量门禁
         run: |
+          npm run www:verify
+          npm run docs:build
           npm run verify:local

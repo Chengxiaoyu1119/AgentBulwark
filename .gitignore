@@ -8,6 +8,7 @@ vite.config.js
 vite.config.d.ts
 .vite/
 .vite-temp/
+.docusaurus/
 
 # Python 环境与缓存
 .venv/
@@ -73,8 +74,4 @@ SOUL.md
 up.zip
 
 # 历史训练产生的不可复现大文件
-legacy/training/dataset/variant_checkpoint.json
-legacy/training/dataset/generation*.log
-legacy/training/model/*.onnx
-legacy/training/checkpoints/
-legacy/training/_compare/
+docs/training
