@@ -383,7 +383,13 @@ database.init_db()
                                 "允许",
                                 "low",
                                 "fixture",
-                                json.dumps({"id": audit_id, "execution_receipt_expected": True}),
+                                json.dumps(
+                                    {
+                                        "id": audit_id,
+                                        "source_app": "openai-compatible-proxy",
+                                        "execution_receipt_expected": True,
+                                    }
+                                ),
                             ),
                         )
                         conn.execute(
@@ -409,6 +415,204 @@ database.init_db()
         self.assertEqual(snapshot["window"]["audit_limit"], 1)
         self.assertEqual(snapshot["summary"]["audit_log_count"], 1)
         self.assertEqual(snapshot["summary"]["execution_receipt_count"], 1)
+
+    def test_operational_audit_reader_excludes_legacy_sources(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="database-operational-audits-") as temp_dir:
+            runtime_dir = Path(temp_dir)
+            with (
+                patch.object(database, "RUNTIME_DIR", runtime_dir),
+                patch.object(database, "DB_PATH", runtime_dir / "operational.sqlite3"),
+            ):
+                database.init_db()
+                rows = [
+                    (
+                        "legacy-audit",
+                        "legacy-run",
+                        "file.read",
+                        "拒绝",
+                        "high",
+                        "legacy",
+                        json.dumps({"id": "legacy-audit", "source_app": "智安哨攻击功能实验台"}),
+                    ),
+                    (
+                        "mcp-audit",
+                        "mcp-run",
+                        "file.read",
+                        "允许",
+                        "low",
+                        "mcp",
+                        json.dumps({"id": "mcp-audit", "source_app": "mcp-gateway"}),
+                    ),
+                    (
+                        "openai-audit",
+                        "openai-run",
+                        "file.read",
+                        "允许",
+                        "low",
+                        "openai",
+                        json.dumps({"id": "openai-audit", "source_app": "openai-compatible-proxy"}),
+                    ),
+                ]
+                with database.get_connection() as conn:
+                    conn.executemany(
+                        """
+                        INSERT INTO audit_logs (id, run_id, tool, decision, risk_level, reason, payload)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        rows,
+                    )
+
+                audits = database.latest_operational_audit_logs(10)
+
+        self.assertEqual({item["id"] for item in audits}, {"mcp-audit", "openai-audit"})
+
+    def test_operational_run_reader_excludes_legacy_sources(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="database-operational-runs-") as temp_dir:
+            runtime_dir = Path(temp_dir)
+            with (
+                patch.object(database, "RUNTIME_DIR", runtime_dir),
+                patch.object(database, "DB_PATH", runtime_dir / "runs.sqlite3"),
+            ):
+                database.init_db()
+                run_columns = (
+                    "id, scenario_id, guard_enabled, attack_success, blocked_count, "
+                    "asked_count, isolated_count, detection_latency_ms, created_at, payload"
+                )
+                run_values = [
+                    (
+                        "legacy-run",
+                        "LEGACY",
+                        1,
+                        0,
+                        1,
+                        0,
+                        0,
+                        3,
+                        "2026-08-25T00:00:00+00:00",
+                        json.dumps(
+                            {
+                                "run_id": "legacy-run",
+                                "audit_logs": [{"source_app": "智安哨自定义攻击入口"}],
+                                "metrics": {"blocked_count": 1, "asked_count": 0, "isolated_count": 0, "detection_latency_ms": 3},
+                            }
+                        ),
+                    ),
+                    (
+                        "operational-run",
+                        "MCP-GATEWAY",
+                        1,
+                        0,
+                        0,
+                        0,
+                        0,
+                        4,
+                        "2026-08-25T00:01:00+00:00",
+                        json.dumps(
+                            {
+                                "run_id": "operational-run",
+                                "audit_logs": [{"source_app": "mcp-gateway"}],
+                                "metrics": {"blocked_count": 0, "asked_count": 0, "isolated_count": 0, "detection_latency_ms": 4},
+                            }
+                        ),
+                    ),
+                ]
+                with database.get_connection() as conn:
+                    conn.executemany(
+                        f"INSERT INTO experiment_runs ({run_columns}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        run_values,
+                    )
+
+                runs = database.latest_operational_runs(10)
+                snapshot = database.runtime_metrics_snapshot(10)
+
+        self.assertEqual([item["run_id"] for item in runs], ["operational-run"])
+        self.assertEqual(snapshot["summary"]["run_count"], 1)
+        self.assertEqual(snapshot["summary"]["controlled_count"], 0)
+
+    def test_operational_receipt_readers_exclude_legacy_audits(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="database-operational-receipts-") as temp_dir:
+            runtime_dir = Path(temp_dir)
+            with (
+                patch.object(database, "RUNTIME_DIR", runtime_dir),
+                patch.object(database, "DB_PATH", runtime_dir / "receipts.sqlite3"),
+            ):
+                database.init_db()
+                with database.get_connection() as conn:
+                    conn.executemany(
+                        """
+                        INSERT INTO audit_logs (id, run_id, tool, decision, risk_level, reason, payload)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                "legacy-audit",
+                                "legacy-run",
+                                "file.read",
+                                "允许",
+                                "low",
+                                "legacy",
+                                json.dumps({"id": "legacy-audit", "source_app": "智安哨模型越狱对测"}),
+                            ),
+                            (
+                                "operational-audit",
+                                "operational-run",
+                                "file.read",
+                                "允许",
+                                "low",
+                                "operational",
+                                json.dumps({"id": "operational-audit", "source_app": "mcp-gateway"}),
+                            ),
+                        ],
+                    )
+                    conn.executemany(
+                        """
+                        INSERT INTO runtime_events (event_type, created_at, payload)
+                        VALUES ('execution-receipt', ?, ?)
+                        """,
+                        [
+                            (
+                                "2026-08-25T00:00:00+00:00",
+                                json.dumps({"audit_id": "legacy-audit", "receipt_id": "legacy-receipt"}),
+                            ),
+                            (
+                                "2026-08-25T00:01:00+00:00",
+                                json.dumps({"audit_id": "operational-audit", "receipt_id": "operational-receipt"}),
+                            ),
+                        ],
+                    )
+                    conn.executemany(
+                        """
+                        INSERT INTO gateway_execution_claims (
+                            audit_id, claim_id, agent_id, session_id, tool_call_hash, status, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                "legacy-audit",
+                                "legacy-claim",
+                                "agent",
+                                "session",
+                                "legacy-hash",
+                                "completed",
+                                "2026-08-25T00:00:00+00:00",
+                            ),
+                            (
+                                "operational-audit",
+                                "operational-claim",
+                                "agent",
+                                "session",
+                                "operational-hash",
+                                "completed",
+                                "2026-08-25T00:01:00+00:00",
+                            ),
+                        ],
+                    )
+
+                receipts = database.list_operational_execution_receipt_events(10)
+                claims = database.list_operational_gateway_execution_claims(10)
+
+        self.assertEqual([item["payload"]["receipt_id"] for item in receipts], ["operational-receipt"])
+        self.assertEqual([item["claim_id"] for item in claims], ["operational-claim"])
 
     def test_readers_skip_corrupt_json_and_bound_negative_limits(self) -> None:
         with tempfile.TemporaryDirectory(prefix="database-corrupt-payloads-") as temp_dir:

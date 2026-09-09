@@ -37,8 +37,7 @@ from apps.api.agent_supervisor.storage.data import (
     update_policy_settings,
 )
 from apps.api.agent_supervisor.storage.database import (
-    latest_audit_logs,
-    latest_runs,
+    latest_operational_audit_logs,
     list_policy_versions,
     runtime_metrics_snapshot,
 )
@@ -560,7 +559,7 @@ def audit_logs(
     limit: int = Query(100, ge=1, le=500),
     role: str = Depends(current_security_role),
 ) -> list[dict]:
-    rows = latest_audit_logs(limit)
+    rows = latest_operational_audit_logs(limit)
     return [_redact_observer_audit(item) for item in rows] if role == "observer" else rows
 
 
@@ -569,43 +568,7 @@ def alerts(
     limit: int = Query(100, ge=1, le=500),
     role: str = Depends(current_security_role),
 ) -> list[dict]:
-    runs = latest_runs(limit)
-    enriched = []
-    for run in runs:
-        scenario = run.get("scenario", {})
-        audit_logs = run.get("audit_logs", [])
-        for alert in run.get("alerts", []):
-            matched_log = next(
-                (
-                    log
-                    for log in audit_logs
-                    if log.get("decision") == alert.get("decision")
-                    and log.get("reason") == alert.get("evidence")
-                ),
-                audit_logs[0] if audit_logs else {},
-            )
-            enriched.append(
-                {
-                    **alert,
-                    "scenario_id": scenario.get("id", ""),
-                    "scenario_title": scenario.get("title", ""),
-                    "surface_id": scenario.get("surface_id", ""),
-                    "target": scenario.get("target", ""),
-                    "policy_id": matched_log.get("policy_id", "unknown"),
-                    "tool": matched_log.get("tool", ""),
-                    "arguments": matched_log.get("arguments", {}),
-                    "recommendation": matched_log.get("recommendation", ""),
-                    "tool_output": matched_log.get("tool_output", {}),
-                }
-            )
-    result = enriched[:limit]
-    if role == "observer":
-        return [
-            {
-                key: item[key]
-                for key in ("id", "run_id", "severity", "decision", "risk_score", "created_at", "policy_id", "tool")
-                if key in item
-            }
-            for item in result
-        ]
-    return result
+    # Legacy alerts were synthesized from experiment_runs.  The operational
+    # console reads gateway traces instead, so never expose historical lab
+    # payloads through this compatibility endpoint.
+    return []

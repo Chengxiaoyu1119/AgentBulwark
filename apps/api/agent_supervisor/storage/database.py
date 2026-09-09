@@ -12,6 +12,7 @@ from apps.api.agent_supervisor.storage.json_store import decode_json_strict, enc
 
 DB_PATH = RUNTIME_DIR / "agent_supervisor.sqlite3"
 MAX_QUERY_LIMIT = 5000
+OPERATIONAL_SOURCE_APPS = ("openai-compatible-proxy", "mcp-gateway")
 
 
 def _bounded_limit(value: Any, *, default: int, maximum: int = MAX_QUERY_LIMIT) -> int:
@@ -394,6 +395,45 @@ def list_runtime_events(
     return events
 
 
+def list_operational_execution_receipt_events(limit: int = 200) -> list[dict[str, Any]]:
+    """Read receipts bound to current OpenAI/MCP gateway audit records only."""
+    bounded_limit = _bounded_limit(limit, default=200)
+    placeholders = ", ".join("?" for _ in OPERATIONAL_SOURCE_APPS)
+    query = f"""
+        SELECT event.id, event.created_at, event.payload
+        FROM runtime_events AS event
+        WHERE event.event_type = 'execution-receipt'
+          AND json_valid(event.payload)
+          AND EXISTS (
+              SELECT 1
+              FROM audit_logs AS audit
+              WHERE audit.id = json_extract(event.payload, '$.audit_id')
+                AND json_valid(audit.payload)
+                AND json_extract(audit.payload, '$.source_app') IN ({placeholders})
+          )
+        ORDER BY event.id DESC
+        LIMIT ?
+    """
+    with get_connection() as conn:
+        rows = conn.execute(query, (*OPERATIONAL_SOURCE_APPS, bounded_limit)).fetchall()
+    events: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = decode_json_strict(row["payload"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            events.append(
+                {
+                    "event_id": int(row["id"]),
+                    "event_type": "execution-receipt",
+                    "created_at": row["created_at"],
+                    "payload": payload,
+                }
+            )
+    return events
+
+
 def load_runtime_event_by_payload_id(event_type: str, key: str, value: str) -> dict[str, Any] | None:
     """Load one immutable runtime event by an allowlisted top-level identifier."""
     if not event_type or key != "comparison_id" or not value:
@@ -734,6 +774,26 @@ def list_gateway_execution_claims(limit: int = 200) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def list_operational_gateway_execution_claims(limit: int = 200) -> list[dict[str, Any]]:
+    """Read execution claims whose source audit belongs to a live gateway."""
+    bounded_limit = _bounded_limit(limit, default=200)
+    placeholders = ", ".join("?" for _ in OPERATIONAL_SOURCE_APPS)
+    query = f"""
+        SELECT claim.audit_id, claim.claim_id, claim.agent_id, claim.session_id,
+               claim.tool_call_hash, claim.status, claim.created_at,
+               claim.completed_at, claim.receipt_id
+        FROM gateway_execution_claims AS claim
+        JOIN audit_logs AS audit ON audit.id = claim.audit_id
+        WHERE json_valid(audit.payload)
+          AND json_extract(audit.payload, '$.source_app') IN ({placeholders})
+        ORDER BY claim.rowid DESC
+        LIMIT ?
+    """
+    with get_connection() as conn:
+        rows = conn.execute(query, (*OPERATIONAL_SOURCE_APPS, bounded_limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
 def gateway_execution_claims_for_audit_ids(audit_ids: set[str]) -> dict[str, dict[str, Any]]:
     """Load execution claims for exactly the displayed audit identifiers."""
     requested = sorted({str(value) for value in audit_ids if str(value)})
@@ -892,6 +952,25 @@ def latest_runs(limit: int = 20) -> list[dict[str, Any]]:
     return [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
 
 
+def latest_operational_runs(limit: int = 20) -> list[dict[str, Any]]:
+    """Load completed run snapshots containing a live gateway audit."""
+    bounded_limit = _bounded_limit(limit, default=20)
+    placeholders = ", ".join("?" for _ in OPERATIONAL_SOURCE_APPS)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT payload
+            FROM experiment_runs
+            WHERE json_valid(payload)
+              AND json_extract(payload, '$.audit_logs[0].source_app') IN ({placeholders})
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (*OPERATIONAL_SOURCE_APPS, bounded_limit),
+        ).fetchall()
+    return [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
+
+
 def load_run(run_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute("SELECT payload FROM experiment_runs WHERE id = ?", (run_id,)).fetchone()
@@ -904,6 +983,26 @@ def latest_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
         rows = conn.execute(
             "SELECT payload FROM audit_logs ORDER BY rowid DESC LIMIT ?",
             (bounded_limit,),
+        ).fetchall()
+    logs = [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
+    return enrich_audit_logs_with_execution_receipts(logs)
+
+
+def latest_operational_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
+    """Load recent audit rows emitted by the live OpenAI or MCP gateways."""
+    bounded_limit = _bounded_limit(limit, default=100)
+    placeholders = ", ".join("?" for _ in OPERATIONAL_SOURCE_APPS)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT payload
+            FROM audit_logs
+            WHERE json_valid(payload)
+              AND json_extract(payload, '$.source_app') IN ({placeholders})
+            ORDER BY rowid DESC
+            LIMIT ?
+            """,
+            (*OPERATIONAL_SOURCE_APPS, bounded_limit),
         ).fetchall()
     logs = [payload for row in rows if (payload := _decode_json_object(row["payload"])) is not None]
     return enrich_audit_logs_with_execution_receipts(logs)
@@ -1201,8 +1300,8 @@ def list_policy_versions(policy_id: str | None = None, limit: int = 100) -> list
 
 def runtime_metrics_snapshot(limit: Any = 500) -> dict[str, Any]:
     bounded_limit = _bounded_limit(limit, default=500)
-    runs = latest_runs(bounded_limit)
-    audit_logs = latest_audit_logs(bounded_limit)
+    runs = latest_operational_runs(bounded_limit)
+    audit_logs = latest_operational_audit_logs(bounded_limit)
     with get_connection() as conn:
         _ensure_governance_tables(conn)
         review_rows = conn.execute(

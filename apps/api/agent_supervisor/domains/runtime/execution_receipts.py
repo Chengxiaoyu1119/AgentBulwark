@@ -17,8 +17,8 @@ from apps.api.agent_supervisor.domains.governance.redaction import redact_sensit
 from apps.api.agent_supervisor.domains.governance.tool_contract import normalize_tool_call
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
 from apps.api.agent_supervisor.storage.database import (
-    list_gateway_execution_claims,
-    list_runtime_events,
+    list_operational_execution_receipt_events,
+    list_operational_gateway_execution_claims,
     load_audit_log,
     load_execution_receipt,
     load_gateway_execution_claim,
@@ -179,9 +179,9 @@ def complete_execution(
 
 
 def list_execution_receipts(limit: int = 200) -> dict[str, Any]:
-    events = list_runtime_events(event_type="execution-receipt", limit=limit)
+    events = list_operational_execution_receipt_events(limit=limit)
     receipts = [event["payload"] | {"event_id": event["event_id"]} for event in events if isinstance(event.get("payload"), dict)]
-    gateway_claims = list_gateway_execution_claims(limit)
+    gateway_claims = list_operational_gateway_execution_claims(limit)
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "summary": {

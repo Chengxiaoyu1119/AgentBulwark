@@ -1,8 +1,8 @@
 """MCP Gateway 审计落库：把网关侧工具调用决策写入统一审计链。
 
 复用 runtime/events 的 run 记录结构（scenario + audit_logs + alerts），
-source_app 固定为 `mcp-gateway`，使网关拦截与外部事件在
-`GET /api/audit_logs` / `GET /api/alerts` 中统一可查。
+source_app 固定为 `mcp-gateway`，使网关拦截与外部事件可在
+`GET /api/audit_logs` 中查询；`GET /api/alerts` 不再暴露历史实验告警。
 
 落库语义：
 - 放行并转发：execution_status=completed，execution_target=mcp-upstream，

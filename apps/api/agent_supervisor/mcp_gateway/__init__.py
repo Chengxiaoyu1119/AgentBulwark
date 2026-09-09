@@ -8,7 +8,7 @@ MCP Server（stdio 上游），所有 tools/call 必须经过 supervisor.decide(
 tools/call；tools/list 聚合所有路由并标注来源。
 
 审计落库：监督开启时每次 tools/call（放行与阻断）写入统一审计链
-（source_app=mcp-gateway），可在 /api/audit_logs 与 /api/alerts 查询。
+（source_app=mcp-gateway），可在 /api/audit_logs 查询；/api/alerts 仅保留兼容响应，不返回历史实验告警。
 """
 
 from apps.api.agent_supervisor.mcp_gateway.audit import SOURCE_APP, record_gateway_tool_call
