@@ -18,6 +18,7 @@ import { PageHeader, UiAlert, UiButton, UiTabs } from '../components/ui';
 import type {
   AgentIntegrationBundle,
   AuthContext,
+  AgentRegistration,
   ModelRuntimeConfig,
   Overview,
   PolicySettings,
@@ -39,6 +40,9 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
   const [notice, setNotice] = useState('');
   const [loadErrors, setLoadErrors] = useState<SettingsLoadErrors>({});
   const [loadingSettings, setLoadingSettings] = useState(true);
+  const [activeSettingsTab, setActiveSettingsTab] = useState('connection');
+  const [registeredAgents, setRegisteredAgents] = useState<AgentRegistration[]>([]);
+  const [policyAgentId, setPolicyAgentId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -189,7 +193,8 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
 
       <UiTabs
         className="zh-product-tabs"
-        defaultActiveKey="connection"
+        activeKey={activeSettingsTab}
+        onChange={setActiveSettingsTab}
         items={[
           {
             key: 'connection',
@@ -201,7 +206,16 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
           {
             key: 'agents',
             label: 'Agent 接入',
-            children: <AgentRegistryPanel canEdit={Boolean(auth?.permissions.can_edit_policy)} />
+            children: (
+              <AgentRegistryPanel
+                canEdit={Boolean(auth?.permissions.can_edit_policy)}
+                onAgentsChange={setRegisteredAgents}
+                onConfigurePolicy={(agentId) => {
+                  setPolicyAgentId(agentId);
+                  setActiveSettingsTab('permissions');
+                }}
+              />
+            )
           },
           {
             key: 'provider',
@@ -240,6 +254,10 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
                 loading={loadingSettings}
                 loadError={loadErrors.policy}
                 versions={policyVersions}
+                registeredAgentIds={registeredAgents
+                  .filter((agent) => agent.status === 'active')
+                  .map((agent) => agent.agent_id)}
+                selectedAgentId={policyAgentId}
                 onRollback={async (version) => {
                   await rollbackPolicyVersion(version);
                   const latest = await fetchPolicyConfig();

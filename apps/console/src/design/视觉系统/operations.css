@@ -579,6 +579,29 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   font-weight: 600;
 }
 
+@media (max-width: 520px) {
+  .zh-product-tabs .ant-tabs-nav-wrap {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .zh-product-tabs .ant-tabs-nav-wrap::-webkit-scrollbar {
+    display: none;
+  }
+
+  .zh-product-tabs .ant-tabs-nav-list {
+    min-width: max-content;
+  }
+
+  .zh-product-tabs .ant-tabs-nav-more {
+    display: none;
+  }
+
+  .zh-product-tabs .ant-tabs-tab {
+    padding-inline: var(--zh-space-2);
+  }
+}
+
 .zh-endpoint-list {
   display: flex;
   flex-direction: column;

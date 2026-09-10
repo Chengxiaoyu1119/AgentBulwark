@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Plus, RefreshCw, ShieldOff } from 'lucide-react';
 import { createAgent, fetchAgents, revokeAgent, rotateAgentToken } from '../../app/governanceApi';
 import { safeUiErrorSummary } from '../../app/apiRequestSupport';
@@ -16,8 +16,15 @@ import {
   UiTypography
 } from '../ui';
 
-export function AgentRegistryPanel({ canEdit }: { canEdit: boolean }) {
+type Props = {
+  canEdit: boolean;
+  onConfigurePolicy?: (agentId: string) => void;
+  onAgentsChange?: (agents: AgentRegistration[]) => void;
+};
+
+export function AgentRegistryPanel({ canEdit, onConfigurePolicy, onAgentsChange }: Props) {
   const [agents, setAgents] = useState<AgentRegistration[]>([]);
+  const agentsRef = useRef<AgentRegistration[]>([]);
   const [agentId, setAgentId] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [token, setToken] = useState('');
@@ -25,32 +32,35 @@ export function AgentRegistryPanel({ canEdit }: { canEdit: boolean }) {
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      setAgents(await fetchAgents());
+      const nextAgents = await fetchAgents();
+      agentsRef.current = nextAgents;
+      setAgents(nextAgents);
+      onAgentsChange?.(nextAgents);
     } catch (reason) {
       setError(safeUiErrorSummary(reason, 'Agent 接入状态读取失败。'));
     } finally {
       setLoading(false);
     }
-  }
+  }, [onAgentsChange]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
-  }, []);
+  }, [load]);
 
   async function run(action: string, callback: () => Promise<AgentRegistration>) {
     setBusy(action);
     setError('');
     try {
       const result = await callback();
-      setAgents((current) => {
-        const next = current.filter((item) => item.agent_id !== result.agent_id);
-        return [result, ...next];
-      });
+      const nextAgents = [result, ...agentsRef.current.filter((item) => item.agent_id !== result.agent_id)];
+      agentsRef.current = nextAgents;
+      setAgents(nextAgents);
+      onAgentsChange?.(nextAgents);
       setToken(result.token ?? '');
       setAgentId('');
       setDisplayName('');
@@ -131,6 +141,11 @@ export function AgentRegistryPanel({ canEdit }: { canEdit: boolean }) {
               <LabelTag color={agent.policy_binding?.ready ? 'green' : 'warning'}>
                 {agent.policy_binding?.ready ? '已绑定策略' : '待绑定策略'}
               </LabelTag>
+              {canEdit && onConfigurePolicy && agent.status === 'active' ? (
+                <UiButton size="small" onClick={() => onConfigurePolicy(agent.agent_id)}>
+                  {agent.policy_binding?.ready ? '编辑策略' : '配置策略'}
+                </UiButton>
+              ) : null}
               {canEdit && agent.status === 'active' ? (
                 <UiButton
                   size="small"

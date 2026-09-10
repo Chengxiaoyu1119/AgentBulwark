@@ -17,6 +17,8 @@ type Props = {
   onSave: () => void | Promise<void>;
   versions?: PolicyVersion[];
   onRollback?: (version: number) => void | Promise<void>;
+  registeredAgentIds?: string[];
+  selectedAgentId?: string | null;
 };
 
 export function AgentBoundarySettingsPanel({
@@ -28,7 +30,9 @@ export function AgentBoundarySettingsPanel({
   onPatch,
   onSave,
   versions = [],
-  onRollback
+  onRollback,
+  registeredAgentIds = [],
+  selectedAgentId = null
 }: Props) {
   if (!policySettings) {
     return (
@@ -44,15 +48,69 @@ export function AgentBoundarySettingsPanel({
     );
   }
 
+  const settings = policySettings;
   const mappingCount = Object.values(policySettings?.agent_tool_mappings ?? {}).reduce(
     (total, mappings) => total + Object.keys(mappings).length,
     0
   );
+  const selectedBinding = selectedAgentId ? getAgentBinding(policySettings, selectedAgentId) : null;
+
+  function establishSelectedBoundary() {
+    if (!selectedAgentId || !canEdit) return;
+    const toolAllowlists = { ...(settings.agent_tool_allowlists ?? {}) };
+    const apiAllowlists = { ...(settings.agent_api_allowlists ?? {}) };
+    const modelAllowlists = { ...(settings.agent_model_allowlists ?? {}) };
+    const contextAllowlists = { ...(settings.agent_context_allowlists ?? {}) };
+    if (!selectedBinding?.tools) toolAllowlists[selectedAgentId] = [];
+    if (!selectedBinding?.api) apiAllowlists[selectedAgentId] = [];
+    if (!selectedBinding?.models) modelAllowlists[selectedAgentId] = [];
+    if (!selectedBinding?.context) {
+      contextAllowlists[selectedAgentId] = { resources: [], resource_templates: [], prompts: [] };
+    }
+    onPatch({
+      agent_tool_allowlists: toolAllowlists,
+      agent_api_allowlists: apiAllowlists,
+      agent_model_allowlists: modelAllowlists,
+      agent_context_allowlists: contextAllowlists
+    });
+  }
+
+  const knownAgentIds = new Set([
+    ...registeredAgentIds,
+    ...Object.keys(settings.agent_tool_allowlists ?? {}),
+    ...Object.keys(settings.agent_api_allowlists ?? {}),
+    ...Object.keys(settings.agent_model_allowlists ?? {}),
+    ...Object.keys(settings.agent_context_allowlists ?? {})
+  ]);
   return (
     <PanelCard title="业务安全边界" subtitle="先关闭未登记能力，再按 Agent 精确放行。">
       <UiTypography.Paragraph type="secondary">
         配置内部邮箱域、敏感路径和高敏 API 边界。生产 Agent 应先登记能力，再发放绑定 Token。
       </UiTypography.Paragraph>
+      {selectedAgentId && knownAgentIds.has(selectedAgentId) ? (
+        <UiAlert
+          type={selectedBinding?.complete ? 'success' : 'warning'}
+          showIcon
+          title={
+            selectedBinding?.complete
+              ? `Agent ${selectedAgentId} 已建立四类权限边界。`
+              : `正在配置 Agent ${selectedAgentId}。`
+          }
+          description={
+            selectedBinding?.complete
+              ? '下方四类范围均已存在；请填写实际最小权限后保存并发布。空范围仍会拒绝对应请求。'
+              : '先建立四类空边界，再填写工具、模型、API 主机和 MCP 上下文范围。空范围会拒绝对应请求，不会自动放行。'
+          }
+          action={
+            selectedBinding?.complete ? undefined : (
+              <UiButton disabled={!canEdit} onClick={establishSelectedBoundary}>
+                建立空权限边界
+              </UiButton>
+            )
+          }
+          className="zh-mb-16"
+        />
+      ) : null}
       <UiRow gutter={[16, 16]} className="zh-mb-16">
         <UiCol xs={24} md={12}>
           <RegistrationSwitch
@@ -153,6 +211,14 @@ export function AgentBoundarySettingsPanel({
       ) : null}
     </PanelCard>
   );
+}
+
+function getAgentBinding(policySettings: PolicySettings, agentId: string) {
+  const tools = agentId in (policySettings.agent_tool_allowlists ?? {});
+  const api = agentId in (policySettings.agent_api_allowlists ?? {});
+  const models = agentId in (policySettings.agent_model_allowlists ?? {});
+  const context = agentId in (policySettings.agent_context_allowlists ?? {});
+  return { tools, api, models, context, complete: tools && api && models && context };
 }
 
 function RegistrationSwitch({
