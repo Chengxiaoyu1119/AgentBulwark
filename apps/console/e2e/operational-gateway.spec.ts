@@ -22,6 +22,14 @@ async function sendGatewayRequest(page: Page, payload?: Record<string, unknown>)
   return (await response.json()) as { agent_supervisor?: Record<string, unknown> };
 }
 
+async function sendAgentGatewayRequest(page: Page, token: string, payload: Record<string, unknown>) {
+  const response = await page.request.post('/v1/chat/completions', {
+    headers: { Authorization: `Bearer ${token}`, 'X-Agent-Session-ID': 'policy-e2e-session' },
+    data: { ...payload, stream: false }
+  });
+  return response;
+}
+
 async function sendStreamingGatewayRequest(page: Page, payload: Record<string, unknown>) {
   const response = await page.request.post('/v1/chat/completions', {
     headers: { Authorization: `Bearer ${ADMIN_TOKEN}`, 'X-Agent-Session-ID': 'stream-e2e-session' },
@@ -203,6 +211,165 @@ test.describe.serial('运营网关黑盒验收', () => {
     expect(
       (await page.request.get('/api/health', { headers: { Authorization: `Bearer ${secondToken}` } })).status()
     ).toBe(401);
+  });
+
+  test('注册 Agent 的权限发布、越权阻断与回滚真实生效', async ({ page }) => {
+    const agentId = `e2e-policy-${Date.now()}`;
+    const adminHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+    let agentToken = '';
+    let originalSettings: Record<string, unknown> | null = null;
+
+    try {
+      const createdResponse = await page.request.post('/api/agents', {
+        headers: adminHeaders,
+        data: { agent_id: agentId, display_name: 'E2E Policy Agent' }
+      });
+      expect(createdResponse.status()).toBe(200);
+      agentToken = String(((await createdResponse.json()) as { token?: string }).token ?? '');
+      expect(agentToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+
+      const policyResponse = await page.request.get('/api/policy_config', { headers: adminHeaders });
+      expect(policyResponse.status()).toBe(200);
+      const policyConfig = (await policyResponse.json()) as {
+        settings: Record<string, unknown>;
+        versions: Array<{ id: number }>;
+      };
+      const settings = policyConfig.settings;
+      originalSettings = settings;
+      const beforeVersionIds = new Set(policyConfig.versions.map((version) => version.id));
+      const map = (key: string) => ({
+        ...((settings[key] as Record<string, unknown> | undefined) ?? {})
+      });
+      const allowedSettings = {
+        require_agent_capability_registration: true,
+        require_agent_model_registration: true,
+        agent_tool_allowlists: { ...map('agent_tool_allowlists'), [agentId]: ['file.read'] },
+        agent_api_allowlists: { ...map('agent_api_allowlists'), [agentId]: [] },
+        agent_model_allowlists: { ...map('agent_model_allowlists'), [agentId]: ['e2e-fixture-model'] },
+        agent_context_allowlists: {
+          ...map('agent_context_allowlists'),
+          [agentId]: { resources: [], resource_templates: [], prompts: [] }
+        }
+      };
+
+      const validated = await page.request.post('/api/policies/validate', {
+        headers: adminHeaders,
+        data: { settings: allowedSettings }
+      });
+      expect(validated.status()).toBe(200);
+      expect((await validated.json()) as Record<string, unknown>).toMatchObject({ valid: true });
+
+      const published = await page.request.post('/api/policies/publish', {
+        headers: adminHeaders,
+        data: { settings: allowedSettings, comment: 'E2E Agent 权限边界' }
+      });
+      expect(published.status()).toBe(200);
+      expect((await published.json()) as Record<string, unknown>).toMatchObject({ published: true });
+
+      const afterFirstPublish = (await (
+        await page.request.get('/api/policy_config', { headers: adminHeaders })
+      ).json()) as { versions: Array<{ id: number }> };
+      const firstVersion = afterFirstPublish.versions.find((version) => !beforeVersionIds.has(version.id));
+      expect(firstVersion).toBeDefined();
+
+      const providerBeforeAllowed = await providerRequestCount(page);
+      const allowedResponse = await sendAgentGatewayRequest(page, agentToken, {
+        model: 'e2e-fixture-model',
+        messages: [{ role: 'user', content: 'Read the approved operational summary.' }]
+      });
+      expect(allowedResponse.status()).toBe(200);
+      const allowedBody = (await allowedResponse.json()) as { agent_supervisor?: Record<string, unknown> };
+      expect(allowedBody.agent_supervisor).toMatchObject({
+        agent_id: agentId,
+        decision: '允许',
+        provider_called: true
+      });
+      expect(await providerRequestCount(page)).toBe(providerBeforeAllowed + 1);
+
+      const providerBeforeModelDeny = await providerRequestCount(page);
+      const deniedModelResponse = await sendAgentGatewayRequest(page, agentToken, {
+        model: 'unregistered-fixture-model',
+        messages: [{ role: 'user', content: 'This model is outside the Agent boundary.' }]
+      });
+      expect(deniedModelResponse.status()).toBe(403);
+      expect((await deniedModelResponse.json()) as Record<string, unknown>).toMatchObject({
+        detail: { provider_called: false }
+      });
+      expect(await providerRequestCount(page)).toBe(providerBeforeModelDeny);
+
+      const providerBeforeToolDeny = await providerRequestCount(page);
+      const deniedToolResponse = await sendAgentGatewayRequest(page, agentToken, {
+        model: 'e2e-fixture-model',
+        messages: [{ role: 'user', content: 'Use the unregistered API capability.' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'api_call',
+              description: 'Call an external API.',
+              parameters: { type: 'object', properties: { endpoint: { type: 'string' } } }
+            }
+          }
+        ]
+      });
+      expect(deniedToolResponse.status()).toBe(200);
+      const deniedToolBody = (await deniedToolResponse.json()) as { agent_supervisor?: Record<string, unknown> };
+      expect(deniedToolBody.agent_supervisor).toMatchObject({
+        agent_id: agentId,
+        provider_called: false,
+        execution_boundary: 'gateway-blocked-before-provider'
+      });
+      expect(await providerRequestCount(page)).toBe(providerBeforeToolDeny);
+
+      const deniedSettings = {
+        ...allowedSettings,
+        agent_model_allowlists: { ...allowedSettings.agent_model_allowlists, [agentId]: [] }
+      };
+      const secondPublish = await page.request.post('/api/policies/publish', {
+        headers: adminHeaders,
+        data: { settings: deniedSettings, comment: 'E2E Agent 模型收紧' }
+      });
+      expect(secondPublish.status()).toBe(200);
+
+      const deniedAfterPublish = await sendAgentGatewayRequest(page, agentToken, {
+        model: 'e2e-fixture-model',
+        messages: [{ role: 'user', content: 'The tightened policy must block this model.' }]
+      });
+      expect(deniedAfterPublish.status()).toBe(403);
+
+      const rollback = await page.request.post(`/api/policies/${firstVersion?.id}/rollback`, {
+        headers: adminHeaders
+      });
+      expect(rollback.status()).toBe(200);
+      expect((await rollback.json()) as Record<string, unknown>).toMatchObject({
+        rolled_back: true,
+        source_version: firstVersion?.id
+      });
+
+      const allowedAfterRollback = await sendAgentGatewayRequest(page, agentToken, {
+        model: 'e2e-fixture-model',
+        messages: [{ role: 'user', content: 'The approved model should work again after rollback.' }]
+      });
+      expect(allowedAfterRollback.status()).toBe(200);
+      const allowedAfterRollbackBody = (await allowedAfterRollback.json()) as {
+        agent_supervisor?: Record<string, unknown>;
+      };
+      expect(allowedAfterRollbackBody.agent_supervisor?.decision).toBe('允许');
+    } finally {
+      if (originalSettings) {
+        const restored = await page.request.post('/api/policies/publish', {
+          headers: adminHeaders,
+          data: { settings: originalSettings, comment: 'E2E 恢复策略基线' }
+        });
+        expect(restored.status()).toBe(200);
+      }
+      if (agentToken) {
+        const revoked = await page.request.post(`/api/agents/${encodeURIComponent(agentId)}/revoke`, {
+          headers: adminHeaders
+        });
+        expect([200, 404]).toContain(revoked.status());
+      }
+    }
   });
 
   test('真实 HTTP Provider 的允许、前置阻断、后置 Tool Call 阻断和 SSE Trace 形成闭环', async ({ page }) => {
