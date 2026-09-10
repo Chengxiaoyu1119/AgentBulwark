@@ -1,7 +1,7 @@
 import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 MAX_TOOL_CALL_BYTES = 64 * 1024
 MAX_TOOL_CALL_DEPTH = 8
@@ -131,6 +131,14 @@ class ApprovalExecutionCompleteRequest(BaseModel):
     claim_id: str = Field(..., min_length=1, max_length=160)
     succeeded: bool
     result_hash: str = Field(default="", max_length=128)
+
+
+class GatewayToolExecutionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(..., min_length=1, max_length=160)
+    session_id: str = Field(..., min_length=1, max_length=160)
+    provider_call_id: str = Field(default="", max_length=160)
 
 
 class ModelProfileRuntimeConfigUpdate(BaseModel):

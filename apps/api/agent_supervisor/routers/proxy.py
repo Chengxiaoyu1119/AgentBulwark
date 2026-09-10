@@ -22,12 +22,18 @@ from apps.api.agent_supervisor.adapters.proxy.responses_compat import (
 from apps.api.agent_supervisor.auth import (
     current_agent_identity,
     current_security_role,
+    require_agent_identity,
     require_any_role,
     require_api_token,
+    restrict_executor_scope,
 )
 from apps.api.agent_supervisor.domains.governance.tool_contract import get_agent_model_allowlist
-from apps.api.agent_supervisor.domains.runtime.gateway_execution import GatewayExecutionUncertainError
+from apps.api.agent_supervisor.domains.runtime.gateway_execution import (
+    GatewayExecutionUncertainError,
+    execute_gateway_tool_call,
+)
 from apps.api.agent_supervisor.domains.runtime.gateway_trace import build_gateway_trace, build_gateway_trace_index
+from apps.api.agent_supervisor.schemas.main_models import GatewayToolExecutionRequest
 from apps.api.agent_supervisor.storage.data import get_policy_settings
 from apps.api.agent_supervisor.storage.database import (
     latest_gateway_audit_logs,
@@ -87,6 +93,53 @@ def gateway_trace_detail(
     if trace is None:
         raise HTTPException(status_code=404, detail="未找到网关 Trace")
     return trace
+
+
+@router.post(
+    "/api/gateway/tool_calls/{audit_id}/execute",
+    dependencies=[Depends(require_api_token), Depends(restrict_executor_scope)],
+)
+def gateway_tool_call_execution(
+    audit_id: str,
+    request: GatewayToolExecutionRequest,
+    role: str = Depends(current_security_role),
+    authenticated_agent_id: str | None = Depends(current_agent_identity),
+) -> dict[str, Any]:
+    """Execute an audited Provider tool call without accepting client arguments."""
+
+    if not audit_id.strip() or len(audit_id) > 256:
+        raise HTTPException(status_code=404, detail="未找到网关审计记录")
+    require_any_role({"executor", "admin"}, role)
+    require_agent_identity(request.agent_id, role, authenticated_agent_id)
+    try:
+        return execute_gateway_tool_call(
+            audit_id,
+            agent_id=request.agent_id,
+            session_id=request.session_id,
+            provider_call_id=request.provider_call_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"未知网关审计记录：{audit_id}") from exc
+    except GatewayExecutionUncertainError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "gateway_execution_uncertain",
+                "message": str(exc),
+                "audit_id": audit_id,
+                "execution_status": "unknown",
+                "retry": "reconciliation-required",
+            },
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "gateway_execution_conflict",
+                "message": str(exc),
+                "audit_id": audit_id,
+            },
+        ) from exc
 
 
 def _gateway_audit_request_hash(audit: dict[str, Any]) -> str:

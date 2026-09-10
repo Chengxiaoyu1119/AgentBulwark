@@ -33,5 +33,15 @@ def restrict_executor_scope(
         and request.url.path.startswith("/api/runtime/executions/")
         and request.url.path.endswith("/complete")
     )
-    if route not in EXECUTOR_ALLOWED_ROUTES and not approval_action and not execution_receipt:
+    gateway_tool_execution = (
+        request.method.upper() == "POST"
+        and request.url.path.startswith("/api/gateway/tool_calls/")
+        and request.url.path.endswith("/execute")
+    )
+    if (
+        route not in EXECUTOR_ALLOWED_ROUTES
+        and not approval_action
+        and not execution_receipt
+        and not gateway_tool_execution
+    ):
         raise HTTPException(status_code=403, detail="executor 角色仅允许调用生产监督和审批恢复接口")
