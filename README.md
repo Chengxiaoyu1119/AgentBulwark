@@ -5,16 +5,14 @@
   <p>让每一次模型请求、上下文输入、输出和工具行动，都先经过可验证的运行时边界。</p>
   <p>
     <a href="https://github.com/Chengxiaoyu1119/AgentBulwark/actions/workflows/quality.yml"><img src="https://img.shields.io/github/actions/workflow/status/Chengxiaoyu1119/AgentBulwark/quality.yml?branch=main&label=quality" alt="Quality" /></a>
-    <a href="https://github.com/Chengxiaoyu1119/AgentBulwark/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2f6fed.svg" alt="Apache-2.0" /></a>
     <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11-3776ab.svg" alt="Python 3.11" /></a>
     <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-22-5fa04e.svg" alt="Node.js 22" /></a>
     <a href="https://modelcontextprotocol.io/"><img src="https://img.shields.io/badge/MCP-ready-1769aa.svg" alt="MCP ready" /></a>
   </p>
   <p>
-    <a href="README_EN.md">English</a> ·
     <a href="docs/product/产品定位.md">产品定位</a> ·
     <a href="docs/engineering/安全边界.md">安全边界</a> ·
-    <a href="CONTRIBUTING.md">参与贡献</a>
+    <a href="AGENTS.md">协作规范</a>
   </p>
 </div>
 
@@ -28,7 +26,7 @@
 | 接入 OpenAI 兼容模型或 MCP | [接入 Agent](#接入-agent) |
 | 理解策略、审批和证据 | [一次行动如何被证明](#一次行动如何被证明) |
 | 判断项目是否适合你的团队 | [适用场景](#适用场景) 和 [当前状态](#当前状态) |
-| 参与代码、文档或安全报告 | [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) |
+| 参与代码或文档 | [协作规范](AGENTS.md) |
 
 ## 防护链路
 
@@ -136,6 +134,8 @@ Invoke-RestMethod http://127.0.0.1:8012/api/public/status
 | `GET` | `/api/gateway/traces` | 请求与策略 Trace |
 | `POST` | `/api/gateway/tool_calls/{audit_id}/execute` | 服务端托管的已审计工具执行 |
 | `GET` | `/api/runtime/executions` | 执行回执 |
+| `GET` | `/api/evidence/{evidence_id}` | 脱敏证据详情 |
+| `POST` | `/api/evidence/{evidence_id}/verify` | Hash/HMAC 与回执核验 |
 
 ## 质量门禁
 
@@ -172,8 +172,6 @@ npm run verify:live:fixture
 | [安全边界](docs/engineering/安全边界.md) | 运行、策略、凭证和证据约束 |
 | [本地开发](docs/engineering/本地开发.md) | 安装、启动、配置和故障排查 |
 | [研究与决策](docs/research/大模型防火墙研究证据与产品决策.md) | 产品方向和技术依据 |
-| [贡献指南](CONTRIBUTING.md) | 本地开发、验证和 Pull Request |
-| [安全策略](SECURITY.md) | 漏洞报告与敏感问题处理 |
 | [协作指南](AGENTS.md) | 目录边界、工程不变量和代理协作 |
 
 ## 仓库结构
@@ -189,7 +187,3 @@ scripts/                    启动、维护和质量检查脚本
 ## 当前边界
 
 AgentBulwark 是 AI Agent 运行时防火墙，不是攻击实验室、工具目录、任意代码执行器、Docker 沙箱或多租户平台。文本检测只负责输入、上下文和输出检查，最终执行边界由身份、策略、Schema 和 MCP 闸门共同决定。
-
-## 许可证
-
-Apache-2.0，详见 [LICENSE](LICENSE)。

@@ -74,6 +74,8 @@ AgentBulwark API 默认监听 `127.0.0.1:8012`。本地控制台通过 Vite 代�
 | 回执列表 | GET | `/api/runtime/executions` |
 | 回执详情 | GET | `/api/runtime/executions/{audit_id}` |
 | 提交执行回执 | POST | `/api/runtime/executions/{audit_id}/complete` |
+| 证据详情 | GET | `/api/evidence/{evidence_id}` |
+| 证据核验 | POST | `/api/evidence/{evidence_id}/verify` |
 
 Trace、Provider 请求/响应 Hash、Tool Call、执行回执和 HMAC 证据共享请求链标识。控制台事件页以 Trace 为入口展示完整处置顺序。
 
