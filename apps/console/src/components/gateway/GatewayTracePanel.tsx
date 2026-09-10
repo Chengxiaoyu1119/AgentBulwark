@@ -25,7 +25,6 @@ import {
 
 type Props = {
   refreshSignal?: string;
-  onCreateRequest?: () => void;
   onOpenApproval?: (auditId: string) => void;
   mode?: 'traffic' | 'events';
   pendingApprovalCount?: number | string;
@@ -33,7 +32,6 @@ type Props = {
 
 export function GatewayTracePanel({
   refreshSignal = '',
-  onCreateRequest,
   onOpenApproval,
   mode = 'traffic',
   pendingApprovalCount = '—'
@@ -237,13 +235,6 @@ export function GatewayTracePanel({
               mode === 'events'
                 ? '被阻断、隔离或需要处理的真实请求会自动出现在这里。'
                 : '接入应用后，请求与处置结果会实时出现在这里。'
-            }
-            action={
-              onCreateRequest ? (
-                <UiButton type="primary" onClick={onCreateRequest}>
-                  发送验证请求
-                </UiButton>
-              ) : undefined
             }
           />
         ) : (

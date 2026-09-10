@@ -201,13 +201,20 @@ def _evidence_bundle(evidence_id: str) -> dict[str, Any]:
     trace_valid = not trace_required or (
         trace is not None and any(str(row.get("id") or "") == audit_id for row in trace_rows)
     )
+    receipt_pending = (
+        bool(audit.get("execution_receipt_expected"))
+        and str(audit.get("decision") or "") in {"允许", "隔离"}
+        and not receipt_present
+    )
+    chain_valid = bool(audit_hash_valid and audit_signature_valid and receipt_valid and trace_valid)
 
     verification = {
-        "valid": bool(audit_hash_valid and audit_signature_valid and receipt_valid and trace_valid),
+        "valid": bool(chain_valid and not receipt_pending),
         "audit_hash_valid": audit_hash_valid,
         "audit_signature_valid": audit_signature_valid,
         "audit_signature_required": audit_signature_required(),
         "receipt_present": receipt_present,
+        "receipt_pending": receipt_pending,
         "receipt_valid": receipt_valid,
         "receipt_integrity_valid": receipt_integrity_valid,
         "receipt_binding_valid": receipt_binding_valid,
@@ -219,7 +226,7 @@ def _evidence_bundle(evidence_id: str) -> dict[str, Any]:
         "schema_version": "agent-supervisor.evidence.v1",
         "evidence_id": audit_id,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "evidence_status": "verified" if verification["valid"] else "invalid",
+        "evidence_status": "invalid" if not chain_valid else "pending" if receipt_pending else "verified",
         "audit": _safe_evidence_audit(audit, audit_id),
         "trace": trace,
         "receipt": _safe_evidence_receipt(receipt),

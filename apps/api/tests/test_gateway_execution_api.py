@@ -235,6 +235,36 @@ class GatewayExecutionApiTests(unittest.TestCase):
         self.assertFalse(response.json()["verification"]["valid"])
         self.assertFalse(response.json()["verification"]["trace_available"])
 
+    def test_evidence_reports_pending_when_allowed_action_has_no_receipt(self) -> None:
+        audit = {
+            "id": "audit-evidence-pending",
+            "source_app": "mcp-gateway",
+            "agent_id": "evidence-agent",
+            "conversation_id": "mcp-session",
+            "decision": "允许",
+            "execution_receipt_expected": True,
+            "previous_hash": "b" * 64,
+        }
+        audit["audit_hash"] = audit_hash(audit)
+        with (
+            patch.dict(
+                os.environ,
+                {"AGENT_SUPERVISOR_AUTH_DISABLED": "true", "AGENT_SUPERVISOR_AUDIT_HMAC_KEY": ""},
+                clear=False,
+            ),
+            patch("apps.api.agent_supervisor.routers.integrations.load_audit_log", return_value=audit),
+            patch("apps.api.agent_supervisor.routers.integrations.load_execution_receipt", return_value=None),
+            patch("apps.api.agent_supervisor.routers.integrations.load_gateway_execution_claim", return_value=None),
+            TestClient(app) as client,
+        ):
+            response = client.get("/api/evidence/audit-evidence-pending")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["evidence_status"], "pending")
+        self.assertFalse(payload["verification"]["valid"])
+        self.assertTrue(payload["verification"]["receipt_pending"])
+
     def test_evidence_requires_trace_and_receipt_chain_bindings(self) -> None:
         audit = {
             "id": "audit-evidence-chain",

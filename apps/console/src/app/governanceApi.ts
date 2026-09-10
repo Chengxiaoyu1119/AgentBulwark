@@ -1,5 +1,6 @@
 import type {
   AgentIntegrationBundle,
+  AgentRegistration,
   AuthContext,
   MemoryGovernance,
   ObservabilityMetrics,
@@ -27,6 +28,57 @@ export async function updatePolicySettings(
 
 export async function fetchAgentIntegrationBundle(): Promise<AgentIntegrationBundle> {
   return request<AgentIntegrationBundle>('/api/integrations/agents/bundle');
+}
+
+export interface PolicyLifecycleResult {
+  valid?: boolean;
+  published?: boolean;
+  rolled_back?: boolean;
+  source_version?: number;
+  policy_id: string;
+  resource?: string;
+  impact_preview?: {
+    changed_fields: string[];
+    affected_agents: string[];
+    affected_tools: string[];
+    affected_models: string[];
+    possible_request_types: string[];
+  };
+  config?: PolicySettings;
+}
+
+export function validatePolicySettings(settings: PolicySettings): Promise<PolicyLifecycleResult> {
+  return request<PolicyLifecycleResult>('/api/policies/validate', {
+    method: 'POST',
+    body: JSON.stringify({ settings })
+  });
+}
+
+export function publishPolicySettings(settings: PolicySettings, comment: string): Promise<PolicyLifecycleResult> {
+  return request<PolicyLifecycleResult>('/api/policies/publish', {
+    method: 'POST',
+    body: JSON.stringify({ settings, comment })
+  });
+}
+
+export function rollbackPolicyVersion(version: number): Promise<PolicyLifecycleResult> {
+  return request<PolicyLifecycleResult>(`/api/policies/${version}/rollback`, { method: 'POST' });
+}
+
+export function fetchAgents(): Promise<AgentRegistration[]> {
+  return request<AgentRegistration[]>('/api/agents');
+}
+
+export function createAgent(payload: { agent_id: string; display_name?: string }): Promise<AgentRegistration> {
+  return request<AgentRegistration>('/api/agents', { method: 'POST', body: JSON.stringify(payload) });
+}
+
+export function rotateAgentToken(agentId: string): Promise<AgentRegistration> {
+  return request<AgentRegistration>(`/api/agents/${encodeURIComponent(agentId)}/rotate-token`, { method: 'POST' });
+}
+
+export function revokeAgent(agentId: string): Promise<AgentRegistration> {
+  return request<AgentRegistration>(`/api/agents/${encodeURIComponent(agentId)}/revoke`, { method: 'POST' });
 }
 
 export async function fetchObservabilityMetrics(): Promise<ObservabilityMetrics> {

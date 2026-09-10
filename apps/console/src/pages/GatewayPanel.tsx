@@ -1,98 +1,53 @@
-import { useMemo, useState } from 'react';
-import { UiDrawer, UiFlex, UiTypography } from '../components/ui';
-import { PlugZap, Send } from 'lucide-react';
-import { CopyButton, LabelTag, PageHeader, UiButton, UiTabs } from '../components/ui';
-import { GatewayEvidencePanel } from '../components/gateway/GatewayEvidencePanel';
-import { GatewayMcpPanel } from '../components/gateway/GatewayMcpPanel';
-import { GatewayRequestPanel, GatewayRequestPresets } from '../components/gateway/GatewayRequestPanel';
-import { GatewayRuntimeStatus } from '../components/gateway/GatewayRuntimeStatus';
-import { GatewaySetupFlow } from '../components/gateway/GatewaySetupFlow';
+import { useEffect, useMemo, useState } from 'react';
+import { request } from '../app/apiRequest';
+import { safeUiErrorSummary } from '../app/apiRequestSupport';
+import { GatewayRuntimeStatus, type RuntimeStatus } from '../components/gateway/GatewayRuntimeStatus';
 import { GatewayTracePanel } from '../components/gateway/GatewayTracePanel';
-import { useGatewayPanelController } from '../app/useGatewayPanelController';
-type DrawerMode = 'setup' | 'verify' | null;
-type ProtectionChannel = 'openai' | 'mcp';
+import { CopyButton, LabelTag, PageHeader, PanelCard, UiAlert, UiFlex, UiTabs, UiTypography } from '../components/ui';
+
 export function GatewayPanel({ onOpenSettings }: { onOpenSettings?: () => void }) {
-  const [drawerMode, setDrawerMode] = useState<DrawerMode>(null);
-  const [setupStep, setSetupStep] = useState(0);
-  const [channel, setChannel] = useState<ProtectionChannel>('openai');
-  const controller = useGatewayPanelController();
-  const {
-    payload,
-    setPayload,
-    result,
-    error,
-    loading,
-    executingTool,
-    executionResult,
-    executionError,
-    followupResult,
-    followingUp,
-    runtimeStatus,
-    runtimeStatusError,
-    sessionId,
-    setSessionId,
-    managedMode,
-    setManagedMode,
-    streamProgress,
-    metadata,
-    canExecuteManagedTools,
-    decision,
-    blocked,
-    toolDecisions,
-    toolDefinitionFindings,
-    toolArgumentFindings,
-    toolResultFindings,
-    executableToolDecision,
-    responsePreview,
-    sendRequest,
-    cancelStream,
-    executeToolCall,
-    followupToolResult
-  } = controller;
+  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [runtimeStatusError, setRuntimeStatusError] = useState('');
+  const [channel, setChannel] = useState<'openai' | 'mcp'>('openai');
+
+  useEffect(() => {
+    let active = true;
+    void request<RuntimeStatus>('/api/runtime_status', undefined, { retry: 0, timeoutMs: 5000 })
+      .then((status) => {
+        if (active) setRuntimeStatus(status);
+      })
+      .catch((error) => {
+        if (active) setRuntimeStatusError(safeUiErrorSummary(error, '运行状态读取失败。'));
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const readiness = useMemo(() => {
     const provider = Boolean(
       runtimeStatus?.models?.target?.some((item) => item.configured && item.mode === 'real-api')
     );
-    const gateway = runtimeStatus?.proxy?.enabled === true && Boolean(runtimeStatus?.gateway_evidence?.fingerprint);
-    const toolBoundary =
+    const gateway =
+      runtimeStatus?.proxy?.enabled === true &&
+      Boolean(runtimeStatus?.gateway_evidence?.fingerprint) &&
       runtimeStatus?.proxy?.tool_receipts_required === true &&
-      runtimeStatus.proxy.server_observed_receipts_required === true;
-    return { provider, gateway, toolBoundary };
+      runtimeStatus?.proxy?.server_observed_receipts_required === true;
+    const mcp =
+      runtimeStatus?.mcp?.configured === true &&
+      runtimeStatus.mcp.enabled === true &&
+      runtimeStatus.mcp.guard_enabled === true;
+    return { provider, gateway, mcp };
   }, [runtimeStatus]);
-  const protectionReady = readiness.provider && readiness.gateway && readiness.toolBoundary;
-  const mcpReady =
-    runtimeStatus?.mcp?.configured === true &&
-    runtimeStatus.mcp.enabled === true &&
-    runtimeStatus.mcp.guard_enabled === true;
-  const channelReady = channel === 'openai' ? protectionReady : mcpReady;
-  const channelStatus = channelReady
-    ? '防护已配置'
-    : channel === 'openai' && readiness.provider && readiness.gateway
-      ? '回执边界待闭合'
-      : channel === 'mcp' && runtimeStatus?.mcp?.configured === true
-        ? 'MCP 防护待启用'
-        : '等待接入';
+  const ready = (readiness.provider && readiness.gateway) || readiness.mcp;
 
   return (
     <div className="zh-product-page">
       <PageHeader
         title="请求防护"
-        badge={<LabelTag color={channelReady ? 'green' : 'warning'}>{channelStatus}</LabelTag>}
-        description="统一验证模型 API 与 MCP 工具调用，实时查看放行、阻断、隔离和执行证据。"
-        actions={
-          channel === 'openai' ? (
-            <>
-              <UiButton icon={<Send size={16} />} onClick={() => setDrawerMode('verify')}>
-                验证防护
-              </UiButton>
-              <UiButton type="primary" icon={<PlugZap size={16} />} onClick={() => setDrawerMode('setup')}>
-                接入应用
-              </UiButton>
-            </>
-          ) : (
-            <CopyButton text={`${window.location.origin}/api/mcp`}>复制 MCP 地址</CopyButton>
-          )
-        }
+        badge={<LabelTag color={ready ? 'green' : 'warning'}>{ready ? '运行中' : '等待接入'}</LabelTag>}
+        description="Agent 请求经过策略、Provider 和工具边界后，真实流量会自动出现在活动记录中。"
+        actions={<CopyButton text={`${window.location.origin}/v1`}>复制 OpenAI 地址</CopyButton>}
       />
 
       <GatewayRuntimeStatus status={runtimeStatus} error={runtimeStatusError} />
@@ -100,99 +55,62 @@ export function GatewayPanel({ onOpenSettings }: { onOpenSettings?: () => void }
       <UiTabs
         className="zh-product-tabs"
         activeKey={channel}
-        onChange={(key) => setChannel(key as ProtectionChannel)}
+        onChange={(key) => setChannel(key as 'openai' | 'mcp')}
         items={[
           {
             key: 'openai',
             label: '模型 API',
-            children: (
-              <GatewayTracePanel
-                refreshSignal={String(metadata.request_id || metadata.gateway_evidence_fingerprint || '')}
-                onCreateRequest={() => setDrawerMode('verify')}
-              />
-            )
+            children: <GatewayTracePanel refreshSignal={runtimeStatus?.gateway_evidence?.started_at ?? ''} />
           },
           {
             key: 'mcp',
             label: 'MCP 工具',
-            children: (
-              <GatewayMcpPanel runtimeStatus={runtimeStatus} sessionId={sessionId} onSessionIdChange={setSessionId} />
-            )
+            children: <McpRuntimeSummary status={runtimeStatus} onOpenSettings={onOpenSettings} />
           }
         ]}
       />
-
-      <UiDrawer
-        title={drawerMode === 'setup' ? '接入应用' : '验证一条真实请求'}
-        size="large"
-        open={drawerMode !== null}
-        onClose={() => setDrawerMode(null)}
-        destroyOnHidden
-        className="zh-workflow-drawer"
-      >
-        {drawerMode === 'setup' ? (
-          <GatewaySetupFlow
-            step={setupStep}
-            onStepChange={setSetupStep}
-            readiness={readiness}
-            onOpenSettings={() => {
-              setDrawerMode(null);
-              onOpenSettings?.();
-            }}
-            onVerify={() => setDrawerMode('verify')}
-          />
-        ) : (
-          <div className="zh-verify-workflow">
-            <UiFlex justify="space-between" align="center" gap={12} wrap="wrap">
-              <UiTypography.Text type="secondary">选择一个请求，也可以直接编辑 JSON。</UiTypography.Text>
-              <GatewayRequestPresets onSelect={setPayload} />
-            </UiFlex>
-            <GatewayRequestPanel
-              payload={payload}
-              onPayloadChange={setPayload}
-              sessionId={sessionId}
-              onSessionIdChange={setSessionId}
-              managedMode={managedMode}
-              onManagedModeChange={setManagedMode}
-              canGenerate={runtimeStatus?.security_context?.can_generate}
-              canExecuteManagedTools={canExecuteManagedTools}
-              identityText={
-                runtimeStatus?.security_context
-                  ? `当前身份：${runtimeStatus.security_context.role || 'unknown'} / ${
-                      runtimeStatus.security_context.agent_id || '未绑定 Agent'
-                    }`
-                  : undefined
-              }
-              loading={loading}
-              streamProgress={streamProgress}
-              error={error}
-              onSubmit={() => void sendRequest()}
-              onCancelStream={cancelStream}
-            />
-            {result ? (
-              <GatewayEvidencePanel
-                result={result}
-                metadata={metadata}
-                blocked={blocked}
-                decision={decision}
-                toolDecisions={toolDecisions}
-                toolDefinitionFindings={toolDefinitionFindings}
-                toolArgumentFindings={toolArgumentFindings}
-                toolResultFindings={toolResultFindings}
-                responsePreview={responsePreview}
-                executableToolDecision={executableToolDecision}
-                executionResult={executionResult}
-                executionError={executionError}
-                executingTool={executingTool}
-                onExecuteTool={() => void executeToolCall()}
-                followupResult={followupResult}
-                followingUp={followingUp}
-                onFollowupToolResult={() => void followupToolResult()}
-              />
-            ) : null}
-          </div>
-        )}
-      </UiDrawer>
     </div>
+  );
+}
+
+function McpRuntimeSummary({ status, onOpenSettings }: { status: RuntimeStatus | null; onOpenSettings?: () => void }) {
+  const configured = status?.mcp?.configured === true;
+  const enabled = status?.mcp?.enabled === true;
+  const guarded = status?.mcp?.guard_enabled === true;
+  return (
+    <PanelCard title="MCP 运行状态" subtitle="MCP 请求由业务 Agent 发起，控制台只展示真实会话和执行结果。">
+      {!status ? <UiAlert type="info" showIcon title="正在读取 MCP 运行状态。" /> : null}
+      {status && !configured ? (
+        <UiAlert
+          type="warning"
+          showIcon
+          title="MCP 上游待配置"
+          description="请在设置中登记 MCP Server；配置完成后真实请求会自动进入活动记录。"
+        />
+      ) : null}
+      {status && configured && !enabled ? <UiAlert type="warning" showIcon title="MCP 服务未启用" /> : null}
+      {status && configured && enabled && !guarded ? (
+        <UiAlert type="error" showIcon title="MCP 强制边界未开启" description="策略未闭合时不会向上游转发工具调用。" />
+      ) : null}
+      {status && configured && enabled && guarded ? (
+        <UiFlex gap={16} wrap="wrap">
+          <StatusLine label="网关" value="在线" />
+          <StatusLine label="会话隔离" value={status.mcp?.session_isolation?.enabled ? '已启用' : '待确认'} />
+          <StatusLine label="工具执行" value="由 Agent 请求触发" />
+          <CopyButton text={`${window.location.origin}/api/mcp`}>复制 MCP 地址</CopyButton>
+        </UiFlex>
+      ) : null}
+      {onOpenSettings && status && !configured ? (
+        <UiTypography.Link onClick={onOpenSettings}>打开接入设置</UiTypography.Link>
+      ) : null}
+    </PanelCard>
+  );
+}
+
+function StatusLine({ label, value }: { label: string; value: string }) {
+  return (
+    <UiTypography.Text>
+      <strong>{label}</strong> · {value}
+    </UiTypography.Text>
   );
 }

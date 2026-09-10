@@ -34,7 +34,9 @@ def require_api_token(
     expected_token = (os.getenv("AGENT_SUPERVISOR_API_TOKEN") or "").strip()
     role_tokens = [role_token(role) for role in ROLE_ORDER]
     agent_tokens = list(get_agent_token_bindings().values())
-    if not expected_token and not any(role_tokens) and not agent_tokens:
+    supplied = supplied_token(authorization, x_agent_supervisor_api_token)
+    registered_agent_id = agent_id_for_token(supplied)
+    if not expected_token and not any(role_tokens) and not agent_tokens and not registered_agent_id:
         raise HTTPException(
             status_code=503,
             detail=(
@@ -43,9 +45,8 @@ def require_api_token(
             ),
         )
 
-    supplied = supplied_token(authorization, x_agent_supervisor_api_token)
     if not supplied or not (expected_token and compare_digest(supplied, expected_token)):
-        if not any(token and compare_digest(supplied, token) for token in [*role_tokens, *agent_tokens]):
+        if not registered_agent_id and not any(token and compare_digest(supplied, token) for token in [*role_tokens, *agent_tokens]):
             raise HTTPException(status_code=401, detail="Invalid or missing API token")
 
 

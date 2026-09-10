@@ -27,6 +27,7 @@ from apps.api.agent_supervisor.domains.runtime.runtime_status import build_runti
 from apps.api.agent_supervisor.schemas.main_models import (
     ModelProviderProbeRequest,
     ModelRuntimeConfigUpdate,
+    PolicyLifecycleRequest,
     PolicySettingsUpdate,
     PolicyUpdate,
 )
@@ -100,6 +101,7 @@ def _redact_observer_audit(log: dict[str, Any]) -> dict[str, Any]:
         "provider_called",
         "forwarded",
         "upstream_route",
+        "evidence_status",
     }
     safe = {key: log[key] for key in safe_fields if key in log}
     safe.update(
@@ -333,6 +335,116 @@ def policy_config(role: str = Depends(current_security_role)) -> dict:
         "settings": _redact_observer_policy_settings(settings) if role == "observer" else settings,
         "versions": list_policy_versions(limit=20),
     }
+
+
+def _policy_lifecycle_candidate(request: PolicyLifecycleRequest) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    settings = get_policy_settings()
+    policies = {str(item["id"]): item for item in get_policies()}
+    changed = [key for key, value in {"settings": request.settings, "policies": request.policies}.items() if value is not None]
+    if len(changed) > 1:
+        raise HTTPException(status_code=400, detail="一次发布只能修改运行设置或一条策略")
+    if request.settings is not None:
+        updates = request.settings.model_dump(exclude_none=True)
+        updates.pop("operator", None)
+        updates.pop("comment", None)
+        after = {**settings, **updates}
+        return "__runtime_settings__", "settings", settings, after
+    policy_updates = request.policies or {}
+    if len(policy_updates) > 1:
+        raise HTTPException(status_code=400, detail="一次发布最多修改一条策略")
+    if not policy_updates:
+        return "", "none", {}, {}
+    policy_id, update_model = next(iter(policy_updates.items()))
+    if policy_id not in policies:
+        raise HTTPException(status_code=404, detail=f"未知策略：{policy_id}")
+    updates = update_model.model_dump(exclude_none=True)
+    updates.pop("operator", None)
+    updates.pop("comment", None)
+    return policy_id, "policy", policies[policy_id], {**policies[policy_id], **updates}
+
+
+def _policy_impact(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
+    agent_keys = {"agent_tool_allowlists", "agent_api_allowlists", "agent_model_allowlists", "agent_context_allowlists"}
+    affected_agents = sorted(
+        {
+            str(agent_id)
+            for key in agent_keys
+            for agent_id in set((before.get(key) or {}) if isinstance(before.get(key), dict) else {})
+            | set((after.get(key) or {}) if isinstance(after.get(key), dict) else {})
+        }
+    )
+    affected_tools: set[str] = set()
+    affected_models: set[str] = set()
+    for snapshot in (before, after):
+        tools = snapshot.get("tools")
+        if isinstance(tools, list):
+            affected_tools.update(str(tool) for tool in tools if str(tool).strip())
+        tool_allowlists = snapshot.get("agent_tool_allowlists")
+        for tool_list in (tool_allowlists if isinstance(tool_allowlists, dict) else {}).values():
+            if isinstance(tool_list, list):
+                affected_tools.update(str(tool) for tool in tool_list if str(tool).strip())
+        models = snapshot.get("models")
+        if isinstance(models, list):
+            affected_models.update(str(model) for model in models if str(model).strip())
+        elif isinstance(snapshot.get("model"), str) and snapshot["model"].strip():
+            affected_models.add(snapshot["model"].strip())
+        model_allowlists = snapshot.get("agent_model_allowlists")
+        for model_list in (model_allowlists if isinstance(model_allowlists, dict) else {}).values():
+            if isinstance(model_list, list):
+                affected_models.update(str(model) for model in model_list if str(model).strip())
+    return {
+        "changed_fields": changed,
+        "affected_agents": affected_agents,
+        "affected_tools": sorted(affected_tools),
+        "affected_models": sorted(affected_models),
+        "possible_request_types": ["tool_call", "model_request"] if changed else [],
+    }
+
+
+@router.post("/api/policies/validate")
+def validate_policy_lifecycle(request: PolicyLifecycleRequest, role: str = Depends(current_security_role)) -> dict[str, Any]:
+    require_role("admin", role)
+    policy_id, resource, before, after = _policy_lifecycle_candidate(request)
+    return {"valid": True, "policy_id": policy_id, "resource": resource, "impact_preview": _policy_impact(before, after)}
+
+
+@router.post("/api/policies/publish")
+def publish_policy_lifecycle(request: PolicyLifecycleRequest, role: str = Depends(current_security_role)) -> dict[str, Any]:
+    require_role("admin", role)
+    policy_id, resource, before, after = _policy_lifecycle_candidate(request)
+    if resource == "none":
+        raise HTTPException(status_code=400, detail="发布内容不能为空")
+    operator = authenticated_operator(role)
+    comment = request.comment.strip() or "发布策略变更"
+    try:
+        if resource == "settings":
+            saved = update_policy_settings({**request.settings.model_dump(exclude_none=True), "operator": operator, "comment": comment})  # type: ignore[union-attr]
+        else:
+            updates = next(iter(request.policies.values())).model_dump(exclude_none=True)  # type: ignore[union-attr]
+            saved = update_policy(policy_id, updates, operator=operator, comment=comment)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"published": True, "policy_id": policy_id, "resource": resource, "config": saved, "impact_preview": _policy_impact(before, after)}
+
+
+@router.post("/api/policies/{version}/rollback")
+def rollback_policy_version(version: int, role: str = Depends(current_security_role)) -> dict[str, Any]:
+    require_role("admin", role)
+    match = next((item for item in list_policy_versions(limit=500) if int(item.get("id", -1)) == version), None)
+    if not match:
+        raise HTTPException(status_code=404, detail=f"未知策略版本：{version}")
+    operator = authenticated_operator(role)
+    comment = f"回滚策略版本 {version}"
+    try:
+        if match["policy_id"] == "__runtime_settings__":
+            config = update_policy_settings({**match["after"], "operator": operator, "comment": comment})
+        else:
+            editable = {key: value for key, value in match["after"].items() if key in {"enabled", "name", "description", "decision", "layer", "risk_controls"}}
+            config = update_policy(match["policy_id"], editable, operator=operator, comment=comment)
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"rolled_back": True, "source_version": version, "config": config}
 
 
 @router.get("/api/tool_registry")

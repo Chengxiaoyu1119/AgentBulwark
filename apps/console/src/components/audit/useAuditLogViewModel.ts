@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { decideApprovalReview, fetchApprovalReviews, verifyEvidence } from '@/app/operationalApi';
-import { safeUiErrorSummary } from '@/app/apiRequestSupport';
-import type { ApprovalReview, ApprovalReviewList, AuditLog, EvidenceVerification } from '@/types';
+import { decideApprovalReview, fetchApprovalReviews } from '@/app/operationalApi';
+import type { ApprovalReview, ApprovalReviewList, AuditLog } from '@/types';
 import { writeClipboardText } from '@/utils';
 import { compareApprovalReviews } from './approvalReviewSorting';
 import { auditDeepLinkEvent, getAuditIdFromHash } from './auditDeepLink';
@@ -50,10 +49,6 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
   const [approvalError, setApprovalError] = useState('');
   const [approvalBusyId, setApprovalBusyId] = useState('');
   const [activeAuditLinkId, setActiveAuditLinkId] = useState('');
-  const [evidenceVerification, setEvidenceVerification] = useState<EvidenceVerification | null>(null);
-  const [evidenceVerificationBusy, setEvidenceVerificationBusy] = useState(false);
-  const [evidenceVerificationError, setEvidenceVerificationError] = useState('');
-  const [evidenceVerificationTargetId, setEvidenceVerificationTargetId] = useState('');
 
   const tools = useMemo(() => Array.from(new Set(logs.map((log) => log.tool))), [logs]);
 
@@ -100,10 +95,6 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
 
   const selectedLog = filteredLogs.find((log) => log.id === selectedLogId) ?? filteredLogs[0];
   const selectLog = useCallback((logId: string) => {
-    setEvidenceVerification(null);
-    setEvidenceVerificationError('');
-    setEvidenceVerificationBusy(false);
-    setEvidenceVerificationTargetId('');
     setSelectedLogId(logId);
   }, []);
   const controlledCount = logs.filter((log) => ['拒绝', '询问', '隔离'].includes(log.decision)).length;
@@ -192,22 +183,6 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
     }
   }, [selectedLog]);
 
-  const verifySelectedEvidence = useCallback(async () => {
-    if (!selectedLog) return;
-    const targetId = selectedLog.id;
-    setEvidenceVerificationTargetId(targetId);
-    setEvidenceVerificationBusy(true);
-    setEvidenceVerificationError('');
-    try {
-      setEvidenceVerification(await verifyEvidence(selectedLog.id));
-    } catch (error) {
-      setEvidenceVerification(null);
-      setEvidenceVerificationError(safeUiErrorSummary(error, '证据核验失败，请稍后重试。'));
-    } finally {
-      setEvidenceVerificationBusy(false);
-    }
-  }, [selectedLog]);
-
   const copyFilteredAuditEvidence = useCallback(async () => {
     const ok = await writeClipboardText(buildFilteredAuditEvidenceText(filteredLogs));
     setCopiedFiltered(ok);
@@ -289,11 +264,7 @@ export function useAuditLogViewModel({ logs, refresh }: UseAuditLogViewModelPara
     copyApprovalEvidence,
     resetAuditFilters,
     copyEvidence,
-    copyFilteredAuditEvidence,
-    evidenceVerification: evidenceVerification?.evidence_id === selectedLog?.id ? evidenceVerification : null,
-    evidenceVerificationBusy: evidenceVerificationBusy && evidenceVerificationTargetId === selectedLog?.id,
-    evidenceVerificationError: evidenceVerificationTargetId === selectedLog?.id ? evidenceVerificationError : '',
-    verifySelectedEvidence
+    copyFilteredAuditEvidence
   };
 }
 export type AuditLogViewModel = ReturnType<typeof useAuditLogViewModel>;

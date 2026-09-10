@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from collections.abc import Iterator
@@ -7,6 +8,11 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
+from apps.api.agent_supervisor.domains.governance.integrity import (
+    audit_hash,
+    audit_signature_required,
+    verify_audit_signature,
+)
 from apps.api.agent_supervisor.paths import RUNTIME_DIR
 from apps.api.agent_supervisor.storage.json_store import decode_json_strict, encode_json_strict, exclusive_file_lock
 
@@ -234,6 +240,156 @@ def _ensure_governance_tables(conn: sqlite3.Connection) -> None:
         ON gateway_rate_limit_buckets (last_seen)
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_registrations (
+            agent_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            token_prefix TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('active', 'revoked')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            revoked_at TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_registrations_status ON agent_registrations (status)"
+    )
+
+
+def _agent_registration_payload(row: sqlite3.Row, last_request_at: str = "") -> dict[str, Any]:
+    return {
+        "agent_id": row["agent_id"],
+        "display_name": row["display_name"],
+        "token_prefix": row["token_prefix"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "revoked_at": row["revoked_at"] or None,
+        "created_by": row["created_by"],
+        "last_request_at": last_request_at or None,
+    }
+
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def agent_registration_id_for_token(token: str) -> str | None:
+    """Resolve only active runtime registrations; raw tokens never enter storage."""
+    normalized = str(token or "").strip()
+    if not normalized:
+        return None
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        row = conn.execute(
+            "SELECT agent_id FROM agent_registrations WHERE token_hash = ? AND status = 'active'",
+            (_token_hash(normalized),),
+        ).fetchone()
+    return str(row["agent_id"]) if row else None
+
+
+def list_agent_registrations() -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        rows = conn.execute(
+            """
+            SELECT agent_id, display_name, token_prefix, status, created_at,
+                   updated_at, revoked_at, created_by
+            FROM agent_registrations
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            latest = conn.execute(
+                """
+                SELECT MAX(COALESCE(json_extract(payload, '$.created_at'), '')) AS last_request_at
+                FROM audit_logs
+                WHERE json_valid(payload) AND json_extract(payload, '$.agent_id') = ?
+                """,
+                (row["agent_id"],),
+            ).fetchone()
+            result.append(_agent_registration_payload(row, str(latest["last_request_at"] or "")))
+    return result
+
+
+def create_agent_registration(
+    *, agent_id: str, display_name: str, token: str, created_by: str
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    token_hash = _token_hash(token)
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        try:
+            conn.execute(
+                """
+                INSERT INTO agent_registrations (
+                    agent_id, display_name, token_hash, token_prefix, status,
+                    created_at, updated_at, revoked_at, created_by
+                ) VALUES (?, ?, ?, ?, 'active', ?, ?, '', ?)
+                """,
+                (agent_id, display_name, token_hash, token[:8], now, now, created_by),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("Agent ID 已存在") from exc
+        row = conn.execute(
+            "SELECT agent_id, display_name, token_prefix, status, created_at, updated_at, revoked_at, created_by FROM agent_registrations WHERE agent_id = ?",
+            (agent_id,),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Agent 注册写入后无法读取")
+    payload = _agent_registration_payload(row)
+    payload["token"] = token
+    return payload
+
+
+def rotate_agent_registration_token(*, agent_id: str, token: str) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        cursor = conn.execute(
+            """
+            UPDATE agent_registrations
+            SET token_hash = ?, token_prefix = ?, status = 'active',
+                updated_at = ?, revoked_at = ''
+            WHERE agent_id = ?
+            """,
+            (_token_hash(token), token[:8], now, agent_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(agent_id)
+        row = conn.execute(
+            "SELECT agent_id, display_name, token_prefix, status, created_at, updated_at, revoked_at, created_by FROM agent_registrations WHERE agent_id = ?",
+            (agent_id,),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Agent Token 轮换后无法读取")
+    payload = _agent_registration_payload(row)
+    payload["token"] = token
+    return payload
+
+
+def revoke_agent_registration(*, agent_id: str) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    with get_connection() as conn:
+        _ensure_governance_tables(conn)
+        cursor = conn.execute(
+            "UPDATE agent_registrations SET status = 'revoked', updated_at = ?, revoked_at = ? WHERE agent_id = ?",
+            (now, now, agent_id),
+        )
+        if cursor.rowcount != 1:
+            raise KeyError(agent_id)
+        row = conn.execute(
+            "SELECT agent_id, display_name, token_prefix, status, created_at, updated_at, revoked_at, created_by FROM agent_registrations WHERE agent_id = ?",
+            (agent_id,),
+        ).fetchone()
+    if row is None:
+        raise RuntimeError("Agent 撤销后无法读取")
+    return _agent_registration_payload(row)
 
 
 def write_run(result: dict[str, Any], *, append_runtime_event: bool = True) -> None:
@@ -938,6 +1094,21 @@ def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> lis
             copy["execution_status"] = "not_applicable"
             copy["execution_target"] = "none"
             copy["execution_receipt_expected"] = False
+        stored_hash = str(log.get("audit_hash") or "")
+        hash_valid = bool(stored_hash) and audit_hash(log) == stored_hash
+        signature_valid = verify_audit_signature(stored_hash, str(log.get("audit_signature") or ""))
+        if not stored_hash:
+            copy["evidence_status"] = "unknown"
+        elif not hash_valid or (audit_signature_required() and not signature_valid):
+            copy["evidence_status"] = "invalid"
+        elif log.get("execution_receipt_expected") and not receipt:
+            copy["evidence_status"] = "pending"
+        elif receipt and receipt.get("control_verified") is False:
+            copy["evidence_status"] = "invalid"
+        elif hash_valid and signature_valid:
+            copy["evidence_status"] = "verified"
+        else:
+            copy["evidence_status"] = "unknown"
         enriched.append(copy)
     return enriched
 

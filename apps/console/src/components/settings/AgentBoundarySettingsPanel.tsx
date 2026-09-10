@@ -1,5 +1,5 @@
-import { UiCol, UiCollapse, UiFlex, UiRow, UiSwitch, UiTypography } from '../ui';
-import type { PolicySettings } from '@/types';
+import { UiCol, UiCollapse, UiFlex, UiRow, UiSpace, UiSwitch, UiTypography } from '../ui';
+import type { PolicySettings, PolicyVersion } from '@/types';
 import { PanelCard, UiAlert, UiButton, UiFieldLabel, UiSelect } from '../ui';
 import { AgentApiAllowlistEditor } from './AgentApiAllowlistEditor';
 import { AgentContextAllowlistEditor } from './AgentContextAllowlistEditor';
@@ -15,6 +15,8 @@ type Props = {
   loadError?: string;
   onPatch: (patch: Partial<PolicySettings>) => void;
   onSave: () => void | Promise<void>;
+  versions?: PolicyVersion[];
+  onRollback?: (version: number) => void | Promise<void>;
 };
 
 export function AgentBoundarySettingsPanel({
@@ -24,7 +26,9 @@ export function AgentBoundarySettingsPanel({
   loading = false,
   loadError,
   onPatch,
-  onSave
+  onSave,
+  versions = [],
+  onRollback
 }: Props) {
   if (!policySettings) {
     return (
@@ -130,6 +134,23 @@ export function AgentBoundarySettingsPanel({
           保存业务边界
         </UiButton>
       </UiFlex>
+      {versions.length ? (
+        <UiSpace orientation="vertical" size={8} className="zh-full-width zh-mt-16">
+          <UiTypography.Text strong>最近策略变更</UiTypography.Text>
+          {versions.slice(0, 3).map((version) => (
+            <UiFlex key={version.id} justify="space-between" align="center" wrap="wrap">
+              <UiTypography.Text type="secondary">
+                v{version.id} · {version.policy_id} · {version.created_at.slice(0, 19).replace('T', ' ')}
+              </UiTypography.Text>
+              {canEdit && onRollback ? (
+                <UiButton size="small" disabled={saving} onClick={() => void onRollback(version.id)}>
+                  回滚到此版本
+                </UiButton>
+              ) : null}
+            </UiFlex>
+          ))}
+        </UiSpace>
+      ) : null}
     </PanelCard>
   );
 }

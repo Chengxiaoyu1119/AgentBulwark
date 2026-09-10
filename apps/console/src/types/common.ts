@@ -120,6 +120,26 @@ export interface PolicyConfig {
   versions: PolicyVersion[];
 }
 
+export interface AgentRegistration {
+  agent_id: string;
+  display_name: string;
+  token_prefix: string;
+  status: 'active' | 'revoked' | string;
+  created_at: string;
+  updated_at: string;
+  revoked_at?: string | null;
+  created_by?: string;
+  last_request_at?: string | null;
+  policy_binding?: {
+    tools: boolean;
+    models: boolean;
+    context: boolean;
+    api: boolean;
+    ready: boolean;
+  };
+  token?: string;
+}
+
 export interface AuthContext {
   role: 'admin' | 'analyst' | 'observer' | string;
   agent_id: string | null;

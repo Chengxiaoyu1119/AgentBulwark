@@ -51,6 +51,7 @@ export interface AuditLog {
   timestamp: string;
   created_at?: string;
   source_app?: string;
+  evidence_status?: 'verified' | 'invalid' | 'pending' | 'unknown' | string;
 }
 
 export interface ExecutionReceipt {

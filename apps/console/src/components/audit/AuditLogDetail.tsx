@@ -1,6 +1,6 @@
 import { UiDescriptions, UiFlex, UiSpace, UiTypography } from '../ui';
-import { Copy, ShieldCheck } from 'lucide-react';
-import type { AuditLog, EvidenceVerification } from '@/types';
+import { Copy } from 'lucide-react';
+import type { AuditLog } from '@/types';
 import { riskLabel } from '@/utils';
 import { EvidenceCodeBlock, LabelTag, PanelCard, UiAlert, UiBadge, UiButton } from '../ui';
 
@@ -8,21 +8,9 @@ interface AuditLogDetailProps {
   log?: AuditLog;
   copied: boolean;
   onCopy: () => void;
-  evidenceVerification?: EvidenceVerification | null;
-  evidenceVerificationBusy?: boolean;
-  evidenceVerificationError?: string;
-  onVerifyEvidence?: () => void | Promise<void>;
 }
 
-export function AuditLogDetail({
-  log,
-  copied,
-  onCopy,
-  evidenceVerification,
-  evidenceVerificationBusy = false,
-  evidenceVerificationError = '',
-  onVerifyEvidence
-}: AuditLogDetailProps) {
+export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
   if (!log) {
     return <div className="zh-empty-panel zh-empty-panel--large">选择一条记录查看详情。</div>;
   }
@@ -47,23 +35,7 @@ export function AuditLogDetail({
               : executionStatus === 'not_applicable'
                 ? '无需外部回执'
                 : '等待外部回执';
-  const verification = evidenceVerification?.verification;
-  const verificationFailures = verification
-    ? [
-        !verification.audit_hash_valid ? '审计 Hash' : '',
-        verification.audit_signature_required && !verification.audit_signature_valid ? '审计签名' : '',
-        !verification.receipt_valid ? '执行回执' : '',
-        verification.trace_required && !verification.trace_valid ? '请求链 Trace' : ''
-      ].filter(Boolean)
-    : [];
-  const verifiedChecks = verification
-    ? [
-        '审计 Hash',
-        verification.audit_signature_required ? '审计签名' : '',
-        verification.receipt_present ? '执行回执绑定' : '',
-        verification.trace_required ? '请求链 Trace' : ''
-      ].filter(Boolean)
-    : [];
+  const evidenceStatus = log.evidence_status ?? 'unknown';
 
   return (
     <PanelCard
@@ -85,6 +57,20 @@ export function AuditLogDetail({
         <UiDescriptions.Item label="风险分">{log.risk_score ?? '-'}</UiDescriptions.Item>
         <UiDescriptions.Item label="异常分">{log.anomaly_score ?? '-'}</UiDescriptions.Item>
         <UiDescriptions.Item label="策略编号">{log.policy_id}</UiDescriptions.Item>
+        <UiDescriptions.Item label="证据状态">
+          <UiBadge
+            status={evidenceStatus === 'verified' ? 'success' : evidenceStatus === 'invalid' ? 'error' : 'processing'}
+            text={
+              evidenceStatus === 'verified'
+                ? '已验证'
+                : evidenceStatus === 'invalid'
+                  ? '无效'
+                  : evidenceStatus === 'pending'
+                    ? '待回执'
+                    : '未知'
+            }
+          />
+        </UiDescriptions.Item>
         <UiDescriptions.Item label="原始工具">{log.tool}</UiDescriptions.Item>
         <UiDescriptions.Item label="标准能力">{log.standard_capability ?? log.tool}</UiDescriptions.Item>
         <UiDescriptions.Item label="监督决策">
@@ -195,51 +181,10 @@ export function AuditLogDetail({
         </>
       ) : null}
 
-      {evidenceVerificationError ? (
-        <UiAlert
-          type="warning"
-          showIcon
-          title="证据核验失败"
-          description={evidenceVerificationError}
-          className="zh-mb-16"
-        />
-      ) : null}
-
-      {evidenceVerification?.evidence_status === 'verified' && verification?.valid ? (
-        <UiAlert
-          type="success"
-          showIcon
-          title="证据已验证"
-          description={`${verifiedChecks.join('、')}核验通过。${
-            verification.receipt_present ? '' : '当前记录没有执行回执。'
-          }`}
-          className="zh-mb-16"
-        />
-      ) : null}
-
-      {evidenceVerification && (!verification?.valid || evidenceVerification.evidence_status !== 'verified') ? (
-        <UiAlert
-          type="error"
-          showIcon
-          title="证据无效"
-          description={
-            verificationFailures.length > 0
-              ? `未通过：${verificationFailures.join('、')}。请检查原始请求链后再处置。`
-              : '证据链未通过完整性核验，请检查原始请求链后再处置。'
-          }
-          className="zh-mb-16"
-        />
-      ) : null}
+      {evidenceStatus === 'invalid' ? <UiAlert type="error" showIcon title="证据无效，已停止自动放行。" /> : null}
+      {evidenceStatus === 'pending' ? <UiAlert type="warning" showIcon title="证据待回执，当前行动仍需确认。" /> : null}
 
       <UiFlex justify="flex-end" className="zh-detail-actions">
-        <UiButton
-          icon={<ShieldCheck size={16} />}
-          loading={evidenceVerificationBusy}
-          disabled={!onVerifyEvidence}
-          onClick={() => void onVerifyEvidence?.()}
-        >
-          {evidenceVerification ? '重新核验证据' : '核验证据'}
-        </UiButton>
         <UiButton icon={<Copy size={16} />} onClick={onCopy}>
           {copied ? '已复制' : '复制证据'}
         </UiButton>

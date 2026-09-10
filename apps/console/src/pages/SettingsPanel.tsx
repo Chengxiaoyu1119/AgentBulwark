@@ -1,19 +1,28 @@
 import { useEffect, useState } from 'react';
-import { UiFlex, UiSpace, UiTypography } from '../components/ui';
-import { Bot, KeyRound, Network } from 'lucide-react';
 import {
   fetchAgentIntegrationBundle,
   fetchAuthContext,
   fetchPolicyConfig,
-  updatePolicySettings
+  publishPolicySettings,
+  rollbackPolicyVersion,
+  validatePolicySettings
 } from '../app/governanceApi';
 import { safeUiErrorSummary } from '../app/apiRequestSupport';
 import { fetchModelConfig, updateModelConfig } from '../app/operationalApi';
 import { AgentBoundarySettingsPanel } from '../components/settings/AgentBoundarySettingsPanel';
+import { ConnectionSettings } from '../components/settings/ConnectionSettings';
+import { AgentRegistryPanel } from '../components/settings/AgentRegistryPanel';
 import { ProviderSettings } from '../components/settings/ProviderSettings';
 import { useProviderProbe, useProviderStatuses } from '../components/settings/useProviderProbe';
-import { CopyButton, LabelTag, PageHeader, PanelCard, UiAlert, UiButton, UiTabs } from '../components/ui';
-import type { AgentIntegrationBundle, AuthContext, ModelRuntimeConfig, Overview, PolicySettings } from '../types';
+import { PageHeader, UiAlert, UiButton, UiTabs } from '../components/ui';
+import type {
+  AgentIntegrationBundle,
+  AuthContext,
+  ModelRuntimeConfig,
+  Overview,
+  PolicySettings,
+  PolicyVersion
+} from '../types';
 
 type SettingsLoadErrors = Partial<Record<'integration' | 'model' | 'auth' | 'policy', string>>;
 type SettingKey = keyof SettingsLoadErrors;
@@ -23,6 +32,7 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
   const [modelConfig, setModelConfig] = useState<ModelRuntimeConfig | null>(null);
   const [auth, setAuth] = useState<AuthContext | null>(null);
   const [policySettings, setPolicySettings] = useState<PolicySettings | null>(null);
+  const [policyVersions, setPolicyVersions] = useState<PolicyVersion[]>([]);
   const [savingModel, setSavingModel] = useState(false);
   const [savingPolicy, setSavingPolicy] = useState(false);
   const [error, setError] = useState('');
@@ -51,7 +61,10 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
       if (integrationResult.status === 'fulfilled') setIntegration(integrationResult.value);
       if (modelResult.status === 'fulfilled') setModelConfig(modelResult.value);
       if (authResult.status === 'fulfilled') setAuth(authResult.value);
-      if (policyResult.status === 'fulfilled') setPolicySettings(policyResult.value.settings);
+      if (policyResult.status === 'fulfilled') {
+        setPolicySettings(policyResult.value.settings);
+        setPolicyVersions(policyResult.value.versions);
+      }
       setLoadErrors(nextErrors);
       setLoadingSettings(false);
     });
@@ -92,7 +105,11 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
     if (key === 'integration') setIntegration(await fetchAgentIntegrationBundle());
     if (key === 'model') setModelConfig(await fetchModelConfig());
     if (key === 'auth') setAuth(await fetchAuthContext());
-    if (key === 'policy') setPolicySettings((await fetchPolicyConfig()).settings);
+    if (key === 'policy') {
+      const config = await fetchPolicyConfig();
+      setPolicySettings(config.settings);
+      setPolicyVersions(config.versions);
+    }
   }
 
   async function saveModelConfig() {
@@ -133,13 +150,16 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
     setError('');
     setNotice('');
     try {
-      setPolicySettings(
-        await updatePolicySettings({
-          ...policySettings,
-          comment: '通过设置页更新 Agent 工具、模型、API 与上下文最小权限'
-        })
+      const validation = await validatePolicySettings(policySettings);
+      const published = await publishPolicySettings(
+        policySettings,
+        '通过设置页发布 Agent 工具、模型、API 与上下文最小权限'
       );
-      setNotice('工具与数据权限已保存，并生成新的策略版本。');
+      if (published.config) setPolicySettings(published.config);
+      const latest = await fetchPolicyConfig();
+      setPolicyVersions(latest.versions);
+      const impact = validation.impact_preview?.affected_agents.length ?? 0;
+      setNotice(`策略已校验并发布，影响 ${impact} 个 Agent。`);
     } catch (saveError) {
       setError(safeUiErrorSummary(saveError, '权限保存失败。'));
     } finally {
@@ -179,6 +199,11 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
             )
           },
           {
+            key: 'agents',
+            label: 'Agent 接入',
+            children: <AgentRegistryPanel canEdit={Boolean(auth?.permissions.can_edit_policy)} />
+          },
+          {
             key: 'provider',
             label: '模型连接',
             children: (
@@ -214,6 +239,14 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
                 onSave={() => void savePolicySettings()}
                 loading={loadingSettings}
                 loadError={loadErrors.policy}
+                versions={policyVersions}
+                onRollback={async (version) => {
+                  await rollbackPolicyVersion(version);
+                  const latest = await fetchPolicyConfig();
+                  setPolicySettings(latest.settings);
+                  setPolicyVersions(latest.versions);
+                  setNotice(`已生成策略回滚版本（来源 ${version}）。`);
+                }}
               />
             )
           }
@@ -223,75 +256,6 @@ export function SettingsPanel({ overview, refresh }: { overview: Overview; refre
   );
 }
 
-function ConnectionSettings({
-  integration,
-  loading,
-  error
-}: {
-  integration: AgentIntegrationBundle | null;
-  loading: boolean;
-  error?: string;
-}) {
-  const baseUrl = `${window.location.origin}/v1`;
-  const mcpUrl = `${window.location.origin}/api/mcp`;
-  return (
-    <div className="zh-settings-column">
-      <PanelCard title="应用入口" subtitle="业务应用只需要修改模型地址，并使用独立的 Agent Token。">
-        <div className="zh-endpoint-list">
-          <EndpointRow icon={<Network size={18} />} label="OpenAI 兼容地址" value={baseUrl} />
-          <EndpointRow icon={<Bot size={18} />} label="MCP 地址" value={mcpUrl} />
-        </div>
-      </PanelCard>
-
-      <PanelCard title="身份边界" subtitle="控制台与业务 Agent 使用不同凭证，避免共享权限。">
-        <div className="zh-identity-boundary">
-          <KeyRound size={20} aria-hidden="true" />
-          <div>
-            <UiTypography.Text strong>一个 Agent，一个 Token</UiTypography.Text>
-            <UiTypography.Paragraph type="secondary" className="zh-mb-0">
-              当前操作员 Token 只保存在浏览器会话中；业务 Token 由后端绑定 Agent 身份、模型和工具权限。
-            </UiTypography.Paragraph>
-          </div>
-        </div>
-      </PanelCard>
-
-      <PanelCard title="接入契约" subtitle="内容来自运行时接口，可直接用于配置业务 Agent。">
-        {integration ? (
-          <UiSpace orientation="vertical" size={14} className="zh-full-width">
-            <UiFlex align="center" gap={8} wrap="wrap">
-              <LabelTag color="green">{integration.version}</LabelTag>
-              <UiTypography.Text>{integration.examples.length} 种接入方式可用</UiTypography.Text>
-            </UiFlex>
-            <UiTypography.Text type="secondary">
-              必填字段：{integration.event_contract.required_fields.join('、')}
-            </UiTypography.Text>
-            <UiButton authenticatedHref="/api/integrations/agents/bundle">下载接入契约</UiButton>
-          </UiSpace>
-        ) : error ? (
-          <UiAlert type="error" showIcon title="接入契约读取失败" description={error} />
-        ) : loading ? (
-          <UiAlert type="info" showIcon title="正在读取接入契约。" />
-        ) : (
-          <UiAlert type="warning" showIcon title="接入契约暂时没有返回内容。" />
-        )}
-      </PanelCard>
-    </div>
-  );
-}
-
 function settingsLoadLabel(key: string) {
   return { integration: '接入契约', model: '模型连接', auth: '权限上下文', policy: '业务安全边界' }[key] ?? '设置';
-}
-
-function EndpointRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="zh-endpoint-row">
-      <span aria-hidden="true">{icon}</span>
-      <div>
-        <UiTypography.Text type="secondary">{label}</UiTypography.Text>
-        <UiTypography.Text code>{value}</UiTypography.Text>
-      </div>
-      <CopyButton text={value}>复制</CopyButton>
-    </div>
-  );
 }

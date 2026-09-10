@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from apps.api.agent_supervisor.domains.runtime.security_profile import production_security_profile
+from apps.api.agent_supervisor.storage.database import agent_registration_id_for_token
 
 AGENT_TOKENS_ENV = "AGENT_SUPERVISOR_AGENT_TOKENS_JSON"
 ALLOW_SHARED_EXECUTOR_TOKEN_ENV = "AGENT_SUPERVISOR_ALLOW_SHARED_EXECUTOR_TOKEN"
@@ -105,7 +106,7 @@ def agent_id_for_token(token: str) -> str | None:
     for agent_id, expected_token in get_agent_token_bindings().items():
         if compare_digest(token, expected_token):
             return agent_id
-    return None
+    return agent_registration_id_for_token(token)
 
 
 def require_agent_identity(agent_id: str, current_role: str, authenticated_agent_id: str | None) -> None:

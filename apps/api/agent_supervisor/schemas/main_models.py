@@ -86,6 +86,17 @@ class PolicySettingsUpdate(BaseModel):
     comment: str = Field(default="", max_length=500)
 
 
+class AgentRegistrationCreate(BaseModel):
+    agent_id: str = Field(..., min_length=1, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+    display_name: str = Field(default="", max_length=120)
+
+
+class PolicyLifecycleRequest(BaseModel):
+    settings: PolicySettingsUpdate | None = None
+    policies: dict[str, PolicyUpdate] | None = Field(default=None, max_length=100)
+    comment: str = Field(default="", max_length=500)
+
+
 class AgentToolEvent(BaseModel):
     conversation_id: str = Field(default="conversation", max_length=160)
     agent_id: str = Field(default="agent", max_length=160)
