@@ -7,9 +7,25 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from apps.api.agent_supervisor.main import app
+from apps.api.agent_supervisor.routers.agents import _agent_view
+from apps.api.agent_supervisor.storage.data import DEFAULT_POLICY_SETTINGS
 
 
 class AgentRegistryApiTests(unittest.TestCase):
+    def test_clean_default_policy_has_no_pre_authorized_agents(self) -> None:
+        self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_tool_allowlists"], {})
+        self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_api_allowlists"], {})
+        self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_model_allowlists"], {})
+        self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_context_allowlists"], {})
+
+    def test_partial_policy_binding_is_not_ready(self) -> None:
+        with patch(
+            "apps.api.agent_supervisor.routers.agents.get_policy_settings",
+            return_value={"agent_tool_allowlists": {"partial-agent": ["file.read"]}},
+        ):
+            view = _agent_view({"agent_id": "partial-agent", "status": "active"})
+        self.assertEqual(view["policy_binding"], {"tools": True, "models": False, "context": False, "api": False, "ready": False})
+
     def test_create_list_rotate_and_revoke_token(self) -> None:
         with patch.dict(
             os.environ,

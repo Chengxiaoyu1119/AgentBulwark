@@ -32,7 +32,9 @@ def _agent_view(item: dict[str, Any]) -> dict[str, Any]:
             "models": model_bound,
             "context": context_bound,
             "api": api_bound,
-            "ready": tool_bound or model_bound or context_bound or api_bound,
+            # A registered Agent is ready only after every authority boundary
+            # has an explicit scope; partial configuration must remain visible.
+            "ready": tool_bound and model_bound and context_bound and api_bound,
         },
     }
 

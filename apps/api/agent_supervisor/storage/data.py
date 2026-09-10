@@ -23,8 +23,8 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
     "anomaly_reject_threshold": 85,
     "approval_sla_minutes": 30,
     "high_risk_auto_escalation": True,
-    # Keep local fixtures compatible by default; production deployments should
-    # enable both registration gates before issuing Agent tokens.
+    # A clean installation starts with no pre-authorized Agent. Every runtime
+    # Agent must be registered and granted an explicit boundary by the operator.
     "require_agent_capability_registration": False,
     "require_agent_model_registration": False,
     # MCP resources/prompts are model-visible context. Production deployments
@@ -52,10 +52,7 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
         "session",
         "campus-net",
     ],
-    "agent_tool_allowlists": {
-        "judge-demo-agent": ["file.read", "mail.send", "api.call", "memory.write"],
-        "minimal-external-agent": ["file.read", "api.call", "mail.send"],
-    },
+    "agent_tool_allowlists": {},
     # Absolute HTTP destinations are a separate authority boundary from tool
     # capability grants.  Empty by default: a production Agent must register
     # its provider/business API hosts explicitly; relative fixture routes keep
