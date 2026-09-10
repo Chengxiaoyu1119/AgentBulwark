@@ -401,7 +401,7 @@ class StdioMcpUpstream:
                         "id": message.get("id"),
                         "error": {
                             "code": -32601,
-                            "message": "ZhiAn Sentinel MCP Gateway 不支持上游主动请求。",
+                            "message": "智垒 MCP Gateway 不支持上游主动请求。",
                         },
                     }
                 )

@@ -7,7 +7,6 @@ exclude = [
   ".venv",
   "node_modules",
   "apps/api/runtime",
-  "legacy",
   "apps/console/dist",
 ]
 
@@ -24,7 +23,6 @@ check_untyped_defs = true
 warn_unused_ignores = true
 no_implicit_optional = true
 exclude = [
-  "legacy",
   "apps/api/runtime",
 ]
 
@@ -62,5 +60,5 @@ exclude_lines = [
 
 [tool.pytest.ini_options]
 testpaths = ["apps/api/tests"]
-norecursedirs = [".git", "node_modules", "apps/api/runtime", "apps/console/dist", "legacy"]
+norecursedirs = [".git", "node_modules", "apps/api/runtime", "apps/console/dist"]
 cache_dir = "apps/api/runtime/quality/pytest"

@@ -114,7 +114,7 @@ function readMaybe(relativePath) {
   if (!fs.existsSync(fullPath)) {
     return '';
   }
-  return fs.readFileSync(fullPath, 'utf8');
+  return fs.readFileSync(fullPath, 'utf8').replace(/\r\n/g, '\n');
 }
 
 function fileInfo(relativePath) {

@@ -7,10 +7,8 @@ const REPORT_DIR = resolve("apps/api/runtime/quality/security-audit");
 const JSON_REPORT = resolve(REPORT_DIR, "dependency-security-audit.json");
 const MARKDOWN_REPORT = resolve(REPORT_DIR, "依赖安全审计报告.md");
 
-// Only audit packages that are part of the current product build. Historical
-// website/docs trees live under legacy/archive/ and are not shipped by the local
-// application; treating their removed paths as failed projects hid the actual
-// console dependency findings behind two false failures.
+// Only audit packages that are part of the current product build. Research and
+// local-only material is not shipped by the application or included in this gate.
 const PROJECTS = [
   {
     id: "console",
@@ -303,7 +301,7 @@ function buildMarkdown(report) {
     "## 当前处理原则",
     "",
     "- 不使用 `npm audit fix --force` 强行升大版本，避免把官网或文档站构建链路打断。",
-    "- 当前应用之外的历史资料位于 `legacy/`，不参与本地应用与审计门禁。",
+    "- 当前应用之外的研究资料不参与本地应用与审计门禁。",
   );
   return lines.join("\n");
 }

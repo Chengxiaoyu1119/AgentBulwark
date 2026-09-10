@@ -57,7 +57,7 @@ function canListen() {
 }
 
 const home = await requestHome();
-if (home.ok && home.body.includes('智安哨')) {
+if (home.ok && home.body.includes('AgentBulwark')) {
   console.log(`官网已经在运行：${url}`);
   console.log('如果需要重启，请先关闭旧的官网终端。');
   process.exit(0);

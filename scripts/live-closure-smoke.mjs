@@ -436,9 +436,29 @@ async function main() {
       return notRun("真实烟测需要 analyst 或 admin 操作员凭证", { base_url: baseUrl, operator_role: role });
     }
 
+    const probeRaw = String(process.env.AGENT_SUPERVISOR_MCP_LIVE_PROBE_JSON || "").trim();
+    const probe = probeRaw ? validateProbe(probeRaw) : null;
     const runtime = await requestJson(baseUrl, "/api/runtime_status");
     if (runtime.body?.models?.real_api_enabled !== true) {
       return notRun("后端未开启 MODEL_REAL_API_ENABLED", { base_url: baseUrl, operator_role: role });
+    }
+    if (probe) {
+      if (runtime.body?.audit_integrity?.hmac_configured !== true) {
+        return notRun("完整 MCP 闭环需要后端配置 AGENT_SUPERVISOR_AUDIT_HMAC_KEY", {
+          base_url: baseUrl,
+          operator_role: role,
+          mcp_status: "not_run",
+          evidence_status: "provider-not-run-mcp-hmac-missing",
+        });
+      }
+      if (runtime.body?.mcp?.configured !== true) {
+        return notRun("已提供 MCP 探针，但后端未配置 MCP 上游", {
+          base_url: baseUrl,
+          operator_role: role,
+          mcp_status: "not_run",
+          evidence_status: "provider-not-run-mcp-unconfigured",
+        });
+      }
     }
 
     const models = await requestJson(baseUrl, "/api/models?profile=target");
@@ -511,8 +531,7 @@ async function main() {
 
     report.checks = await runWafChecks(baseUrl, String(candidate.model));
 
-    const probeRaw = String(process.env.AGENT_SUPERVISOR_MCP_LIVE_PROBE_JSON || "").trim();
-    if (!probeRaw) {
+    if (!probe) {
       return notRun("Provider 已验证，但未提供只读 MCP 探针；未将结果标记为完整闭环", {
         ...providerFields,
         checks: report.checks,
@@ -522,7 +541,6 @@ async function main() {
       });
     }
 
-    const probe = validateProbe(probeRaw);
     const mcpFields = await runMcpProbe(baseUrl, probe, providerFields);
     return emit({
       ...baseReport(),
