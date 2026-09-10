@@ -120,3 +120,23 @@ export interface AuditHashVerification {
   first_hash?: string;
   last_hash?: string;
 }
+
+export interface EvidenceVerification {
+  schema_version: string;
+  evidence_id: string;
+  verified_at: string;
+  evidence_status: 'verified' | 'invalid' | string;
+  verification: {
+    valid: boolean;
+    audit_hash_valid: boolean;
+    audit_signature_valid: boolean;
+    audit_signature_required: boolean;
+    receipt_present: boolean;
+    receipt_valid: boolean;
+    receipt_integrity_valid: boolean;
+    receipt_binding_valid: boolean;
+    trace_required: boolean;
+    trace_available: boolean;
+    trace_valid: boolean;
+  };
+}

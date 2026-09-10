@@ -43,7 +43,15 @@ export function ExecutionAuditWorkspace({ view }: { view: AuditLogViewModel }) {
           />
         </UiCol>
         <UiCol xs={24} md={14}>
-          <AuditLogDetail log={view.selectedLog} copied={view.copied} onCopy={view.copyEvidence} />
+          <AuditLogDetail
+            log={view.selectedLog}
+            copied={view.copied}
+            onCopy={view.copyEvidence}
+            evidenceVerification={view.evidenceVerification}
+            evidenceVerificationBusy={view.evidenceVerificationBusy}
+            evidenceVerificationError={view.evidenceVerificationError}
+            onVerifyEvidence={view.verifySelectedEvidence}
+          />
         </UiCol>
       </UiRow>
     </PanelCard>

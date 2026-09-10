@@ -9,7 +9,8 @@ import type {
   ModelRuntimeConfigUpdate,
   ModelProviderProbeRequest,
   ModelProviderProbeResult,
-  Overview
+  Overview,
+  EvidenceVerification
 } from '../types';
 import { ApiError, request } from './apiRequest';
 
@@ -31,6 +32,16 @@ export function fetchOverview(): Promise<Overview> {
 
 export function fetchAuditLogs(limit = 100): Promise<AuditLog[]> {
   return request<AuditLog[]>(`/api/audit_logs?limit=${limit}`);
+}
+
+export function verifyEvidence(evidenceId: string): Promise<EvidenceVerification> {
+  return request<EvidenceVerification>(
+    `/api/evidence/${encodeURIComponent(evidenceId)}/verify`,
+    {
+      method: 'POST'
+    },
+    { retry: 0, timeoutMs: 10_000 }
+  );
 }
 
 export function fetchExecutionInventory(limit = 200): Promise<ExecutionInventory> {
