@@ -544,6 +544,27 @@ test.describe.serial('运营网关黑盒验收', () => {
 
     await expect(page.getByText('工具已执行')).toBeVisible();
     await expect(page.getByText(/result e2e-approved-res/)).toBeVisible();
+
+    const evidenceResponse = await page.request.post(`/api/evidence/${encodeURIComponent(auditId)}/verify`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
+    });
+    expect(evidenceResponse.status()).toBe(200);
+    expect((await evidenceResponse.json()) as { evidence_status?: string }).toMatchObject({
+      evidence_status: 'verified'
+    });
+
+    await page.getByRole('tab', { name: /执行审计/ }).click();
+    const auditSearch = page.getByPlaceholder('搜索审计编号、工具、策略、原因...');
+    await auditSearch.fill(auditId);
+    await expect(page.getByRole('button', { name: '核验证据' })).toBeVisible();
+    const uiEvidenceResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/api/evidence/${encodeURIComponent(auditId)}/verify`) &&
+        response.request().method() === 'POST'
+    );
+    await page.getByRole('button', { name: '核验证据' }).click();
+    expect((await uiEvidenceResponse).status()).toBe(200);
+    await expect(page.getByText('证据已验证')).toBeVisible();
   });
 
   test('三个生产页面可交互导航，移动端不产生横向溢出', async ({ page }) => {
