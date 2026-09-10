@@ -134,6 +134,7 @@ Invoke-RestMethod http://127.0.0.1:8012/api/public/status
 | `GET` | `/api/overview` | 控制台总览数据 |
 | `GET` | `/api/approvals` | 待处理审批 |
 | `GET` | `/api/gateway/traces` | 请求与策略 Trace |
+| `POST` | `/api/gateway/tool_calls/{audit_id}/execute` | 服务端托管的已审计工具执行 |
 | `GET` | `/api/runtime/executions` | 执行回执 |
 
 ## 质量门禁
@@ -182,7 +183,6 @@ apps/api/agent_supervisor/  FastAPI 服务与运行内核
 apps/api/tests/             后端测试、协议夹具和闭环验证
 apps/console/               React + Vite 控制台
 docs/                       产品、工程和研究文档
-legacy/                     只读历史资料，不进入生产入口
 scripts/                    启动、维护和质量检查脚本
 ```
 

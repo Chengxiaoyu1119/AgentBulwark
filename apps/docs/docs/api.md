@@ -70,6 +70,7 @@ AgentBulwark API 默认监听 `127.0.0.1:8012`。本地控制台通过 Vite 代�
 | --- | --- | --- |
 | Trace 列表 | GET | `/api/gateway/traces` |
 | Trace 详情 | GET | `/api/gateway/traces/{request_id}` |
+| 服务端托管工具执行 | POST | `/api/gateway/tool_calls/{audit_id}/execute` |
 | 回执列表 | GET | `/api/runtime/executions` |
 | 回执详情 | GET | `/api/runtime/executions/{audit_id}` |
 | 提交执行回执 | POST | `/api/runtime/executions/{audit_id}/complete` |

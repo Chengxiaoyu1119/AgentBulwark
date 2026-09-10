@@ -18,7 +18,6 @@ AgentBulwark/
 │  ├─ www/                   产品介绍页
 │  └─ docs/                  Docusaurus 文档站
 ├─ docs/                     产品、工程和研究资料
-├─ legacy/                   只读历史资料
 └─ scripts/                  启动、维护和质量检查脚本
 ```
 

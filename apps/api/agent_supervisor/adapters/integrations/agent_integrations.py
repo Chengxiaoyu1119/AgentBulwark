@@ -52,6 +52,15 @@ def build_agent_integration_bundle() -> dict[str, Any]:
                 "status": "ready",
                 "code": _receipt_example(),
             },
+            {
+                "id": "managed-gateway-execution",
+                "name": "服务端托管工具执行",
+                "framework": "智垒透明网关",
+                "runtime_stage": "Provider Tool Call 已允许后",
+                "endpoint": "POST /api/gateway/tool_calls/{audit_id}/execute",
+                "status": "ready",
+                "code": _managed_execution_example(),
+            },
         ],
         "acceptance": [
             "每个 Agent 使用独立 Bearer Token，并让 agent_id 与服务端身份绑定。",
@@ -146,5 +155,28 @@ def _receipt_example() -> str:
             },
             timeout=5,
         ).raise_for_status()
+        """
+    )
+
+
+def _managed_execution_example() -> str:
+    return dedent(
+        """
+        import os
+        import requests
+
+        response = requests.post(
+            f"http://127.0.0.1:8012/api/gateway/tool_calls/{audit_id}/execute",
+            headers={"Authorization": f"Bearer {os.environ['AGENT_TOKEN']}"},
+            json={
+                "agent_id": agent_id,
+                "session_id": session_id,
+                "provider_call_id": provider_call_id,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        receipt = response.json()["receipt"]
+        # 网关读取已审计的 Tool Call，不接受客户端重新提交的参数。
         """
     )

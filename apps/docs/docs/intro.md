@@ -60,7 +60,6 @@ apps/console/               React + Vite 操作控制台
 apps/www/                   产品介绍页
 apps/docs/                  本文档站
 docs/                       产品、工程和研究资料
-legacy/                     只读历史资料
 scripts/                    启动、维护和质量检查脚本
 ```
 
