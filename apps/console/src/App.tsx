@@ -7,6 +7,7 @@ import { isPageKey, pageFromHash, pageToHash, type ProductPageKey } from './app/
 import { readThemePreference, saveThemePreference, type AppTheme } from './app/themePreference';
 import { PanelCard, UiAlert, UiButton } from './components/ui';
 import type { AuthContext } from './types';
+import { SituationPanel } from './pages/SituationPanel';
 
 const GatewayPanel = lazy(() => import('./pages/GatewayPanel').then((module) => ({ default: module.GatewayPanel })));
 const SecurityEventsPanel = lazy(() =>
@@ -28,18 +29,41 @@ export default function App() {
 
 function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSignOut: () => void }) {
   const [page, setPageState] = useState<ProductPageKey>(() => pageFromHash(window.location.hash));
+  const [situation, setSituation] = useState(() => isSituationLocation());
   const [theme, setTheme] = useState<AppTheme>(() => readThemePreference());
   const [drawerVisible, setDrawerVisible] = useState(false);
   const { overview, apiNotice, connection, refreshing, refresh } = useAppData(page);
 
   const setPage = useCallback((nextPage: ProductPageKey) => {
     setPageState(nextPage);
+    setSituation(false);
     const nextHash = pageToHash(nextPage);
     if (window.location.hash !== nextHash) window.history.pushState(null, '', nextHash);
   }, []);
 
+  const openEvents = useCallback((requestId = '') => {
+    const query = requestId ? `?request_id=${encodeURIComponent(requestId)}` : '';
+    setSituation(false);
+    setPageState('events');
+    window.history.pushState(null, '', `#/events${query}`);
+  }, []);
+
+  const openSituation = useCallback(() => {
+    setPageState('protection');
+    setSituation(true);
+    window.history.pushState(null, '', '#/protection?view=situation');
+  }, []);
+
+  const exitSituation = useCallback(() => {
+    setSituation(false);
+    window.history.pushState(null, '', '#/protection');
+  }, []);
+
   useEffect(() => {
-    const syncPageFromHash = () => setPageState(pageFromHash(window.location.hash));
+    const syncPageFromHash = () => {
+      setPageState(pageFromHash(window.location.hash));
+      setSituation(isSituationLocation());
+    };
     window.addEventListener('hashchange', syncPageFromHash);
     window.addEventListener('popstate', syncPageFromHash);
 
@@ -63,6 +87,7 @@ function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSig
   return (
     <AppShell
       page={page}
+      immersive={situation}
       theme={theme}
       drawerVisible={drawerVisible}
       apiNotice={apiNotice}
@@ -80,13 +105,40 @@ function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSig
         <WorkspaceDataUnavailable connection={connection} onRefresh={() => void refresh()} />
       ) : (
         <>
-          {page === 'protection' && <GatewayPanel onOpenSettings={() => setPage('settings')} />}
+          {page === 'protection' && situation ? (
+            <SituationPanel
+              overview={overview}
+              connection={connection}
+              theme={theme}
+              onThemeChange={setTheme}
+              onExit={exitSituation}
+              onOpenEvents={openEvents}
+              onOpenSettings={() => setPage('settings')}
+              onRefresh={refresh}
+            />
+          ) : null}
+          {page === 'protection' && !situation ? (
+            <GatewayPanel
+              overview={overview}
+              connection={connection}
+              onOpenSettings={() => setPage('settings')}
+              onOpenEvents={openEvents}
+              onOpenSituation={openSituation}
+              onRefresh={refresh}
+            />
+          ) : null}
           {page === 'events' && <SecurityEventsPanel authContext={authContext} />}
           {page === 'settings' && <SettingsPanel overview={overview} refresh={refresh} />}
         </>
       )}
     </AppShell>
   );
+}
+
+function isSituationLocation() {
+  const hashQuery = window.location.hash.includes('?') ? window.location.hash.split('?').slice(1).join('?') : '';
+  const query = new URLSearchParams(`${window.location.search.replace(/^\?/, '')}&${hashQuery}`);
+  return query.get('view') === 'situation';
 }
 
 function WorkspaceDataUnavailable({

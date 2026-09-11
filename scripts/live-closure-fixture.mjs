@@ -68,6 +68,41 @@ async function waitForApi() {
   throw new Error("isolated-api-not-ready");
 }
 
+async function registerMcpFixtureAgent() {
+  const baseUrl = `http://127.0.0.1:${apiPort}`;
+  const adminHeaders = {
+    Authorization: "Bearer live-admin-token",
+    "Content-Type": "application/json",
+  };
+  const createdResponse = await fetch(`${baseUrl}/api/agents`, {
+    method: "POST",
+    headers: adminHeaders,
+    body: JSON.stringify({ agent_id: "live-closure-agent", display_name: "Live closure MCP fixture" }),
+  });
+  if (!createdResponse.ok) {
+    throw new Error(`isolated-agent-registration-failed-${createdResponse.status}`);
+  }
+  const created = await createdResponse.json();
+  const token = String(created.token || "").trim();
+  if (!token) throw new Error("isolated-agent-token-missing");
+
+  const policyResponse = await fetch(`${baseUrl}/api/policy_settings`, {
+    method: "PATCH",
+    headers: adminHeaders,
+    body: JSON.stringify({
+      agent_tool_allowlists: { "live-closure-agent": ["file.read"] },
+      agent_model_allowlists: { "live-closure-agent": ["fixture-model"] },
+      agent_api_allowlists: { "live-closure-agent": [] },
+      agent_context_allowlists: {
+        "live-closure-agent": { resources: [], resource_templates: [], prompts: [] },
+      },
+      comment: "isolated live closure fixture binding",
+    }),
+  });
+  if (!policyResponse.ok) throw new Error(`isolated-agent-policy-binding-failed-${policyResponse.status}`);
+  return token;
+}
+
 async function main() {
   await mkdir(runtime, { recursive: true });
   start(python, [...pythonArgs, "-X", "utf8", "-m", "apps.api.tests.fixtures.openai_gateway_provider"], {
@@ -114,12 +149,14 @@ async function main() {
   }, "api.log");
 
   await waitForApi();
+  const mcpToken = await registerMcpFixtureAgent();
   const smoke = spawn(process.execPath, [resolve(repoRoot, "scripts/live-closure-smoke.mjs")], {
     cwd: repoRoot,
     env: childEnvironment({
       AGENT_SUPERVISOR_LIVE_SMOKE: "true",
       AGENT_SUPERVISOR_LIVE_BASE_URL: `http://127.0.0.1:${apiPort}`,
       AGENT_SUPERVISOR_LIVE_OPERATOR_TOKEN: "live-admin-token",
+      AGENT_SUPERVISOR_LIVE_MCP_TOKEN: mcpToken,
       AGENT_SUPERVISOR_MCP_LIVE_PROBE_JSON: JSON.stringify({
         read_only: true,
         tool: "file.read",

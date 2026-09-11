@@ -4,6 +4,7 @@ import { RefreshCw, Search } from 'lucide-react';
 import { request } from '../../app/apiRequest';
 import { safeUiErrorSummary } from '../../app/apiRequestSupport';
 import { useRuntimeEventRefresh } from '../../app/useRuntimeEventRefresh';
+import type { RuntimeEventConnection } from '../../app/runtimeEventConnection';
 import {
   PanelCard,
   RuntimeConnectionBadge,
@@ -28,13 +29,15 @@ type Props = {
   onOpenApproval?: (auditId: string) => void;
   mode?: 'traffic' | 'events';
   pendingApprovalCount?: number | string;
+  liveConnection?: RuntimeEventConnection;
 };
 
 export function GatewayTracePanel({
   refreshSignal = '',
   onOpenApproval,
   mode = 'traffic',
-  pendingApprovalCount = '—'
+  pendingApprovalCount = '—',
+  liveConnection: externalLiveConnection
 }: Props) {
   const [index, setIndex] = useState<GatewayTraceIndex>({ traces: [], summary: {} });
   const [selected, setSelected] = useState<GatewayTrace | null>(null);
@@ -76,14 +79,15 @@ export function GatewayTracePanel({
   // connection owner already stops permanently for auth/permission failures
   // and backs off transient failures, so disabling it here would strand the
   // page until an operator manually refreshes it.
-  const liveConnection = useRuntimeEventRefresh(loadTraces);
+  const ownLiveConnection = useRuntimeEventRefresh(loadTraces, { enabled: !externalLiveConnection });
+  const liveConnection = externalLiveConnection ?? ownLiveConnection;
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadTraces(), 0);
     return () => window.clearTimeout(timer);
   }, [loadTraces, refreshSignal]);
 
-  async function openTrace(trace: GatewayTrace) {
+  const openTrace = useCallback(async (trace: GatewayTrace) => {
     const requestId = gatewayRequestId(trace);
     if (!requestId) return;
     const sequence = ++detailRequestSequence.current;
@@ -100,7 +104,13 @@ export function GatewayTracePanel({
         setDetailError(safeUiErrorSummary(requestError, '请求详情读取失败。'));
       }
     }
-  }
+  }, []);
+
+  const requestedTraceId = useMemo(() => {
+    const hashQuery = window.location.hash.includes('?') ? window.location.hash.split('?').slice(1).join('?') : '';
+    const query = new URLSearchParams(`${window.location.search.replace(/^\?/, '')}&${hashQuery}`);
+    return query.get('request_id')?.trim() ?? '';
+  }, []);
 
   function closeTrace() {
     detailRequestSequence.current += 1;
@@ -109,6 +119,14 @@ export function GatewayTracePanel({
   }
 
   const traces = useMemo(() => (Array.isArray(index.traces) ? index.traces : []), [index.traces]);
+  useEffect(() => {
+    if (!requestedTraceId || selected) return;
+    const requestedTrace = traces.find((trace) => gatewayRequestId(trace) === requestedTraceId);
+    if (!requestedTrace) return;
+    const timer = window.setTimeout(() => void openTrace(requestedTrace), 0);
+    return () => window.clearTimeout(timer);
+  }, [openTrace, requestedTraceId, selected, traces]);
+
   const providers = useMemo(
     () => [...new Set(traces.map((trace) => traceLabel(trace.provider, 'unknown')))].sort(),
     [traces]

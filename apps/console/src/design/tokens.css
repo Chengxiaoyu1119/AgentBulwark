@@ -155,11 +155,13 @@
   --zh-summary-min-height: 82px;
   --zh-metric-min-height: 96px;
   --zh-setup-icon-size: 46px;
-  --zh-auth-icon-size: 44px;
   --zh-nav-item-height: 40px;
   --zh-nav-item-margin: 4px;
   --zh-traffic-metric-min-height: 74px;
   --zh-settings-status-min-height: 78px;
   --zh-settings-model-min-height: 246px;
   --zh-settings-provider-min-height: 136px;
+  --zh-ops-trend-height: 180px;
+  --zh-situation-hero-min-height: 132px;
+  --zh-situation-page-max: 1680px;
 }

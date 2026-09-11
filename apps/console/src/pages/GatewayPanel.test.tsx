@@ -33,7 +33,7 @@ describe('GatewayPanel', () => {
   it('只展示真实运行状态，不渲染手工验证入口', async () => {
     render(<GatewayPanel />);
 
-    expect(await screen.findByText('运行中')).toBeInTheDocument();
+    expect(await screen.findByText('边界运行中')).toBeInTheDocument();
     expect(screen.getByText('等待第一条请求')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '验证防护' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '发送验证请求' })).not.toBeInTheDocument();
@@ -53,7 +53,7 @@ describe('GatewayPanel', () => {
     });
 
     render(<GatewayPanel />);
-    expect(await screen.findByText('运行中')).toBeInTheDocument();
+    expect(await screen.findByText('边界运行中')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('tab', { name: 'MCP 工具' }));
 
     expect(await screen.findByText('MCP 运行状态')).toBeInTheDocument();

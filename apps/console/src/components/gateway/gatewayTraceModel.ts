@@ -69,7 +69,11 @@ export function traceLabel(value: unknown, fallback = '—') {
 }
 
 export function traceDecisionColor(decision: string) {
-  return CONTROLLED_DECISIONS.has(decision) ? 'red' : decision === '允许' ? 'green' : 'blue';
+  if (decision === '允许') return 'green';
+  if (decision === '拒绝') return 'red';
+  if (decision === '询问') return 'orange';
+  if (decision === '隔离') return 'blue';
+  return CONTROLLED_DECISIONS.has(decision) ? 'red' : 'blue';
 }
 
 export function shortTraceHash(value: unknown) {

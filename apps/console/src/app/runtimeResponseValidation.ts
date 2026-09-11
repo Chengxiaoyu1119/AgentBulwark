@@ -44,10 +44,26 @@ function isOverview(value: unknown) {
   );
 }
 
+function isOperationalOverview(value: unknown) {
+  if (!isRecord(value) || !Array.isArray(value.models) || !Array.isArray(value.trend)) return false;
+  if (!['live', 'empty', 'stale', 'degraded'].includes(String(value.data_status))) return false;
+  const summary = value.summary;
+  return (
+    isRecord(summary) &&
+    ['request_count', 'controlled_count', 'pending_review_count', 'execution_unconfirmed_count'].every(
+      (key) => summary[key] === null || (typeof summary[key] === 'number' && Number.isFinite(summary[key]))
+    ) &&
+    Array.isArray(value.activity) &&
+    Array.isArray(value.action_queue) &&
+    isRecord(value.readiness)
+  );
+}
+
 const validators: Record<string, (value: unknown) => boolean> = {
   '/api/public/status': isPublicConsoleStatus,
   '/api/auth/context': isAuthContext,
-  '/api/overview': isOverview
+  '/api/overview': isOverview,
+  '/api/observability/overview': isOperationalOverview
 };
 
 export function validateRuntimeResponse(path: string, value: unknown) {

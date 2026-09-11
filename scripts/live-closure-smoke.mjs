@@ -77,24 +77,25 @@ function safeBaseUrl(value) {
   return url.origin + url.pathname.replace(/\/+$/, "");
 }
 
-function authHeaders() {
+function authHeaders(authToken = "") {
   const token = String(
-    process.env.AGENT_SUPERVISOR_LIVE_OPERATOR_TOKEN || process.env.AGENT_SUPERVISOR_API_TOKEN || "",
+    authToken || process.env.AGENT_SUPERVISOR_LIVE_OPERATOR_TOKEN || process.env.AGENT_SUPERVISOR_API_TOKEN || "",
   ).trim();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 async function requestJson(baseUrl, path, options = {}) {
   const url = new URL(path, `${baseUrl}/`);
+  const { authToken, ...requestOptions } = options;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
   let response;
   try {
     response = await fetch(url, {
-      ...options,
+      ...requestOptions,
       redirect: "error",
       signal: controller.signal,
-      headers: { ...authHeaders(), ...(options.headers || {}) },
+      headers: { ...authHeaders(authToken), ...(requestOptions.headers || {}) },
     });
   } catch (error) {
     clearTimeout(timeout);
@@ -253,7 +254,9 @@ function safeShape(value, depth = 0) {
 
 async function runMcpProbe(baseUrl, probe, providerFields) {
   const sessionId = `live-closure-${Date.now().toString(36)}`;
+  const mcpAuthToken = String(process.env.AGENT_SUPERVISOR_LIVE_MCP_TOKEN || "").trim();
   const initialize = await requestJson(baseUrl, "/api/mcp", {
+    authToken: mcpAuthToken,
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -275,13 +278,19 @@ async function runMcpProbe(baseUrl, probe, providerFields) {
   const protocolSessionId = String(initialize.headers.get("mcp-session-id") || "").trim();
   if (!protocolSessionId) throw new SmokeError("mcp-initialize", "mcp-session-header-missing");
 
-  const discover = await requestJson(baseUrl, "/api/mcp", modernRequest("live-discover", "server/discover", {}, sessionId));
+  const discover = await requestJson(baseUrl, "/api/mcp", {
+    ...modernRequest("live-discover", "server/discover", {}, sessionId),
+    authToken: mcpAuthToken,
+  });
   if (isRecord(discover.body?.error)) throw new SmokeError("mcp-discover", "mcp-discover-error");
 
   const listing = await requestJson(
     baseUrl,
     "/api/mcp",
-    modernRequest("live-tools-list", "tools/list", {}, protocolSessionId),
+    {
+      ...modernRequest("live-tools-list", "tools/list", {}, protocolSessionId),
+      authToken: mcpAuthToken,
+    },
   );
   const tools = listing.body?.result?.tools;
   if (!Array.isArray(tools) || !tools.some((item) => isRecord(item) && item.name === probe.tool)) {
@@ -292,7 +301,10 @@ async function runMcpProbe(baseUrl, probe, providerFields) {
   const call = await requestJson(
     baseUrl,
     "/api/mcp",
-    modernRequest(callId, "tools/call", { name: probe.tool, arguments: probe.arguments }, protocolSessionId),
+    {
+      ...modernRequest(callId, "tools/call", { name: probe.tool, arguments: probe.arguments }, protocolSessionId),
+      authToken: mcpAuthToken,
+    },
   );
   if (isRecord(call.body?.error) || call.body?.result?.isError === true) {
     throw new SmokeError("mcp-tools-call", "mcp-tool-call-failed");

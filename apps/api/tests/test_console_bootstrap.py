@@ -9,6 +9,29 @@ from apps.api.agent_supervisor.main import app
 
 
 class ConsoleBootstrapTest(unittest.TestCase):
+    def test_operational_overview_route_uses_the_live_snapshot_builder(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "AGENT_SUPERVISOR_AUTH_DISABLED": "false",
+                "AGENT_SUPERVISOR_API_TOKEN": "operator-token",
+                "AGENT_SUPERVISOR_API_HOST": "127.0.0.1",
+            },
+            clear=False,
+        ), patch(
+            "apps.api.agent_supervisor.routers.core.build_operational_overview",
+            return_value={"data_status": "empty", "summary": {}},
+        ) as build_snapshot:
+            with TestClient(app) as client:
+                response = client.get(
+                    "/api/observability/overview?window=6h",
+                    headers={"Authorization": "Bearer operator-token"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        build_snapshot.assert_called_once_with(window="6h", role="admin")
+        self.assertEqual(response.json()["data_status"], "empty")
+
     def test_public_status_distinguishes_online_backend_from_authentication(self) -> None:
         with patch.dict(
             os.environ,

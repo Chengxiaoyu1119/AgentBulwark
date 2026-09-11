@@ -31,7 +31,7 @@ describe('GatewayPanel trust boundary', () => {
 
   it('不会在服务端回执边界未闭合时显示已配置', async () => {
     render(<GatewayPanel />);
-    expect(await screen.findByText('等待接入')).toBeInTheDocument();
+    expect(await screen.findByText('边界待闭合')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '验证防护' })).not.toBeInTheDocument();
   });
 

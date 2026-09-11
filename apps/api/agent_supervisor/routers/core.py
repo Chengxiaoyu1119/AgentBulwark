@@ -23,6 +23,7 @@ from apps.api.agent_supervisor.domains.runtime.memory_governance import (
     rollback_latest_memory,
     update_memory_status,
 )
+from apps.api.agent_supervisor.domains.runtime.operational_overview import build_operational_overview
 from apps.api.agent_supervisor.domains.runtime.runtime_status import build_runtime_status
 from apps.api.agent_supervisor.schemas.main_models import (
     ModelProviderProbeRequest,
@@ -569,6 +570,14 @@ def runtime_status(
 @router.get("/api/observability/metrics")
 def observability_metrics(limit: int = Query(500, ge=10, le=2000)) -> dict:
     return runtime_metrics_snapshot(limit=limit)
+
+
+@router.get("/api/observability/overview")
+def observability_overview(
+    window: str = Query("1h", pattern="^(1h|6h|24h|7d)$"),
+    role: str = Depends(current_security_role),
+) -> dict[str, Any]:
+    return build_operational_overview(window=window, role=role)
 
 
 @router.get("/api/memory_governance")

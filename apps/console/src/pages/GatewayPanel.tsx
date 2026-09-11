@@ -1,14 +1,44 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { request } from '../app/apiRequest';
 import { safeUiErrorSummary } from '../app/apiRequestSupport';
+import { useRuntimeEventRefresh } from '../app/useRuntimeEventRefresh';
 import { GatewayRuntimeStatus, type RuntimeStatus } from '../components/gateway/GatewayRuntimeStatus';
 import { GatewayTracePanel } from '../components/gateway/GatewayTracePanel';
-import { CopyButton, LabelTag, PageHeader, PanelCard, UiAlert, UiFlex, UiTabs, UiTypography } from '../components/ui';
+import {
+  CopyButton,
+  LabelTag,
+  PageHeader,
+  PanelCard,
+  UiAlert,
+  UiButton,
+  UiFlex,
+  UiTabs,
+  UiTypography
+} from '../components/ui';
+import { Maximize2 } from 'lucide-react';
+import type { OperationalOverview } from '../types';
+import type { OperationalConnection } from '../app/useAppData';
+import { OperationalDashboard } from './OperationalDashboard';
 
-export function GatewayPanel({ onOpenSettings }: { onOpenSettings?: () => void }) {
+export function GatewayPanel({
+  overview,
+  connection,
+  onOpenSettings,
+  onOpenEvents,
+  onOpenSituation,
+  onRefresh
+}: {
+  overview?: OperationalOverview;
+  connection?: OperationalConnection;
+  onOpenSettings?: () => void;
+  onOpenEvents?: (requestId?: string) => void;
+  onOpenSituation?: () => void;
+  onRefresh?: () => Promise<unknown>;
+}) {
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [runtimeStatusError, setRuntimeStatusError] = useState('');
   const [channel, setChannel] = useState<'openai' | 'mcp'>('openai');
+  const [traceRefreshSignal, setTraceRefreshSignal] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -40,15 +70,46 @@ export function GatewayPanel({ onOpenSettings }: { onOpenSettings?: () => void }
     return { provider, gateway, mcp };
   }, [runtimeStatus]);
   const ready = (readiness.provider && readiness.gateway) || readiness.mcp;
+  const boundaryLabel = runtimeStatus === null ? '边界读取中' : ready ? '边界运行中' : '边界待闭合';
+  const boundaryColor = runtimeStatus === null ? 'default' : ready ? 'green' : 'warning';
+  const refreshOperationalData = useCallback(async () => {
+    await onRefresh?.();
+    setTraceRefreshSignal((value) => value + 1);
+  }, [onRefresh]);
+  const liveConnection = useRuntimeEventRefresh(refreshOperationalData, { debounceMs: 400 });
 
   return (
     <div className="zh-product-page">
       <PageHeader
         title="请求防护"
-        badge={<LabelTag color={ready ? 'green' : 'warning'}>{ready ? '运行中' : '等待接入'}</LabelTag>}
-        description="Agent 请求经过策略、Provider 和工具边界后，真实流量会自动出现在活动记录中。"
-        actions={<CopyButton text={`${window.location.origin}/v1`}>复制 OpenAI 地址</CopyButton>}
+        badge={<LabelTag color={boundaryColor}>{boundaryLabel}</LabelTag>}
+        description="实时查看请求接入、策略处置、Provider 调用和执行回执。"
+        actions={
+          <UiFlex gap={8} wrap="wrap">
+            {onOpenSituation ? (
+              <UiButton
+                type="text"
+                size="small"
+                icon={<Maximize2 size={15} />}
+                onClick={onOpenSituation}
+                aria-label="全屏态势"
+                title="全屏态势"
+              />
+            ) : null}
+            <CopyButton text={`${window.location.origin}/v1`}>复制 OpenAI 地址</CopyButton>
+          </UiFlex>
+        }
       />
+
+      {overview ? (
+        <OperationalDashboard
+          overview={overview}
+          connection={connection}
+          liveConnection={liveConnection}
+          onOpenEvents={onOpenEvents}
+          onOpenSettings={onOpenSettings}
+        />
+      ) : null}
 
       <GatewayRuntimeStatus status={runtimeStatus} error={runtimeStatusError} />
 
@@ -60,7 +121,12 @@ export function GatewayPanel({ onOpenSettings }: { onOpenSettings?: () => void }
           {
             key: 'openai',
             label: '模型 API',
-            children: <GatewayTracePanel refreshSignal={runtimeStatus?.gateway_evidence?.started_at ?? ''} />
+            children: (
+              <GatewayTracePanel
+                refreshSignal={`${runtimeStatus?.gateway_evidence?.started_at ?? ''}:${traceRefreshSignal}`}
+                liveConnection={liveConnection}
+              />
+            )
           },
           {
             key: 'mcp',

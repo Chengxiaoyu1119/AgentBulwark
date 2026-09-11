@@ -108,7 +108,7 @@ test.describe.serial('运营网关黑盒验收', () => {
     await expect(page.getByText('智垒', { exact: true })).toBeVisible();
     await expect(page.getByText('智安哨', { exact: true })).toHaveCount(0);
     await expect(page).toHaveTitle('智垒 · AI Agent Firewall');
-    await expect(page.getByText('后端在线')).toBeVisible();
+    await expect(page.getByText('后端在线', { exact: true })).toHaveCount(0);
     await expect(page.locator('.zh-auth-page')).toHaveCSS('display', 'flex');
     expect([...new Set(bootstrapApiPaths)]).toEqual(['/api/public/status']);
 

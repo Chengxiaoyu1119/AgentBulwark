@@ -26,7 +26,7 @@ export async function fetchHealth(): Promise<boolean> {
 }
 
 export function fetchOverview(): Promise<Overview> {
-  return request<Overview>('/api/overview');
+  return request<Overview>('/api/observability/overview?window=1h');
 }
 
 export function fetchAuditLogs(limit = 100): Promise<AuditLog[]> {

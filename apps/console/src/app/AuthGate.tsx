@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { LockKeyhole, RefreshCw, ShieldCheck } from 'lucide-react';
+import { LockKeyhole, LogIn, RefreshCw } from 'lucide-react';
 import type { AuthContext } from '../types';
 import {
   PanelCard,
@@ -186,6 +186,8 @@ export function AuthGate({ children }: AuthGateProps) {
     clearSessionUi();
   }, [clearSessionUi]);
 
+  const localEntry = publicStatus?.console_auth.required === false;
+
   if (checking) {
     return (
       <div className="zh-auth-page" aria-live="polite">
@@ -213,9 +215,6 @@ export function AuthGate({ children }: AuthGateProps) {
 
           <PanelCard variant="borderless" className="zh-auth-card">
             <UiSpace orientation="vertical" size={4} className="zh-auth-heading">
-              <span className="zh-auth-icon" aria-hidden="true">
-                <ShieldCheck size={22} />
-              </span>
               <UiTypography.Title level={2} id="console-login-title" className="zh-title-flush">
                 连接安全控制台
               </UiTypography.Title>
@@ -226,14 +225,6 @@ export function AuthGate({ children }: AuthGateProps) {
 
             {!publicStatus && (
               <UiAlert type="error" showIcon title="后端服务未连接" description="请先运行一键启动脚本，再重试连接。" />
-            )}
-
-            {publicStatus && (
-              <div className="zh-auth-environment" aria-label="当前后端环境">
-                <span>后端在线</span>
-                <span>{publicStatus.console_auth.profile === 'production' ? '生产安全档' : '本机安全档'}</span>
-                <span>{publicStatus.console_auth.required ? '需要凭证' : '本机免鉴权'}</span>
-              </div>
             )}
 
             {error && <UiAlert type="error" showIcon title={error} />}
@@ -261,12 +252,12 @@ export function AuthGate({ children }: AuthGateProps) {
             )}
 
             <UiButton
-              icon={<RefreshCw size={16} />}
+              icon={localEntry ? <LogIn size={16} /> : <RefreshCw size={16} />}
               onClick={() => void bootstrap()}
               disabled={checking || submitting}
               block
             >
-              重新检测后端
+              {localEntry ? '进入系统' : '重新检测后端'}
             </UiButton>
           </PanelCard>
         </section>

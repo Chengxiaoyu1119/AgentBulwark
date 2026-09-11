@@ -106,153 +106,158 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
           description={error || 'Provider、语义模型和 MCP 隔离状态会从运行时接口更新。'}
         />
       ) : (
-        <UiFlex vertical gap={12}>
-          {productionProfile && !strictReceiptBoundary ? (
-            <UiAlert
-              type="error"
-              showIcon
-              title="production 回执信任边界未闭合"
-              description="模型可见的工具结果必须同时要求执行回执与服务端观察证据；调用方声明不等于实际执行事实。"
-            />
-          ) : null}
-          <UiRow gutter={[12, 12]}>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="安全配置档"
-                value={productionProfile ? 'production / 强制登记' : 'local / 兼容夹具'}
-                tone={productionProfile ? 'green' : 'amber'}
+        <details className="zh-runtime-boundary-details">
+          <summary>查看完整运行边界</summary>
+          <UiFlex vertical gap={12}>
+            {productionProfile && !strictReceiptBoundary ? (
+              <UiAlert
+                type="error"
+                showIcon
+                title="production 回执信任边界未闭合"
+                description="模型可见的工具结果必须同时要求执行回执与服务端观察证据；调用方声明不等于实际执行事实。"
               />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="当前身份"
-                value={`${roleLabel} / ${agentLabel}`}
-                tone={securityContext?.can_generate ? 'green' : 'amber'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="模型生成权限"
-                value={securityContext?.can_generate ? '允许发起生成' : '仅可观测'}
-                tone={securityContext?.can_generate ? 'green' : 'amber'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="托管工具执行权限"
-                value={securityContext?.can_execute_managed_tools ? '允许服务端执行' : '不可执行'}
-                tone={securityContext?.can_execute_managed_tools ? 'green' : 'amber'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="目标 Provider"
-                value={
-                  status.models?.target?.some((item) => item.configured && item.mode === 'real-api')
-                    ? '真实 API 已配置'
-                    : '未配置'
-                }
-                tone={
-                  status.models?.target?.some((item) => item.configured && item.mode === 'real-api') ? 'green' : 'amber'
-                }
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="透明代理"
-                value={`${status.proxy?.mode ?? 'unknown'} / ${status.proxy?.enabled ? '启用' : '关闭'}`}
-                tone={status.proxy?.enabled ? 'green' : 'red'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="Token 鉴权"
-                value={status.proxy?.auth_required ? '已开启' : '本地免鉴权'}
-                tone={status.proxy?.auth_required ? 'green' : 'red'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="工具结果信任"
-                value={receiptTrustLabel}
-                tone={strictReceiptBoundary ? 'green' : toolReceiptsRequired ? 'amber' : 'red'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="语义通道"
-                value={
-                  status.semantic_detector?.loaded
-                    ? 'ONNX 已加载'
-                    : status.semantic_detector?.enabled
-                      ? '规则通道降级'
-                      : '已关闭'
-                }
-                tone={status.semantic_detector?.loaded ? 'green' : 'amber'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="推理通道"
-                value={status.proxy?.reasoning_exposed ? '已暴露（降级）' : '默认隐藏'}
-                tone={status.proxy?.reasoning_exposed ? 'amber' : 'green'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="网关运行证据"
-                value={gatewayFingerprint ? `已绑定 · ${gatewayFingerprint.slice(0, 12)}` : '未绑定'}
-                tone={gatewayFingerprint ? 'green' : 'red'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="证据签名"
-                value={hmacConfigured ? `HMAC 已启用 · ${status.audit_integrity?.key_id || '已配置'}` : '未配置 HMAC'}
-                tone={hmacConfigured ? 'green' : 'amber'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="MCP 会话隔离"
-                value={
-                  status.mcp?.configured
-                    ? status.mcp.session_isolation?.enabled
-                      ? `${status.mcp.session_isolation.scope || 'Agent+Session'} / ${
-                          status.mcp.session_isolation.active_sessions ?? 0
-                        }/${status.mcp.session_isolation.max_sessions ?? 0} 会话`
-                      : '共享上游（降级）'
-                    : '未配置上游'
-                }
-                tone={!status.mcp?.configured ? 'blue' : status.mcp.session_isolation?.enabled ? 'green' : 'red'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="MCP 上游隔离"
-                value={
-                  status.mcp?.configured
-                    ? status.mcp.resource_limits?.os_enforced
-                      ? status.mcp.resource_limits.isolation_mode || 'OS 隔离'
-                      : '未具备 OS 限制'
-                    : '未配置上游'
-                }
-                tone={!status.mcp?.configured ? 'blue' : status.mcp.resource_limits?.os_enforced ? 'green' : 'red'}
-              />
-            </UiCol>
-            <UiCol xs={24} sm={12} lg={6}>
-              <StatusCard
-                label="Agent 资源租约"
-                value={
-                  resourcePolicy?.enabled
-                    ? `${resourcePolicy.scope || '共享'} · ${resourcePolicy.concurrency_per_agent ?? 0} 并发 / ${resourcePolicy.token_budget_per_minute ?? 0} Token/分`
-                    : '未启用'
-                }
-                tone={resourcePolicy?.enabled ? 'green' : 'red'}
-              />
-            </UiCol>
-          </UiRow>
-        </UiFlex>
+            ) : null}
+            <UiRow gutter={[12, 12]}>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="安全配置档"
+                  value={productionProfile ? 'production / 强制登记' : 'local / 兼容夹具'}
+                  tone={productionProfile ? 'green' : 'amber'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="当前身份"
+                  value={`${roleLabel} / ${agentLabel}`}
+                  tone={securityContext?.can_generate ? 'green' : 'amber'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="模型生成权限"
+                  value={securityContext?.can_generate ? '允许发起生成' : '仅可观测'}
+                  tone={securityContext?.can_generate ? 'green' : 'amber'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="托管工具执行权限"
+                  value={securityContext?.can_execute_managed_tools ? '允许服务端执行' : '不可执行'}
+                  tone={securityContext?.can_execute_managed_tools ? 'green' : 'amber'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="目标 Provider"
+                  value={
+                    status.models?.target?.some((item) => item.configured && item.mode === 'real-api')
+                      ? '真实 API 已配置'
+                      : '未配置'
+                  }
+                  tone={
+                    status.models?.target?.some((item) => item.configured && item.mode === 'real-api')
+                      ? 'green'
+                      : 'amber'
+                  }
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="透明代理"
+                  value={`${status.proxy?.mode ?? 'unknown'} / ${status.proxy?.enabled ? '启用' : '关闭'}`}
+                  tone={status.proxy?.enabled ? 'green' : 'red'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="Token 鉴权"
+                  value={status.proxy?.auth_required ? '已开启' : '本地免鉴权'}
+                  tone={status.proxy?.auth_required ? 'green' : 'red'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="工具结果信任"
+                  value={receiptTrustLabel}
+                  tone={strictReceiptBoundary ? 'green' : toolReceiptsRequired ? 'amber' : 'red'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="语义通道"
+                  value={
+                    status.semantic_detector?.loaded
+                      ? 'ONNX 已加载'
+                      : status.semantic_detector?.enabled
+                        ? '规则通道降级'
+                        : '已关闭'
+                  }
+                  tone={status.semantic_detector?.loaded ? 'green' : 'amber'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="推理通道"
+                  value={status.proxy?.reasoning_exposed ? '已暴露（降级）' : '默认隐藏'}
+                  tone={status.proxy?.reasoning_exposed ? 'amber' : 'green'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="网关运行证据"
+                  value={gatewayFingerprint ? `已绑定 · ${gatewayFingerprint.slice(0, 12)}` : '未绑定'}
+                  tone={gatewayFingerprint ? 'green' : 'red'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="证据签名"
+                  value={hmacConfigured ? `HMAC 已启用 · ${status.audit_integrity?.key_id || '已配置'}` : '未配置 HMAC'}
+                  tone={hmacConfigured ? 'green' : 'amber'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="MCP 会话隔离"
+                  value={
+                    status.mcp?.configured
+                      ? status.mcp.session_isolation?.enabled
+                        ? `${status.mcp.session_isolation.scope || 'Agent+Session'} / ${
+                            status.mcp.session_isolation.active_sessions ?? 0
+                          }/${status.mcp.session_isolation.max_sessions ?? 0} 会话`
+                        : '共享上游（降级）'
+                      : '未配置上游'
+                  }
+                  tone={!status.mcp?.configured ? 'blue' : status.mcp.session_isolation?.enabled ? 'green' : 'red'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="MCP 上游隔离"
+                  value={
+                    status.mcp?.configured
+                      ? status.mcp.resource_limits?.os_enforced
+                        ? status.mcp.resource_limits.isolation_mode || 'OS 隔离'
+                        : '未具备 OS 限制'
+                      : '未配置上游'
+                  }
+                  tone={!status.mcp?.configured ? 'blue' : status.mcp.resource_limits?.os_enforced ? 'green' : 'red'}
+                />
+              </UiCol>
+              <UiCol xs={24} sm={12} lg={6}>
+                <StatusCard
+                  label="Agent 资源租约"
+                  value={
+                    resourcePolicy?.enabled
+                      ? `${resourcePolicy.scope || '共享'} · ${resourcePolicy.concurrency_per_agent ?? 0} 并发 / ${resourcePolicy.token_budget_per_minute ?? 0} Token/分`
+                      : '未启用'
+                  }
+                  tone={resourcePolicy?.enabled ? 'green' : 'red'}
+                />
+              </UiCol>
+            </UiRow>
+          </UiFlex>
+        </details>
       )}
     </PanelCard>
   );

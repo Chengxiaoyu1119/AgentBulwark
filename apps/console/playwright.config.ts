@@ -19,7 +19,9 @@ const providerPort = '18081';
 const apiPort = '8016';
 const consolePort = '5180';
 const python = process.env.AGENT_SUPERVISOR_PYTHON || 'python';
-const browserChannel = process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' ? 'chrome' : undefined);
+const browserExecutablePath = process.env.PLAYWRIGHT_EXECUTABLE_PATH;
+const browserChannel =
+  process.env.PLAYWRIGHT_CHANNEL || (process.platform === 'win32' && !browserExecutablePath ? 'chrome' : undefined);
 process.env.AGENT_SUPERVISOR_E2E_RUNTIME_DIR = runtimeDir;
 
 const inheritedEnvironment = Object.fromEntries(
@@ -91,6 +93,7 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${consolePort}`,
     ...(browserChannel ? { channel: browserChannel } : {}),
+    ...(browserExecutablePath ? { launchOptions: { executablePath: browserExecutablePath } } : {}),
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure'

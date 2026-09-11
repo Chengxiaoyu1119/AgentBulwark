@@ -17,6 +17,48 @@
   gap: var(--zh-panel-gap);
 }
 
+.zh-ops-activity-item {
+  width: 100%;
+  min-width: 0;
+  padding: var(--zh-space-3) var(--zh-space-2);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-bottom: var(--zh-border-width-hairline) solid var(--ant-color-border-secondary);
+}
+
+.zh-ops-activity-item:hover,
+.zh-ops-activity-item:focus-visible {
+  background: var(--ant-color-primary-bg);
+}
+
+.zh-ops-activity-item:last-child {
+  border-bottom: 0;
+}
+
+.zh-ops-activity-title {
+  display: flex;
+  align-items: center;
+  gap: var(--zh-space-2);
+  min-width: 0;
+}
+
+.zh-ops-activity-title strong {
+  overflow: hidden;
+  font-family: var(--zh-font-family-mono);
+  font-size: var(--zh-font-size-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zh-ops-activity-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 通用文本与面板工具 */
 
 .zh-muted-text {

@@ -67,6 +67,27 @@ describe('AuthGate', () => {
     expect(validateOperatorToken).not.toHaveBeenCalled();
   });
 
+  it('uses a direct entry action for a local console without authentication', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchPublicConsoleStatus).mockResolvedValue({
+      ...publicStatus,
+      console_auth: { required: false, transport: 'bearer', profile: 'local' }
+    });
+    vi.mocked(validateOperatorToken)
+      .mockRejectedValueOnce(new Error('initial check'))
+      .mockResolvedValueOnce(adminContext);
+    render(<AuthGate>{({ context }) => <div>workspace:{context.role}</div>}</AuthGate>);
+
+    expect(await screen.findByText('身份校验失败，请稍后重试。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '进入系统' })).toBeInTheDocument();
+    expect(screen.queryByText('后端在线')).not.toBeInTheDocument();
+    expect(screen.queryByText('本机安全档')).not.toBeInTheDocument();
+    expect(screen.queryByText('本机免鉴权')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '进入系统' }));
+    await waitFor(() => expect(screen.getByText('workspace:admin')).toBeInTheDocument());
+  });
+
   it('validates and stores the operator token before mounting the workspace', async () => {
     const user = userEvent.setup();
     vi.mocked(validateOperatorToken).mockResolvedValue(adminContext);
