@@ -2739,6 +2739,9 @@ class McpNetworkBoundaryTest(unittest.TestCase):
 
         settings = {
             **DEFAULT_POLICY_SETTINGS,
+            "require_agent_capability_registration": False,
+            "require_agent_model_registration": False,
+            "require_agent_context_registration": False,
             "agent_api_allowlists": {"mcp-gateway": ["https://public.example"]},
         }
         gateway, upstream = self._gateway()
@@ -2772,6 +2775,9 @@ class McpNetworkBoundaryTest(unittest.TestCase):
 
         settings = {
             **DEFAULT_POLICY_SETTINGS,
+            "require_agent_capability_registration": False,
+            "require_agent_model_registration": False,
+            "require_agent_context_registration": False,
             "agent_api_allowlists": {"mcp-gateway": ["https://public.example"]},
         }
         gateway, upstream = self._gateway()
@@ -2803,6 +2809,9 @@ class McpNetworkBoundaryTest(unittest.TestCase):
 
         settings = {
             **DEFAULT_POLICY_SETTINGS,
+            "require_agent_capability_registration": False,
+            "require_agent_model_registration": False,
+            "require_agent_context_registration": False,
             "agent_api_allowlists": {"mcp-gateway": ["https://rebind.example"]},
         }
         gateway, upstream = self._gateway()

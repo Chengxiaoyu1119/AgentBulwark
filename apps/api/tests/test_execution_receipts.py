@@ -31,6 +31,16 @@ class ExecutionReceiptTests(unittest.TestCase):
         self.db_patch.start()
         self.settings_patch = patch.object(policy_data, "POLICY_SETTINGS_PATH", Path(self.temp_dir.name) / "policy_settings.json")
         self.settings_patch.start()
+        Path(policy_data.POLICY_SETTINGS_PATH).write_text(
+            json.dumps(
+                {
+                    "require_agent_capability_registration": False,
+                    "require_agent_model_registration": False,
+                    "require_agent_context_registration": False,
+                }
+            ),
+            encoding="utf-8",
+        )
         database.init_db()
         self.env_patch = patch.dict(
             os.environ,

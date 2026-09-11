@@ -25,11 +25,12 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
     "high_risk_auto_escalation": True,
     # A clean installation starts with no pre-authorized Agent. Every runtime
     # Agent must be registered and granted an explicit boundary by the operator.
-    "require_agent_capability_registration": False,
-    "require_agent_model_registration": False,
-    # MCP resources/prompts are model-visible context. Production deployments
-    # must register an explicit per-Agent context scope as well.
-    "require_agent_context_registration": False,
+    "require_agent_capability_registration": True,
+    "require_agent_model_registration": True,
+    # MCP resources/prompts are model-visible context and require an explicit
+    # per-Agent scope as well. Tests or a deliberate local compatibility policy
+    # may opt out by writing these settings explicitly.
+    "require_agent_context_registration": True,
     "internal_email_domains": ["internal.example"],
     "sensitive_path_markers": [
         "confidential",

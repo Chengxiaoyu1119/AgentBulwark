@@ -10,6 +10,7 @@ receipts, policy overrides, or audit rows into the current run.
 from __future__ import annotations
 
 import atexit
+import json
 import os
 import shutil
 import tempfile
@@ -20,6 +21,19 @@ _TEST_RUNTIME_DIR = Path(
 ).resolve()
 os.environ["AGENT_SUPERVISOR_RUNTIME_DIR"] = str(_TEST_RUNTIME_DIR)
 os.environ.setdefault("AGENT_SUPERVISOR_LABS_ENABLED", "true")
+# Unit tests exercise lower-level protocol compatibility directly. Keep that
+# fixture mode explicit now that clean installations default to fail-closed
+# Agent registration boundaries.
+(_TEST_RUNTIME_DIR / "policy_settings.json").write_text(
+    json.dumps(
+        {
+            "require_agent_capability_registration": False,
+            "require_agent_model_registration": False,
+            "require_agent_context_registration": False,
+        }
+    ),
+    encoding="utf-8",
+)
 atexit.register(shutil.rmtree, _TEST_RUNTIME_DIR, ignore_errors=True)
 
 def _initialize_runtime_database() -> None:

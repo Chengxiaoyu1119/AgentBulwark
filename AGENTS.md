@@ -40,6 +40,7 @@ AgentBulwark（智垒）是本地优先的 AI Agent 防火墙。OpenAI 兼容请
 ## 关键不变量
 
 - 默认监听 `127.0.0.1`；生产模式使用后端 Bearer 鉴权。
+- 干净安装默认强制 Agent 工具、模型和 MCP 上下文注册；空边界不会自动放行。
 - Provider 地址、协议、端口和路径固定，凭证只由后端读取。
 - Tool Call 必须经过注册、Schema、Agent 权限和策略判断。
 - 决策只有 `ALLOW`、`DENY`、`ASK`、`ISOLATE` 四态；冲突按拒绝优先。

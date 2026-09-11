@@ -1,22 +1,37 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from apps.api.agent_supervisor.main import app
 from apps.api.agent_supervisor.routers.agents import _agent_view
+from apps.api.agent_supervisor.storage import data as policy_data
 from apps.api.agent_supervisor.storage.data import DEFAULT_POLICY_SETTINGS
 
 
 class AgentRegistryApiTests(unittest.TestCase):
     def test_clean_default_policy_has_no_pre_authorized_agents(self) -> None:
+        self.assertTrue(DEFAULT_POLICY_SETTINGS["require_agent_capability_registration"])
+        self.assertTrue(DEFAULT_POLICY_SETTINGS["require_agent_model_registration"])
+        self.assertTrue(DEFAULT_POLICY_SETTINGS["require_agent_context_registration"])
         self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_tool_allowlists"], {})
         self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_api_allowlists"], {})
         self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_model_allowlists"], {})
         self.assertEqual(DEFAULT_POLICY_SETTINGS["agent_context_allowlists"], {})
+
+    def test_missing_policy_file_uses_fail_closed_registration_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.object(
+            policy_data, "POLICY_SETTINGS_PATH", Path(temporary) / "policy_settings.json"
+        ), patch.object(policy_data, "_settings_cache", {}), patch.object(policy_data, "_settings_stat_at", {}):
+            settings = policy_data.get_policy_settings()
+        self.assertTrue(settings["require_agent_capability_registration"])
+        self.assertTrue(settings["require_agent_model_registration"])
+        self.assertTrue(settings["require_agent_context_registration"])
 
     def test_partial_policy_binding_is_not_ready(self) -> None:
         with patch(
