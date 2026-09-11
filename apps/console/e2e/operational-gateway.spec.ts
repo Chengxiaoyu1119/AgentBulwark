@@ -46,12 +46,18 @@ async function providerRequestCount(page: Page) {
   return Number(((await response.json()) as { request_count?: number }).request_count ?? 0);
 }
 
-async function mcpRequest(page: Page, method: string, params: Record<string, unknown> = {}) {
+async function mcpRequest(
+  page: Page,
+  method: string,
+  params: Record<string, unknown> = {},
+  token = ADMIN_TOKEN,
+  sessionId = 'mcp-e2e-session'
+) {
   const requestId = `mcp-e2e-${method.replace(/[^a-z0-9/-]/gi, '-')}`;
   return page.request.post('/api/mcp', {
     headers: {
-      Authorization: `Bearer ${ADMIN_TOKEN}`,
-      'X-Agent-Session-ID': 'mcp-e2e-session',
+      Authorization: `Bearer ${token}`,
+      'X-Agent-Session-ID': sessionId,
       Accept: 'application/json, text/event-stream',
       'MCP-Protocol-Version': '2026-07-28',
       'Mcp-Method': method,
@@ -519,206 +525,320 @@ test.describe.serial('运营网关黑盒验收', () => {
 
   test('服务端托管 Tool Call 产生可验证回执，MCP JSON-RPC 走真实子进程', async ({ page }) => {
     await login(page);
+    const agentId = `e2e-managed-${Date.now()}`;
+    const adminHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+    let agentToken = '';
+    let originalSettings: Record<string, unknown> | null = null;
 
-    const beforeManaged = await providerRequestCount(page);
-    const managed = await sendGatewayRequest(page, {
-      model: 'e2e-fixture-model',
-      messages: [{ role: 'user', content: 'Please use file_read for the public project overview.' }],
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: 'file_read',
-            description: 'Read an approved public project file.',
-            parameters: {
-              type: 'object',
-              properties: { path: { type: 'string' } },
-              required: ['path'],
-              additionalProperties: false
+    try {
+      const createdResponse = await page.request.post('/api/agents', {
+        headers: adminHeaders,
+        data: { agent_id: agentId, display_name: 'E2E Managed Agent' }
+      });
+      expect(createdResponse.status()).toBe(200);
+      agentToken = String(((await createdResponse.json()) as { token?: string }).token ?? '');
+      expect(agentToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+
+      const policyResponse = await page.request.get('/api/policy_config', { headers: adminHeaders });
+      expect(policyResponse.status()).toBe(200);
+      const policyConfig = (await policyResponse.json()) as { settings: Record<string, unknown> };
+      originalSettings = policyConfig.settings;
+      const map = (key: string) => ({
+        ...((policyConfig.settings[key] as Record<string, unknown> | undefined) ?? {})
+      });
+      const managedSettings = {
+        ...policyConfig.settings,
+        require_agent_capability_registration: true,
+        require_agent_model_registration: true,
+        require_agent_context_registration: true,
+        agent_tool_allowlists: { ...map('agent_tool_allowlists'), [agentId]: ['file.read'] },
+        agent_api_allowlists: { ...map('agent_api_allowlists'), [agentId]: [] },
+        agent_model_allowlists: { ...map('agent_model_allowlists'), [agentId]: ['e2e-fixture-model'] },
+        agent_context_allowlists: {
+          ...map('agent_context_allowlists'),
+          [agentId]: { resources: [], resource_templates: [], prompts: [] }
+        }
+      };
+      const published = await page.request.post('/api/policies/publish', {
+        headers: adminHeaders,
+        data: { settings: managedSettings, comment: 'E2E 托管 Agent 边界' }
+      });
+      expect(published.status()).toBe(200);
+
+      const beforeManaged = await providerRequestCount(page);
+      const managed = await sendGatewayRequest(page, {
+        model: 'e2e-fixture-model',
+        messages: [{ role: 'user', content: 'Please use file_read for the public project overview.' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'file_read',
+              description: 'Read an approved public project file.',
+              parameters: {
+                type: 'object',
+                properties: { path: { type: 'string' } },
+                required: ['path'],
+                additionalProperties: false
+              }
             }
           }
+        ],
+        tool_choice: 'auto',
+        agent_supervisor: { mode: 'managed', agent_id: agentId }
+      });
+      expect(managed.agent_supervisor?.agent_id).toBe(agentId);
+      expect(managed.agent_supervisor?.decision).toBe('允许');
+      expect(managed.agent_supervisor?.managed_status).toBe('completed');
+      expect(managed.agent_supervisor?.tool_receipts_server_observed).toBeGreaterThanOrEqual(1);
+      expect(await providerRequestCount(page)).toBe(beforeManaged + 2);
+      const managedRequestId = String(managed.agent_supervisor?.request_id ?? '');
+      const managedTraceResponse = await page.request.get(
+        `/api/gateway/traces/${encodeURIComponent(managedRequestId)}`,
+        {
+          headers: adminHeaders
         }
-      ],
-      tool_choice: 'auto',
-      agent_supervisor: { mode: 'managed' }
-    });
-    expect(managed.agent_supervisor?.decision).toBe('允许');
-    expect(managed.agent_supervisor?.managed_status).toBe('completed');
-    expect(managed.agent_supervisor?.tool_receipts_server_observed).toBeGreaterThanOrEqual(1);
-    expect(await providerRequestCount(page)).toBe(beforeManaged + 2);
-    const managedRequestId = String(managed.agent_supervisor?.request_id ?? '');
-    const managedTraceResponse = await page.request.get(`/api/gateway/traces/${encodeURIComponent(managedRequestId)}`, {
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
-    });
-    expect(managedTraceResponse.status()).toBe(200);
-    const managedTrace = (await managedTraceResponse.json()) as {
-      request_id?: string;
-      server_observed_execution_count?: number;
-      receipt_count?: number;
-      request_hash?: string;
-      provider_response_hash?: string;
-    };
-    expect(managedTrace).toMatchObject({ request_id: managedRequestId });
-    expect(Number(managedTrace.server_observed_execution_count ?? 0)).toBeGreaterThanOrEqual(1);
-    expect(Number(managedTrace.receipt_count ?? 0)).toBeGreaterThanOrEqual(1);
-    expect(String(managedTrace.request_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
-    expect(String(managedTrace.provider_response_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
-    const managedAuditIds = Array.isArray(managed.agent_supervisor?.managed_audit_ids)
-      ? managed.agent_supervisor.managed_audit_ids.map((value) => String(value)).filter(Boolean)
-      : [];
-    expect(managedAuditIds.length).toBeGreaterThan(0);
-    const receiptResponse = await page.request.get(
-      `/api/runtime/executions/${encodeURIComponent(managedAuditIds[0])}`,
-      {
-        headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
-      }
-    );
-    expect(receiptResponse.status()).toBe(200);
-    const receiptBody = (await receiptResponse.json()) as {
-      audit_id?: string;
-      receipt?: {
+      );
+      expect(managedTraceResponse.status()).toBe(200);
+      const managedTrace = (await managedTraceResponse.json()) as {
+        request_id?: string;
+        server_observed_execution_count?: number;
+        receipt_count?: number;
+        request_hash?: string;
+        provider_response_hash?: string;
+      };
+      expect(managedTrace).toMatchObject({ request_id: managedRequestId });
+      expect(Number(managedTrace.server_observed_execution_count ?? 0)).toBeGreaterThanOrEqual(1);
+      expect(Number(managedTrace.receipt_count ?? 0)).toBeGreaterThanOrEqual(1);
+      expect(String(managedTrace.request_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+      expect(String(managedTrace.provider_response_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+      const managedAuditIds = Array.isArray(managed.agent_supervisor?.managed_audit_ids)
+        ? managed.agent_supervisor.managed_audit_ids.map((value) => String(value)).filter(Boolean)
+        : [];
+      expect(managedAuditIds.length).toBeGreaterThan(0);
+      const receiptResponse = await page.request.get(
+        `/api/runtime/executions/${encodeURIComponent(managedAuditIds[0])}`,
+        { headers: adminHeaders }
+      );
+      expect(receiptResponse.status()).toBe(200);
+      const receiptBody = (await receiptResponse.json()) as {
         audit_id?: string;
-        status?: string;
-        execution_evidence?: string;
-        execution_observed_by_server?: boolean;
-        receipt_hash?: string;
-        receipt_signature?: string;
-        result_hash?: string;
-      } | null;
-    };
-    expect(receiptBody.audit_id).toBe(managedAuditIds[0]);
-    expect(receiptBody.receipt).toMatchObject({
-      audit_id: managedAuditIds[0],
-      status: 'completed',
-      execution_evidence: 'server-observed',
-      execution_observed_by_server: true
-    });
-    expect(String(receiptBody.receipt?.receipt_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
-    expect(String(receiptBody.receipt?.result_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
-    expect(String(receiptBody.receipt?.receipt_signature ?? '')).not.toBe('');
-    const discover = await mcpRequest(page, 'server/discover');
-    expect(discover.status()).toBe(200);
-    expect((await discover.json()) as Record<string, unknown>).toHaveProperty('result');
+        receipt?: {
+          audit_id?: string;
+          status?: string;
+          execution_evidence?: string;
+          execution_observed_by_server?: boolean;
+          receipt_hash?: string;
+          receipt_signature?: string;
+          result_hash?: string;
+        } | null;
+      };
+      expect(receiptBody.audit_id).toBe(managedAuditIds[0]);
+      expect(receiptBody.receipt).toMatchObject({
+        audit_id: managedAuditIds[0],
+        status: 'completed',
+        execution_evidence: 'server-observed',
+        execution_observed_by_server: true
+      });
+      expect(String(receiptBody.receipt?.receipt_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+      expect(String(receiptBody.receipt?.result_hash ?? '')).toMatch(/^[0-9a-f]{64}$/i);
+      expect(String(receiptBody.receipt?.receipt_signature ?? '')).not.toBe('');
+      const mcpSession = `mcp-e2e-${agentId}`;
+      const discover = await mcpRequest(page, 'server/discover', {}, agentToken, mcpSession);
+      expect(discover.status()).toBe(200);
+      expect((await discover.json()) as Record<string, unknown>).toHaveProperty('result');
 
-    const toolsList = await mcpRequest(page, 'tools/list');
-    expect(toolsList.status()).toBe(200);
-    const toolsBody = (await toolsList.json()) as { result?: { tools?: unknown[] } };
-    expect(Array.isArray(toolsBody.result?.tools)).toBe(true);
-    const inputRequired = await mcpRequest(page, 'tools/call', {
-      name: 'file.read',
-      arguments: { path: 'public/项目说明.md' }
-    });
-    expect(inputRequired.status()).toBe(200);
-    expect(inputRequired.headers()['content-type']).toMatch(/application\/json|text\/event-stream/);
-    const mcpBody = await inputRequired.text();
-    expect(mcpBody).toMatch(/input_required|resultType|jsonrpc/);
+      const toolsList = await mcpRequest(page, 'tools/list', {}, agentToken, mcpSession);
+      expect(toolsList.status()).toBe(200);
+      const toolsBody = (await toolsList.json()) as { result?: { tools?: unknown[] } };
+      expect(Array.isArray(toolsBody.result?.tools)).toBe(true);
+      const inputRequired = await mcpRequest(
+        page,
+        'tools/call',
+        { name: 'file.read', arguments: { path: 'public/项目说明.md' } },
+        agentToken,
+        mcpSession
+      );
+      expect(inputRequired.status()).toBe(200);
+      expect(inputRequired.headers()['content-type']).toMatch(/application\/json|text\/event-stream/);
+      const mcpBody = await inputRequired.text();
+      expect(mcpBody).toMatch(/input_required|resultType|jsonrpc/);
+    } finally {
+      if (originalSettings) {
+        const restored = await page.request.post('/api/policies/publish', {
+          headers: adminHeaders,
+          data: { settings: originalSettings, comment: 'E2E 恢复策略基线' }
+        });
+        expect(restored.status()).toBe(200);
+      }
+      if (agentToken) {
+        const revoked = await page.request.post(`/api/agents/${encodeURIComponent(agentId)}/revoke`, {
+          headers: adminHeaders
+        });
+        expect([200, 404]).toContain(revoked.status());
+      }
+    }
   });
 
   test('风险事件可在正式页面批准，并由原始 Agent 领取后提交完成回执', async ({ page }) => {
     await login(page);
+    const agentId = `e2e-approval-${Date.now()}`;
+    const adminHeaders = { Authorization: `Bearer ${ADMIN_TOKEN}` };
+    let agentToken = '';
+    let originalSettings: Record<string, unknown> | null = null;
 
-    const toolCall = {
-      tool: 'mail.send',
-      arguments: {
-        to: 'external-review@example.net',
-        subject: 'Operational approval workflow',
-        body: 'Controlled operational review fixture'
-      }
-    };
-    const result = await sendGatewayRequest(page, {
-      model: 'e2e-fixture-model',
-      messages: [{ role: 'user', content: 'Run the approval workflow for this operational request.' }],
-      tools: [
-        {
-          type: 'function',
-          function: {
-            name: 'mail_send',
-            description: 'Send a reviewed operational notification.',
-            parameters: {
-              type: 'object',
-              properties: {
-                to: { type: 'string' },
-                subject: { type: 'string' },
-                body: { type: 'string' }
-              },
-              required: ['to', 'subject', 'body'],
-              additionalProperties: false
+    try {
+      const createdResponse = await page.request.post('/api/agents', {
+        headers: adminHeaders,
+        data: { agent_id: agentId, display_name: 'E2E Approval Agent' }
+      });
+      expect(createdResponse.status()).toBe(200);
+      agentToken = String(((await createdResponse.json()) as { token?: string }).token ?? '');
+      expect(agentToken).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+
+      const policyResponse = await page.request.get('/api/policy_config', { headers: adminHeaders });
+      expect(policyResponse.status()).toBe(200);
+      const policyConfig = (await policyResponse.json()) as { settings: Record<string, unknown> };
+      originalSettings = policyConfig.settings;
+      const map = (key: string) => ({
+        ...((policyConfig.settings[key] as Record<string, unknown> | undefined) ?? {})
+      });
+      const approvalSettings = {
+        ...policyConfig.settings,
+        require_agent_capability_registration: true,
+        require_agent_model_registration: true,
+        require_agent_context_registration: true,
+        agent_tool_allowlists: { ...map('agent_tool_allowlists'), [agentId]: ['mail.send'] },
+        agent_api_allowlists: { ...map('agent_api_allowlists'), [agentId]: [] },
+        agent_model_allowlists: { ...map('agent_model_allowlists'), [agentId]: ['e2e-fixture-model'] },
+        agent_context_allowlists: {
+          ...map('agent_context_allowlists'),
+          [agentId]: { resources: [], resource_templates: [], prompts: [] }
+        }
+      };
+      const published = await page.request.post('/api/policies/publish', {
+        headers: adminHeaders,
+        data: { settings: approvalSettings, comment: 'E2E 审批 Agent 边界' }
+      });
+      expect(published.status()).toBe(200);
+
+      const toolCall = {
+        tool: 'mail.send',
+        arguments: {
+          to: 'external-review@example.net',
+          subject: 'Operational approval workflow',
+          body: 'Controlled operational review fixture'
+        }
+      };
+      const result = await sendGatewayRequest(page, {
+        model: 'e2e-fixture-model',
+        messages: [{ role: 'user', content: 'Run the approval workflow for this operational request.' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'mail_send',
+              description: 'Send a reviewed operational notification.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  to: { type: 'string' },
+                  subject: { type: 'string' },
+                  body: { type: 'string' }
+                },
+                required: ['to', 'subject', 'body'],
+                additionalProperties: false
+              }
             }
           }
+        ],
+        tool_choice: 'auto',
+        agent_supervisor: { agent_id: agentId }
+      });
+      expect(result.agent_supervisor?.decision).toBe('询问');
+      const requestId = String(result.agent_supervisor?.request_id ?? '');
+      const auditId = String(result.agent_supervisor?.audit_id ?? '');
+      expect(requestId).not.toBe('');
+      expect(auditId).not.toBe('');
+
+      await page.getByRole('menuitem', { name: '事件' }).click();
+      await expect(page.getByRole('heading', { name: '安全事件', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: new RegExp(requestId) })).toBeVisible();
+      await page.getByRole('button', { name: new RegExp(requestId) }).click();
+      await page.getByRole('button', { name: '处理人工复核' }).click();
+
+      await expect(page.getByRole('tab', { name: '待人工复核（1）' })).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByText(new RegExp(`审计 ID：${auditId}`))).toBeVisible();
+      await page.getByRole('button', { name: '批准恢复' }).click();
+      await expect(page.getByText('批准后允许 Agent 恢复执行？')).toBeVisible();
+      await page.getByRole('button', { name: /确\s*认/ }).click();
+      await expect(page.getByText('等待Agent恢复')).toBeVisible();
+
+      const inventory = await page.request.get('/api/approvals?status=全部&scope=operational&limit=100', {
+        headers: adminHeaders
+      });
+      expect(inventory.status()).toBe(200);
+      const inventoryBody = (await inventory.json()) as {
+        reviews?: Array<{ id?: string; audit_id?: string; status?: string }>;
+      };
+      const review = inventoryBody.reviews?.find((item) => item.audit_id === auditId);
+      expect(review?.status).toBe('已批准');
+      const reviewId = String(review?.id ?? '');
+      expect(reviewId).not.toBe('');
+
+      const executorHeaders = { Authorization: `Bearer ${agentToken}` };
+      const claim = await page.request.post(`/api/approvals/${encodeURIComponent(reviewId)}/claim`, {
+        headers: executorHeaders,
+        data: { agent_id: agentId, tool_call: toolCall }
+      });
+      expect(claim.status()).toBe(200);
+      const claimBody = (await claim.json()) as { granted?: boolean; claim_id?: string };
+      expect(claimBody.granted).toBe(true);
+      const claimId = String(claimBody.claim_id ?? '');
+      expect(claimId).not.toBe('');
+
+      const complete = await page.request.post(`/api/approvals/${encodeURIComponent(reviewId)}/complete`, {
+        headers: executorHeaders,
+        data: {
+          agent_id: agentId,
+          claim_id: claimId,
+          succeeded: true,
+          result_hash: 'e2e-approved-result-hash'
         }
-      ],
-      tool_choice: 'auto',
-      agent_supervisor: { agent_id: 'e2e-agent' }
-    });
-    expect(result.agent_supervisor?.decision).toBe('询问');
-    const requestId = String(result.agent_supervisor?.request_id ?? '');
-    const auditId = String(result.agent_supervisor?.audit_id ?? '');
-    expect(requestId).not.toBe('');
-    expect(auditId).not.toBe('');
+      });
+      expect(complete.status()).toBe(200);
 
-    await page.getByRole('menuitem', { name: '事件' }).click();
-    await expect(page.getByRole('heading', { name: '安全事件', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: new RegExp(requestId) })).toBeVisible();
-    await page.getByRole('button', { name: new RegExp(requestId) }).click();
-    await page.getByRole('button', { name: '处理人工复核' }).click();
+      await expect(page.getByText('工具已执行')).toBeVisible();
+      await expect(page.getByText(/result e2e-approved-res/)).toBeVisible();
 
-    await expect(page.getByRole('tab', { name: '待人工复核（1）' })).toHaveAttribute('aria-selected', 'true');
-    await expect(page.getByText(new RegExp(`审计 ID：${auditId}`))).toBeVisible();
-    await page.getByRole('button', { name: '批准恢复' }).click();
-    await expect(page.getByText('批准后允许 Agent 恢复执行？')).toBeVisible();
-    await page.getByRole('button', { name: /确\s*认/ }).click();
-    await expect(page.getByText('等待Agent恢复')).toBeVisible();
+      const evidenceResponse = await page.request.post(`/api/evidence/${encodeURIComponent(auditId)}/verify`, {
+        headers: adminHeaders
+      });
+      expect(evidenceResponse.status()).toBe(200);
+      expect((await evidenceResponse.json()) as { evidence_status?: string }).toMatchObject({
+        evidence_status: 'verified'
+      });
 
-    const inventory = await page.request.get('/api/approvals?status=全部&scope=operational&limit=100', {
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
-    });
-    expect(inventory.status()).toBe(200);
-    const inventoryBody = (await inventory.json()) as {
-      reviews?: Array<{ id?: string; audit_id?: string; status?: string }>;
-    };
-    const review = inventoryBody.reviews?.find((item) => item.audit_id === auditId);
-    expect(review?.status).toBe('已批准');
-    const reviewId = String(review?.id ?? '');
-    expect(reviewId).not.toBe('');
-
-    const executorHeaders = { Authorization: `Bearer ${EXECUTOR_TOKEN}` };
-    const claim = await page.request.post(`/api/approvals/${encodeURIComponent(reviewId)}/claim`, {
-      headers: executorHeaders,
-      data: { agent_id: 'e2e-agent', tool_call: toolCall }
-    });
-    expect(claim.status()).toBe(200);
-    const claimBody = (await claim.json()) as { granted?: boolean; claim_id?: string };
-    expect(claimBody.granted).toBe(true);
-    const claimId = String(claimBody.claim_id ?? '');
-    expect(claimId).not.toBe('');
-
-    const complete = await page.request.post(`/api/approvals/${encodeURIComponent(reviewId)}/complete`, {
-      headers: executorHeaders,
-      data: {
-        agent_id: 'e2e-agent',
-        claim_id: claimId,
-        succeeded: true,
-        result_hash: 'e2e-approved-result-hash'
+      await page.getByRole('tab', { name: /执行审计/ }).click();
+      const auditSearch = page.getByPlaceholder('搜索审计编号、工具、策略、原因...');
+      await auditSearch.fill(auditId);
+      await expect(page.getByText('已验证')).toBeVisible();
+      await expect(page.getByRole('button', { name: '核验证据' })).toHaveCount(0);
+    } finally {
+      if (originalSettings) {
+        const restored = await page.request.post('/api/policies/publish', {
+          headers: adminHeaders,
+          data: { settings: originalSettings, comment: 'E2E 恢复策略基线' }
+        });
+        expect(restored.status()).toBe(200);
       }
-    });
-    expect(complete.status()).toBe(200);
-
-    await expect(page.getByText('工具已执行')).toBeVisible();
-    await expect(page.getByText(/result e2e-approved-res/)).toBeVisible();
-
-    const evidenceResponse = await page.request.post(`/api/evidence/${encodeURIComponent(auditId)}/verify`, {
-      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` }
-    });
-    expect(evidenceResponse.status()).toBe(200);
-    expect((await evidenceResponse.json()) as { evidence_status?: string }).toMatchObject({
-      evidence_status: 'verified'
-    });
-
-    await page.getByRole('tab', { name: /执行审计/ }).click();
-    const auditSearch = page.getByPlaceholder('搜索审计编号、工具、策略、原因...');
-    await auditSearch.fill(auditId);
-    await expect(page.getByText('已验证')).toBeVisible();
-    await expect(page.getByRole('button', { name: '核验证据' })).toHaveCount(0);
+      if (agentToken) {
+        const revoked = await page.request.post(`/api/agents/${encodeURIComponent(agentId)}/revoke`, {
+          headers: adminHeaders
+        });
+        expect([200, 404]).toContain(revoked.status());
+      }
+    }
   });
 
   test('三个生产页面可交互导航，移动端不产生横向溢出', async ({ page }) => {
