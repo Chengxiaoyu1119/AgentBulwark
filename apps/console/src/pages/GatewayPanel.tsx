@@ -18,6 +18,7 @@ import {
 import { Maximize2 } from 'lucide-react';
 import type { OperationalOverview } from '../types';
 import type { OperationalConnection } from '../app/useAppData';
+import type { RuntimeEventConnection } from '../app/runtimeEventConnection';
 import { OperationalDashboard } from './OperationalDashboard';
 
 export function GatewayPanel({
@@ -26,7 +27,8 @@ export function GatewayPanel({
   onOpenSettings,
   onOpenEvents,
   onOpenSituation,
-  onRefresh
+  onRefresh,
+  liveConnection: externalLiveConnection
 }: {
   overview?: OperationalOverview;
   connection?: OperationalConnection;
@@ -34,25 +36,34 @@ export function GatewayPanel({
   onOpenEvents?: (requestId?: string) => void;
   onOpenSituation?: () => void;
   onRefresh?: () => Promise<unknown>;
+  liveConnection?: RuntimeEventConnection;
 }) {
-  const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
-  const [runtimeStatusError, setRuntimeStatusError] = useState('');
+  const [fallbackRuntimeStatus, setFallbackRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [fallbackRuntimeStatusError, setFallbackRuntimeStatusError] = useState('');
   const [channel, setChannel] = useState<'openai' | 'mcp'>('openai');
-  const [traceRefreshSignal, setTraceRefreshSignal] = useState(0);
 
   useEffect(() => {
+    if (overview?.runtime_status !== undefined) return undefined;
     let active = true;
     void request<RuntimeStatus>('/api/runtime_status', undefined, { retry: 0, timeoutMs: 5000 })
       .then((status) => {
-        if (active) setRuntimeStatus(status);
+        if (active) setFallbackRuntimeStatus(status);
       })
       .catch((error) => {
-        if (active) setRuntimeStatusError(safeUiErrorSummary(error, '运行状态读取失败。'));
+        if (active) setFallbackRuntimeStatusError(safeUiErrorSummary(error, '运行状态读取失败。'));
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [overview?.runtime_status]);
+
+  const runtimeStatus = overview?.runtime_status !== undefined ? overview.runtime_status : fallbackRuntimeStatus;
+  const runtimeStatusError =
+    overview?.runtime_status !== undefined
+      ? overview.source_errors?.some((item) => item.source === 'runtime_status')
+        ? '运行状态来源读取失败。'
+        : ''
+      : fallbackRuntimeStatusError;
 
   const readiness = useMemo(() => {
     const provider = Boolean(
@@ -74,9 +85,12 @@ export function GatewayPanel({
   const boundaryColor = runtimeStatus === null ? 'default' : ready ? 'green' : 'warning';
   const refreshOperationalData = useCallback(async () => {
     await onRefresh?.();
-    setTraceRefreshSignal((value) => value + 1);
   }, [onRefresh]);
-  const liveConnection = useRuntimeEventRefresh(refreshOperationalData, { debounceMs: 400 });
+  const ownLiveConnection = useRuntimeEventRefresh(refreshOperationalData, {
+    enabled: !externalLiveConnection,
+    debounceMs: 400
+  });
+  const liveConnection = externalLiveConnection ?? ownLiveConnection;
 
   return (
     <div className="zh-product-page">
@@ -123,7 +137,8 @@ export function GatewayPanel({
             label: '模型 API',
             children: (
               <GatewayTracePanel
-                refreshSignal={`${runtimeStatus?.gateway_evidence?.started_at ?? ''}:${traceRefreshSignal}`}
+                refreshSignal={`${overview?.generated_at ?? ''}:${runtimeStatus?.gateway_evidence?.started_at ?? ''}`}
+                timeWindow={overview?.window}
                 liveConnection={liveConnection}
               />
             )

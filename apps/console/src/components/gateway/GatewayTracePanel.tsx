@@ -26,6 +26,7 @@ import {
 
 type Props = {
   refreshSignal?: string;
+  timeWindow?: { start_at: string; end_at: string };
   onOpenApproval?: (auditId: string) => void;
   mode?: 'traffic' | 'events';
   pendingApprovalCount?: number | string;
@@ -34,6 +35,7 @@ type Props = {
 
 export function GatewayTracePanel({
   refreshSignal = '',
+  timeWindow,
   onOpenApproval,
   mode = 'traffic',
   pendingApprovalCount = '—',
@@ -55,7 +57,10 @@ export function GatewayTracePanel({
     setLoading(true);
     setListError('');
     try {
-      const nextIndex = await request<GatewayTraceIndex>('/api/gateway/traces?limit=50', undefined, {
+      const query = new URLSearchParams({ limit: '50' });
+      if (timeWindow?.start_at) query.set('start_at', timeWindow.start_at);
+      if (timeWindow?.end_at) query.set('end_at', timeWindow.end_at);
+      const nextIndex = await request<GatewayTraceIndex>(`/api/gateway/traces?${query.toString()}`, undefined, {
         retry: 0,
         timeoutMs: 8_000
       });
@@ -73,7 +78,7 @@ export function GatewayTracePanel({
     } finally {
       if (sequence === traceRequestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [timeWindow]);
 
   // Keep the event loop alive even when the first snapshot fails. The
   // connection owner already stops permanently for auth/permission failures

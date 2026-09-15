@@ -137,6 +137,29 @@ class GatewayTraceTests(TestCase):
         self.assertEqual(detail.json()["request_id"], "chatcmpl-trace-1")
         self.assertNotIn("arguments", json.dumps(detail.json(), ensure_ascii=False))
 
+    def test_trace_endpoint_uses_the_requested_operational_window(self) -> None:
+        rows = [_row()]
+        with (
+            patch.dict(os.environ, {"AGENT_SUPERVISOR_AUTH_DISABLED": "true"}, clear=False),
+            patch("apps.api.agent_supervisor.routers.proxy.latest_gateway_audit_logs") as latest,
+            patch("apps.api.agent_supervisor.routers.proxy.operational_audit_logs", return_value=rows) as windowed,
+            TestClient(app) as client,
+        ):
+            response = client.get(
+                "/api/gateway/traces?limit=10&start_at=2026-08-18T09:00:00%2B00:00&end_at=2026-08-18T11:00:00%2B00:00"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        latest.assert_not_called()
+        windowed.assert_called_once_with(
+            start_at="2026-08-18T09:00:00+00:00",
+            end_at="2026-08-18T11:00:00+00:00",
+            source_app="openai-compatible-proxy",
+            agent_id="",
+            session_id="",
+            limit=640,
+        )
+
     def test_executor_trace_scope_is_bound_to_authenticated_agent(self) -> None:
         rows = [_row(agent_id="agent-a"), _row(request_id="chatcmpl-trace-2", agent_id="agent-b")]
 

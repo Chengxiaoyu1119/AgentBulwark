@@ -1,5 +1,6 @@
 import type { ModelStatus } from './common';
 import type { AlertItem, AuditLog } from './runtime';
+import type { RuntimeStatus } from '../components/gateway/GatewayRuntimeStatus';
 
 export type OperationalDataStatus = 'live' | 'empty' | 'stale' | 'degraded' | string;
 
@@ -83,6 +84,7 @@ export interface Overview {
   activity?: OperationalActivity[];
   action_queue?: OperationalAction[];
   readiness?: Record<string, OperationalReadinessItem>;
+  runtime_status?: RuntimeStatus | null;
 }
 
 export type OperationalOverview = Overview;

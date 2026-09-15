@@ -2,6 +2,7 @@ import { lazy, useCallback, useEffect, useState } from 'react';
 import { AuthGate } from './app/AuthGate';
 import { AppErrorBoundary } from './app/AppErrorBoundary';
 import { AppLoading, AppShell } from './app/AppShell';
+import { useRuntimeEventRefresh } from './app/useRuntimeEventRefresh';
 import { type OperationalConnection, useAppData } from './app/useAppData';
 import { isPageKey, pageFromHash, pageToHash, type ProductPageKey } from './app/navigation';
 import { readThemePreference, saveThemePreference, type AppTheme } from './app/themePreference';
@@ -33,6 +34,12 @@ function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSig
   const [theme, setTheme] = useState<AppTheme>(() => readThemePreference());
   const [drawerVisible, setDrawerVisible] = useState(false);
   const { overview, apiNotice, connection, refreshing, refresh } = useAppData(page);
+  const [runtimeRevision, setRuntimeRevision] = useState(0);
+  const refreshLiveData = useCallback(async () => {
+    await refresh();
+    setRuntimeRevision((value) => value + 1);
+  }, [refresh]);
+  const liveConnection = useRuntimeEventRefresh(refreshLiveData, { debounceMs: 400 });
 
   const setPage = useCallback((nextPage: ProductPageKey) => {
     setPageState(nextPage);
@@ -114,7 +121,7 @@ function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSig
               onExit={exitSituation}
               onOpenEvents={openEvents}
               onOpenSettings={() => setPage('settings')}
-              onRefresh={refresh}
+              liveConnection={liveConnection}
             />
           ) : null}
           {page === 'protection' && !situation ? (
@@ -125,9 +132,16 @@ function Workspace({ authContext, onSignOut }: { authContext: AuthContext; onSig
               onOpenEvents={openEvents}
               onOpenSituation={openSituation}
               onRefresh={refresh}
+              liveConnection={liveConnection}
             />
           ) : null}
-          {page === 'events' && <SecurityEventsPanel authContext={authContext} />}
+          {page === 'events' && (
+            <SecurityEventsPanel
+              authContext={authContext}
+              liveConnection={liveConnection}
+              refreshSignal={String(runtimeRevision)}
+            />
+          )}
           {page === 'settings' && <SettingsPanel overview={overview} refresh={refresh} />}
         </>
       )}

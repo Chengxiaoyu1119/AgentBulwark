@@ -33,19 +33,31 @@ export function useRuntimeEventRefresh(
 
     const lifetime = new AbortController();
     let refreshTimer: number | undefined;
+    let refreshInFlight = false;
+    let refreshDirty = false;
+    const runRefresh = () => {
+      refreshTimer = undefined;
+      if (lifetime.signal.aborted || refreshInFlight) return;
+      refreshInFlight = true;
+      refreshDirty = false;
+      try {
+        void Promise.resolve(refreshRef.current())
+          .catch(() => undefined)
+          .finally(() => {
+            refreshInFlight = false;
+            if (refreshDirty && !lifetime.signal.aborted) scheduleRefresh();
+          });
+      } catch {
+        refreshInFlight = false;
+        // The owner renders refresh failures next to its data surface. The
+        // connection loop must stay alive when a synchronous refresh fails.
+      }
+    };
     const scheduleRefresh = () => {
-      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(() => {
-        refreshTimer = undefined;
-        if (!lifetime.signal.aborted) {
-          try {
-            void Promise.resolve(refreshRef.current()).catch(() => undefined);
-          } catch {
-            // The owner renders refresh failures next to its data surface. The
-            // connection loop must stay alive when a synchronous refresh fails.
-          }
-        }
-      }, debounceMs);
+      if (lifetime.signal.aborted) return;
+      refreshDirty = true;
+      if (refreshInFlight || refreshTimer !== undefined) return;
+      refreshTimer = window.setTimeout(runRefresh, debounceMs);
     };
     const onEvent = (_event: RuntimeEvent) => scheduleRefresh();
 
@@ -64,6 +76,7 @@ export function useRuntimeEventRefresh(
     return () => {
       lifetime.abort();
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      refreshTimer = undefined;
     };
   }, [debounceMs, enabled, refreshOnConnect, subscribe]);
 

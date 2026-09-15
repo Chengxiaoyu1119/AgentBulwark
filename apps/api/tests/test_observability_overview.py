@@ -32,7 +32,7 @@ class OperationalOverviewTests(TestCase):
         ]
         with (
             patch(
-                "apps.api.agent_supervisor.domains.runtime.operational_overview.latest_operational_audit_logs",
+                "apps.api.agent_supervisor.domains.runtime.operational_overview.operational_audit_logs",
                 return_value=rows,
             ),
             patch(
@@ -71,7 +71,7 @@ class OperationalOverviewTests(TestCase):
 
     def test_storage_failure_is_explicitly_degraded_instead_of_zeroing_live_data(self) -> None:
         with patch(
-            "apps.api.agent_supervisor.domains.runtime.operational_overview.latest_operational_audit_logs",
+            "apps.api.agent_supervisor.domains.runtime.operational_overview.operational_audit_logs",
             side_effect=RuntimeError("database unavailable"),
         ):
             result = build_operational_overview()

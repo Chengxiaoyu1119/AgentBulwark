@@ -3,7 +3,6 @@ import {
   LabelTag,
   MetricCard,
   PanelCard,
-  OperationalConnectionBadge,
   RuntimeConnectionBadge,
   UiAlert,
   UiButton,
@@ -44,7 +43,7 @@ function metricValue(value: number | null | undefined) {
 
 export function OperationalDashboard({ overview, connection, liveConnection, onOpenEvents, onOpenSettings }: Props) {
   const summary = overview.summary;
-  const actions = overview.action_queue ?? [];
+  const actions = (overview.action_queue ?? []).filter((action) => action.kind !== 'readiness');
   const activities = overview.activity ?? [];
   const trend = overview.trend ?? [];
   const dataStatus = connection?.stale ? 'stale' : (overview.data_status ?? 'empty');
@@ -53,6 +52,7 @@ export function OperationalDashboard({ overview, connection, liveConnection, onO
   const hasSourceErrors = Boolean(overview.source_errors?.length);
   const lastUpdated = overview.updated_at ? formatTraceTime(overview.updated_at) : '尚未记录真实活动';
   const maxTrendCount = Math.max(...trend.map((item) => item.request_count), 1);
+  const hasTrendActivity = trend.some((item) => item.request_count > 0);
 
   return (
     <div className="zh-page-stack zh-ops-dashboard">
@@ -67,9 +67,6 @@ export function OperationalDashboard({ overview, connection, liveConnection, onO
           </div>
         </div>
         <UiSpace wrap size={8}>
-          <OperationalConnectionBadge
-            connection={connection ?? { status: 'checking', message: '正在检测运营数据。' }}
-          />
           {liveConnection ? <RuntimeConnectionBadge connection={liveConnection} /> : null}
           <LabelTag color={statusMeta.color}>{statusMeta.label}</LabelTag>
           <UiTypography.Text type="secondary" className="zh-text-meta">
@@ -239,20 +236,28 @@ export function OperationalDashboard({ overview, connection, liveConnection, onO
           className="zh-ops-trend-panel"
           extra={<Clock3 size={16} aria-label="时间窗口" />}
         >
-          <div className="zh-ops-trend" aria-label="真实请求时间趋势">
-            {trend.map((bucket) => {
-              const height = Math.min(100, Math.max(0, (bucket.request_count * 100) / maxTrendCount));
-              return (
-                <div
-                  className="zh-ops-trend__bucket"
-                  key={bucket.bucket_start}
-                  title={`${formatTraceTime(bucket.bucket_start)} · ${bucket.request_count} 请求`}
-                >
-                  <span className="zh-ops-trend__bar" style={{ height: `${height}%` }} />
-                </div>
-              );
-            })}
-          </div>
+          {hasTrendActivity ? (
+            <div className="zh-ops-trend" aria-label="真实请求时间趋势">
+              {trend.map((bucket) => {
+                const height = Math.min(100, Math.max(0, (bucket.request_count * 100) / maxTrendCount));
+                return (
+                  <div
+                    className="zh-ops-trend__bucket"
+                    key={bucket.bucket_start}
+                    title={`${formatTraceTime(bucket.bucket_start)} · ${bucket.request_count} 请求`}
+                  >
+                    <span className="zh-ops-trend__bar" style={{ height: `${height}%` }} />
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <UiDataState
+              status="empty"
+              title="当前窗口暂无真实请求"
+              description="收到第一条受控请求后，趋势会从真实记录生成。"
+            />
+          )}
           <div className="zh-action-row zh-ops-trend__legend">
             <UiTypography.Text type="secondary">
               {overview.window?.start_at ? formatTraceTime(overview.window.start_at) : '窗口开始'}

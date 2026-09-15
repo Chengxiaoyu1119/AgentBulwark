@@ -38,6 +38,7 @@ from apps.api.agent_supervisor.storage.data import get_policy_settings
 from apps.api.agent_supervisor.storage.database import (
     latest_gateway_audit_logs,
     load_gateway_request_audit_events,
+    operational_audit_logs,
 )
 
 router = APIRouter()
@@ -58,6 +59,8 @@ def _gateway_trace_agent_scope(role: str, authenticated_agent_id: str | None) ->
 def gateway_traces(
     limit: int = Query(50, ge=1, le=100),
     session_id: str = Query("", max_length=160),
+    start_at: str = Query("", max_length=64),
+    end_at: str = Query("", max_length=64),
     role: str = Depends(current_security_role),
     authenticated_agent_id: str | None = Depends(current_agent_identity),
 ) -> dict[str, Any]:
@@ -69,11 +72,21 @@ def gateway_traces(
     """
 
     agent_scope = _gateway_trace_agent_scope(role, authenticated_agent_id)
-    rows = latest_gateway_audit_logs(
-        max(200, min(limit * 64, 2000)),
-        agent_id=agent_scope,
-        session_id=session_id.strip(),
-    )
+    if start_at.strip() or end_at.strip():
+        rows = operational_audit_logs(
+            start_at=start_at.strip(),
+            end_at=end_at.strip(),
+            source_app="openai-compatible-proxy",
+            agent_id=agent_scope,
+            session_id=session_id.strip(),
+            limit=max(200, min(limit * 64, 2000)),
+        )
+    else:
+        rows = latest_gateway_audit_logs(
+            max(200, min(limit * 64, 2000)),
+            agent_id=agent_scope,
+            session_id=session_id.strip(),
+        )
     return build_gateway_trace_index(rows, limit=limit)
 
 

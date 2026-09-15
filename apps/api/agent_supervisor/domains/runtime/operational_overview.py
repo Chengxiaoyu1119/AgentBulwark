@@ -10,7 +10,7 @@ from apps.api.agent_supervisor.domains.governance.approvals import list_approval
 from apps.api.agent_supervisor.domains.runtime.execution_receipts import list_execution_receipts
 from apps.api.agent_supervisor.domains.runtime.gateway_trace import build_gateway_trace_index
 from apps.api.agent_supervisor.domains.runtime.runtime_status import build_runtime_status
-from apps.api.agent_supervisor.storage.database import latest_operational_audit_logs
+from apps.api.agent_supervisor.storage.database import operational_audit_logs
 
 OPERATIONAL_SOURCES = {"openai-compatible-proxy", "mcp-gateway"}
 CONTROLLED_DECISIONS = {"拒绝", "询问", "隔离"}
@@ -25,7 +25,11 @@ def build_operational_overview(window: str = "1h", role: str = "observer") -> di
     source_errors: list[dict[str, str]] = []
 
     try:
-        audit_logs = latest_operational_audit_logs(2000)
+        audit_logs = operational_audit_logs(
+            start_at=start.isoformat(),
+            end_at=now.isoformat(),
+            limit=2000,
+        )
     except Exception as exc:  # pragma: no cover - exercised through storage failure integration tests
         audit_logs = []
         source_errors.append({"source": "audit_logs", "error": type(exc).__name__})
@@ -46,7 +50,6 @@ def build_operational_overview(window: str = "1h", role: str = "observer") -> di
         for item in approval_inventory.get("reviews", [])
         if isinstance(item, dict)
         and str(item.get("source_app") or "") in OPERATIONAL_SOURCES
-        and _in_window(item.get("created_at"), start, now)
     ]
     pending_reviews = [item for item in operational_reviews if item.get("status") == "待复核"]
 
@@ -65,13 +68,13 @@ def build_operational_overview(window: str = "1h", role: str = "observer") -> di
     unknown_claims = [
         item
         for item in execution_inventory.get("gateway_execution_claims", [])
-        if isinstance(item, dict) and item.get("status") == "unknown" and _in_window(item.get("created_at"), start, now)
+        if isinstance(item, dict) and item.get("status") == "unknown"
     ]
 
     try:
         runtime_status = build_runtime_status(expose_provider_endpoints=role in {"analyst", "admin"})
     except Exception as exc:  # pragma: no cover - exercised through runtime failure integration tests
-        runtime_status = {}
+        runtime_status = None
         source_errors.append({"source": "runtime_status", "error": type(exc).__name__})
 
     gateway_rows = [row for row in window_logs if row.get("source_app") == "openai-compatible-proxy"]
@@ -154,7 +157,6 @@ def build_operational_overview(window: str = "1h", role: str = "observer") -> di
         "generated_at": now.isoformat(),
         "updated_at": max(
             [str(record.get("last_seen") or "") for record in records]
-            + [str(item.get("created_at") or "") for item in operational_reviews]
             + [str(item.get("created_at") or "") for item in receipts],
             default="",
         ),
@@ -174,6 +176,7 @@ def build_operational_overview(window: str = "1h", role: str = "observer") -> di
         "activity": activities,
         "action_queue": action_queue,
         "readiness": readiness,
+        "runtime_status": runtime_status,
         "models": models,
         "recent_runs": [],
         "alerts": [],
@@ -377,7 +380,7 @@ def _action_queue(
     return actions[:8]
 
 
-def _readiness(status: dict[str, Any], *, available: bool = True) -> dict[str, dict[str, str]]:
+def _readiness(status: dict[str, Any] | None, *, available: bool = True) -> dict[str, dict[str, str]]:
     if not available:
         return {
             key: {

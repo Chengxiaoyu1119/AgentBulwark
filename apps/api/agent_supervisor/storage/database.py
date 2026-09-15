@@ -1179,6 +1179,77 @@ def latest_operational_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
     return enrich_audit_logs_with_execution_receipts(logs)
 
 
+def operational_audit_logs(
+    *,
+    start_at: str = "",
+    end_at: str = "",
+    request_id: str = "",
+    source_app: str = "",
+    agent_id: str = "",
+    session_id: str = "",
+    limit: int = 2000,
+) -> list[dict[str, Any]]:
+    """Read complete request groups, never a silently truncated recent-row sample.
+
+    Traffic is attributed to its first audit timestamp. Later stages cannot
+    move an old request into today's traffic or split an MCP intent/result pair.
+    SQL selects the relevant groups before payload decoding; raw evidence stays
+    immutable. The limit applies to request groups, not individual stages.
+    """
+    predicates = ["json_valid(payload)", "json_extract(payload, '$.source_app') IN (?, ?)"]
+    params: list[Any] = list(OPERATIONAL_SOURCE_APPS)
+    for value, expression in (
+        (source_app, "json_extract(payload, '$.source_app')"),
+        (agent_id, "json_extract(payload, '$.agent_id')"),
+        (session_id, "COALESCE(json_extract(payload, '$.stage_context.session_id'), json_extract(payload, '$.conversation_id'))"),
+    ):
+        if value:
+            predicates.append(f"{expression} = ?")
+            params.append(value)
+    selection = []
+    if start_at:
+        selection.append("first_at >= julianday(?)")
+        params.append(start_at)
+    if end_at:
+        selection.append("first_at <= julianday(?)")
+        params.append(end_at)
+    if request_id:
+        selection.append("request_key = ?")
+        params.append(request_id)
+    bounded_limit = _bounded_limit(limit, default=2000, maximum=5000)
+    query = f"""
+        WITH scoped AS (
+            SELECT id, payload, json_extract(payload, '$.source_app') AS source,
+                   CASE WHEN json_extract(payload, '$.source_app') = 'mcp-gateway'
+                        THEN COALESCE(NULLIF(json_extract(payload, '$.intent_audit_id'), ''),
+                                      NULLIF(json_extract(payload, '$.stage_context.intent_audit_id'), ''), id)
+                        ELSE COALESCE(NULLIF(json_extract(payload, '$.stage_context.request_id'), ''), id)
+                   END AS request_key,
+                   julianday(json_extract(payload, '$.timestamp')) AS audit_at
+            FROM audit_logs WHERE {' AND '.join(predicates)}
+        ), groups AS (
+            SELECT source, request_key, MIN(audit_at) AS first_at
+            FROM scoped GROUP BY source, request_key
+        ), selected AS (
+            SELECT source, request_key FROM groups
+            {'WHERE ' + ' AND '.join(selection) if selection else ''}
+            ORDER BY first_at DESC
+            LIMIT ?
+        )
+        SELECT scoped.payload FROM scoped
+        JOIN selected USING (source, request_key)
+        {"WHERE audit_at <= julianday(?)" if end_at else ""}
+        ORDER BY audit_at, id
+    """
+    params.append(bounded_limit)
+    if end_at:
+        params.append(end_at)
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+    logs = [payload for row in rows if (payload := _decode_json_object(row['payload'])) is not None]
+    return enrich_audit_logs_with_execution_receipts(logs)
+
+
 def load_audit_log(audit_id: str) -> dict[str, Any] | None:
     """Load the original immutable audit payload without response enrichment."""
     with get_connection() as conn:

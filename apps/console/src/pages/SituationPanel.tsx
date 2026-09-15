@@ -4,7 +4,6 @@ import {
   LabelTag,
   MetricCard,
   PanelCard,
-  OperationalConnectionBadge,
   RuntimeConnectionBadge,
   UiAlert,
   UiButton,
@@ -13,7 +12,7 @@ import {
   UiSpace,
   UiTypography
 } from '../components/ui';
-import { useRuntimeEventRefresh } from '../app/useRuntimeEventRefresh';
+import { idleRuntimeEventConnection, type RuntimeEventConnection } from '../app/runtimeEventConnection';
 import type { AppTheme } from '../app/themePreference';
 import type { OperationalConnection } from '../app/useAppData';
 import type { OperationalOverview } from '../types';
@@ -26,7 +25,7 @@ type Props = {
   onExit: () => void;
   onOpenEvents?: (requestId?: string) => void;
   onOpenSettings?: () => void;
-  onRefresh?: () => Promise<unknown>;
+  liveConnection?: RuntimeEventConnection;
 };
 
 export function SituationPanel({
@@ -37,16 +36,11 @@ export function SituationPanel({
   onExit,
   onOpenEvents,
   onOpenSettings,
-  onRefresh
+  liveConnection: externalLiveConnection
 }: Props) {
-  const liveConnection = useRuntimeEventRefresh(
-    async () => {
-      await onRefresh?.();
-    },
-    { debounceMs: 500 }
-  );
+  const liveConnection = externalLiveConnection ?? idleRuntimeEventConnection;
   const summary = overview.summary;
-  const actions = overview.action_queue ?? [];
+  const actions = (overview.action_queue ?? []).filter((action) => action.kind !== 'readiness');
   const activities = overview.activity ?? [];
   const dataStatus = connection.stale ? 'stale' : (overview.data_status ?? 'empty');
   const auditAvailable = !overview.source_errors?.some((item) => item.source === 'audit_logs');
@@ -71,7 +65,6 @@ export function SituationPanel({
         </div>
         <UiSpace wrap size={8}>
           <RuntimeConnectionBadge connection={liveConnection} />
-          <OperationalConnectionBadge connection={connection} />
           <UiButton
             type="text"
             icon={theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}

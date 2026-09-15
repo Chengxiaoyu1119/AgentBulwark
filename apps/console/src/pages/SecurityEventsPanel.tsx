@@ -9,6 +9,7 @@ import { ExecutionAuditWorkspace } from '../components/audit/ExecutionAuditWorks
 import { ExecutionReconciliationPanel } from '../components/audit/ExecutionReconciliationPanel';
 import { useAuditLogViewModel } from '../components/audit/useAuditLogViewModel';
 import { GatewayTracePanel } from '../components/gateway/GatewayTracePanel';
+import type { RuntimeEventConnection } from '../app/runtimeEventConnection';
 import {
   PageHeader,
   RuntimeConnectionBadge,
@@ -22,7 +23,15 @@ import type { AuthContext, AuditLog, ExecutionInventory } from '../types';
 
 type EventTab = 'events' | 'reviews' | 'audit';
 
-export function SecurityEventsPanel({ authContext }: { authContext: AuthContext }) {
+export function SecurityEventsPanel({
+  authContext,
+  liveConnection: externalLiveConnection,
+  refreshSignal = ''
+}: {
+  authContext: AuthContext;
+  liveConnection?: RuntimeEventConnection;
+  refreshSignal?: string;
+}) {
   const [activeTab, setActiveTab] = useState<EventTab>('events');
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,7 +71,8 @@ export function SecurityEventsPanel({ authContext }: { authContext: AuthContext 
     setLoading(false);
   }, [authContext.permissions.can_review_approval]);
 
-  const liveConnection = useRuntimeEventRefresh(loadAuditLogs);
+  const ownLiveConnection = useRuntimeEventRefresh(loadAuditLogs, { enabled: !externalLiveConnection });
+  const liveConnection = externalLiveConnection ?? ownLiveConnection;
 
   const view = useAuditLogViewModel({ logs, refresh: loadAuditLogs });
   const operationalPendingCount = view.latestReviews.filter((review) => review.status === '待复核').length;
@@ -76,7 +86,7 @@ export function SecurityEventsPanel({ authContext }: { authContext: AuthContext 
     return () => {
       cancelled = true;
     };
-  }, [loadAuditLogs]);
+  }, [loadAuditLogs, refreshSignal]);
 
   function openApproval(auditId: string) {
     setFocusedApprovalAuditId(auditId);
@@ -113,6 +123,8 @@ export function SecurityEventsPanel({ authContext }: { authContext: AuthContext 
             children: (
               <GatewayTracePanel
                 mode="events"
+                refreshSignal={refreshSignal}
+                liveConnection={liveConnection}
                 pendingApprovalCount={view.approvalError ? '—' : view.approvalQueue.summary.pending_count}
                 onOpenApproval={openApproval}
               />

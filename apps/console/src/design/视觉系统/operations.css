@@ -855,7 +855,6 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
 .zh-ops-trend__bar {
   display: block;
   width: 100%;
-  min-height: var(--zh-space-1);
   background: var(--ant-color-primary);
   border-radius: var(--zh-radius-compact) var(--zh-radius-compact) var(--zh-space-0) var(--zh-space-0);
   transition: height var(--zh-motion-normal) var(--zh-motion-ease);
