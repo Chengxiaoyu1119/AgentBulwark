@@ -1,6 +1,6 @@
 import { UiDescriptions, UiFlex, UiSpace, UiTypography } from '../ui';
-import { Copy } from 'lucide-react';
-import type { AuditLog } from '@/types';
+import { Copy, ShieldCheck } from 'lucide-react';
+import type { AuditLog, EvidenceVerification } from '@/types';
 import { riskLabel } from '@/utils';
 import { EvidenceCodeBlock, LabelTag, PanelCard, UiAlert, UiBadge, UiButton } from '../ui';
 
@@ -8,9 +8,21 @@ interface AuditLogDetailProps {
   log?: AuditLog;
   copied: boolean;
   onCopy: () => void;
+  evidenceVerification: EvidenceVerification | null;
+  evidenceVerificationLoading: boolean;
+  evidenceVerificationError: string;
+  onVerifyEvidence: () => void;
 }
 
-export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
+export function AuditLogDetail({
+  log,
+  copied,
+  onCopy,
+  evidenceVerification,
+  evidenceVerificationLoading,
+  evidenceVerificationError,
+  onVerifyEvidence
+}: AuditLogDetailProps) {
   if (!log) {
     return <div className="zh-empty-panel zh-empty-panel--large">选择一条记录查看详情。</div>;
   }
@@ -120,6 +132,38 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
         </UiDescriptions.Item>
       </UiDescriptions>
 
+      {evidenceVerificationError ? (
+        <UiAlert
+          type="error"
+          showIcon
+          title="证据核验失败"
+          description={evidenceVerificationError}
+          className="zh-mb-16"
+        />
+      ) : null}
+
+      {evidenceVerification ? (
+        <UiAlert
+          type={
+            evidenceVerification.verification.valid
+              ? 'success'
+              : evidenceVerification.evidence_status === 'pending'
+                ? 'warning'
+                : 'error'
+          }
+          showIcon
+          title={
+            evidenceVerification.verification.valid
+              ? '证据核验通过'
+              : evidenceVerification.evidence_status === 'pending'
+                ? '证据仍待回执'
+                : '证据核验未通过'
+          }
+          description={`核验时间：${evidenceVerification.verified_at.slice(0, 19).replace('T', ' ')}`}
+          className="zh-mb-16"
+        />
+      ) : null}
+
       {!receipt && executionStatus === 'awaiting_receipt' ? (
         <UiTypography.Paragraph type="warning">
           监督器判定已经完成，但外部 Agent
@@ -185,6 +229,9 @@ export function AuditLogDetail({ log, copied, onCopy }: AuditLogDetailProps) {
       {evidenceStatus === 'pending' ? <UiAlert type="warning" showIcon title="证据待回执，当前行动仍需确认。" /> : null}
 
       <UiFlex justify="flex-end" className="zh-detail-actions">
+        <UiButton icon={<ShieldCheck size={16} />} loading={evidenceVerificationLoading} onClick={onVerifyEvidence}>
+          {evidenceVerification ? '重新核验证据' : '核验证据'}
+        </UiButton>
         <UiButton icon={<Copy size={16} />} onClick={onCopy}>
           {copied ? '已复制' : '复制证据'}
         </UiButton>

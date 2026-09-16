@@ -133,6 +133,7 @@ export interface EvidenceVerification {
     audit_signature_valid: boolean;
     audit_signature_required: boolean;
     receipt_present: boolean;
+    receipt_pending?: boolean;
     receipt_valid: boolean;
     receipt_integrity_valid: boolean;
     receipt_binding_valid: boolean;

@@ -823,7 +823,8 @@ test.describe.serial('运营网关黑盒验收', () => {
       const auditSearch = page.getByPlaceholder('搜索审计编号、工具、策略、原因...');
       await auditSearch.fill(auditId);
       await expect(page.getByText('已验证')).toBeVisible();
-      await expect(page.getByRole('button', { name: '核验证据' })).toHaveCount(0);
+      await page.getByRole('button', { name: '核验证据' }).click();
+      await expect(page.getByText('证据核验通过')).toBeVisible();
     } finally {
       if (originalSettings) {
         const restored = await page.request.post('/api/policies/publish', {

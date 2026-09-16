@@ -2,6 +2,7 @@ import type {
   ApprovalDecisionResult,
   ApprovalReviewList,
   AuditLog,
+  EvidenceVerification,
   ExecutionInventory,
   ModelProfileId,
   ModelStatus,
@@ -31,6 +32,12 @@ export function fetchOverview(): Promise<Overview> {
 
 export function fetchAuditLogs(limit = 100): Promise<AuditLog[]> {
   return request<AuditLog[]>(`/api/audit_logs?limit=${limit}`);
+}
+
+export function verifyEvidence(evidenceId: string): Promise<EvidenceVerification> {
+  return request<EvidenceVerification>(`/api/evidence/${encodeURIComponent(evidenceId)}/verify`, {
+    method: 'POST'
+  });
 }
 
 export function fetchExecutionInventory(limit = 200): Promise<ExecutionInventory> {
