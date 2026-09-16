@@ -83,6 +83,7 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
   const securityContext = status?.security_context;
   const roleLabel = securityContext?.role || 'unknown';
   const agentLabel = securityContext?.agent_id || '未绑定 Agent';
+  const localProfile = status?.backend?.security_profile === 'local';
   const productionProfile = status?.backend?.security_profile === 'production';
   const toolReceiptsRequired = status?.proxy?.tool_receipts_required === true;
   const serverObservedReceiptsRequired = status?.proxy?.server_observed_receipts_required === true;
@@ -121,8 +122,8 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
               <UiCol xs={24} sm={12} lg={6}>
                 <StatusCard
                   label="安全配置档"
-                  value={productionProfile ? 'production / 强制登记' : 'local / 兼容夹具'}
-                  tone={productionProfile ? 'green' : 'amber'}
+                  value={productionProfile ? 'production / 强制登记' : 'local / 单机模式'}
+                  tone={productionProfile ? 'green' : localProfile ? 'blue' : 'amber'}
                 />
               </UiCol>
               <UiCol xs={24} sm={12} lg={6}>
@@ -172,7 +173,7 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
                 <StatusCard
                   label="Token 鉴权"
                   value={status.proxy?.auth_required ? '已开启' : '本地免鉴权'}
-                  tone={status.proxy?.auth_required ? 'green' : 'red'}
+                  tone={status.proxy?.auth_required ? 'green' : localProfile ? 'blue' : 'red'}
                 />
               </UiCol>
               <UiCol xs={24} sm={12} lg={6}>
@@ -212,8 +213,14 @@ export function GatewayRuntimeStatus({ status, error }: Props) {
               <UiCol xs={24} sm={12} lg={6}>
                 <StatusCard
                   label="证据签名"
-                  value={hmacConfigured ? `HMAC 已启用 · ${status.audit_integrity?.key_id || '已配置'}` : '未配置 HMAC'}
-                  tone={hmacConfigured ? 'green' : 'amber'}
+                  value={
+                    hmacConfigured
+                      ? `HMAC 已启用 · ${status.audit_integrity?.key_id || '已配置'}`
+                      : localProfile
+                        ? 'Hash 证据 / HMAC 按需'
+                        : '未配置 HMAC'
+                  }
+                  tone={hmacConfigured ? 'green' : localProfile ? 'blue' : 'amber'}
                 />
               </UiCol>
               <UiCol xs={24} sm={12} lg={6}>

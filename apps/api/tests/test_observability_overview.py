@@ -80,3 +80,28 @@ class OperationalOverviewTests(TestCase):
         self.assertIsNone(result["summary"]["request_count"])
         self.assertEqual(result["source_errors"], [{"source": "audit_logs", "error": "RuntimeError"}])
         self.assertEqual(result["action_queue"][0]["id"], "operational-source-errors")
+
+    def test_local_profile_treats_mcp_and_hmac_as_optional(self) -> None:
+        with (
+            patch(
+                "apps.api.agent_supervisor.domains.runtime.operational_overview.build_runtime_status",
+                return_value={
+                    "backend": {"security_profile": "local"},
+                    "models": {"target": [{"configured": True, "mode": "real-api"}]},
+                    "proxy": {
+                        "enabled": True,
+                        "tool_receipts_required": True,
+                        "server_observed_receipts_required": False,
+                    },
+                    "gateway_evidence": {"fingerprint": "local-fingerprint"},
+                    "audit_integrity": {"hmac_configured": False},
+                    "mcp": {"configured": False, "enabled": False, "guard_enabled": True},
+                },
+            )
+        ):
+            result = build_operational_overview()
+
+        self.assertEqual(result["readiness"]["gateway"]["status"], "ready")
+        self.assertEqual(result["readiness"]["mcp"]["status"], "optional")
+        self.assertEqual(result["readiness"]["evidence"]["status"], "ready")
+        self.assertFalse(any(item["id"].startswith("readiness-") for item in result["action_queue"]))

@@ -69,11 +69,12 @@ export function GatewayPanel({
     const provider = Boolean(
       runtimeStatus?.models?.target?.some((item) => item.configured && item.mode === 'real-api')
     );
+    const localProfile = runtimeStatus?.backend?.security_profile === 'local';
     const gateway =
       runtimeStatus?.proxy?.enabled === true &&
       Boolean(runtimeStatus?.gateway_evidence?.fingerprint) &&
       runtimeStatus?.proxy?.tool_receipts_required === true &&
-      runtimeStatus?.proxy?.server_observed_receipts_required === true;
+      (runtimeStatus?.proxy?.server_observed_receipts_required === true || localProfile);
     const mcp =
       runtimeStatus?.mcp?.configured === true &&
       runtimeStatus.mcp.enabled === true &&
@@ -158,15 +159,20 @@ function McpRuntimeSummary({ status, onOpenSettings }: { status: RuntimeStatus |
   const configured = status?.mcp?.configured === true;
   const enabled = status?.mcp?.enabled === true;
   const guarded = status?.mcp?.guard_enabled === true;
+  const localProfile = status?.backend?.security_profile === 'local';
   return (
     <PanelCard title="MCP 运行状态" subtitle="MCP 请求由业务 Agent 发起，控制台只展示真实会话和执行结果。">
       {!status ? <UiAlert type="info" showIcon title="正在读取 MCP 运行状态。" /> : null}
       {status && !configured ? (
         <UiAlert
-          type="warning"
+          type={localProfile ? 'info' : 'warning'}
           showIcon
-          title="MCP 上游待配置"
-          description="请在设置中登记 MCP Server；配置完成后真实请求会自动进入活动记录。"
+          title={localProfile ? 'MCP 未配置（按需）' : 'MCP 上游待配置'}
+          description={
+            localProfile
+              ? '当前按模型 API 模式运行，不影响请求防护；接入 MCP Server 后真实工具调用会进入活动记录。'
+              : '请在设置中登记 MCP Server；配置完成后真实请求会自动进入活动记录。'
+          }
         />
       ) : null}
       {status && configured && !enabled ? <UiAlert type="warning" showIcon title="MCP 服务未启用" /> : null}

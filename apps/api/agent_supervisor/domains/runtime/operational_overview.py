@@ -397,6 +397,8 @@ def _readiness(status: dict[str, Any] | None, *, available: bool = True) -> dict
         }
     models = status.get("models", {}) if isinstance(status, dict) else {}
     target = models.get("target", []) if isinstance(models, dict) else []
+    backend = status.get("backend", {}) if isinstance(status, dict) else {}
+    local_profile = isinstance(backend, dict) and backend.get("security_profile") == "local"
     provider_ready = any(
         isinstance(item, dict) and item.get("configured") and item.get("mode") == "real-api" for item in target
     )
@@ -408,16 +410,25 @@ def _readiness(status: dict[str, Any] | None, *, available: bool = True) -> dict
         and isinstance(evidence, dict)
         and evidence.get("fingerprint")
         and proxy.get("tool_receipts_required")
-        and proxy.get("server_observed_receipts_required")
+        and (proxy.get("server_observed_receipts_required") or local_profile)
     )
     mcp = status.get("mcp", {}) if isinstance(status, dict) else {}
     mcp_configured = isinstance(mcp, dict) and mcp.get("configured")
     mcp_ready = bool(mcp_configured and mcp.get("enabled") and mcp.get("guard_enabled"))
+    audit_integrity = status.get("audit_integrity", {}) if isinstance(status, dict) else {}
+    hmac_configured = isinstance(audit_integrity, dict) and audit_integrity.get("hmac_configured")
+    evidence_ready = bool(gateway_ready and (hmac_configured or local_profile))
     return {
         "gateway": {
             "status": "ready" if gateway_ready else "attention",
             "label": "网关边界",
-            "description": "请求策略、回执和服务端观察边界已闭合。" if gateway_ready else "网关回执信任边界尚未闭合。",
+            "description": (
+                "本地模式：请求策略、指纹和调用方回执已启用。"
+                if gateway_ready and local_profile and not proxy.get("server_observed_receipts_required")
+                else "请求策略、回执和服务端观察边界已闭合。"
+                if gateway_ready
+                else "网关回执信任边界尚未闭合。"
+            ),
         },
         "provider": {
             "status": "ready" if provider_ready else "attention",
@@ -425,14 +436,26 @@ def _readiness(status: dict[str, Any] | None, *, available: bool = True) -> dict
             "description": "目标模型已配置真实 API。" if provider_ready else "目标 Provider 尚未配置真实 API。",
         },
         "mcp": {
-            "status": "ready" if mcp_ready else "attention",
+            "status": "ready" if mcp_ready else "optional" if local_profile else "attention",
             "label": "MCP 工具边界",
-            "description": "MCP 已启用并经过强制网关。" if mcp_ready else "MCP 尚未完成配置或强制边界。",
+            "description": (
+                "MCP 已启用并经过强制网关。"
+                if mcp_ready
+                else "本地模式未配置 MCP，上游工具按需接入，不影响模型请求防护。"
+                if local_profile
+                else "MCP 尚未完成配置或强制边界。"
+            ),
         },
         "evidence": {
-            "status": "ready" if gateway_ready else "attention",
+            "status": "ready" if evidence_ready else "attention",
             "label": "证据链",
-            "description": "网关运行指纹、Hash 与回执约束已登记。" if gateway_ready else "证据链运行指纹或回执约束尚未就绪。",
+            "description": (
+                "本地模式使用运行指纹、Hash 和回执；HMAC 签名按需启用。"
+                if evidence_ready and local_profile and not hmac_configured
+                else "网关运行指纹、Hash 与回执约束已登记。"
+                if evidence_ready
+                else "证据链运行指纹或回执约束尚未就绪。"
+            ),
         },
     }
 

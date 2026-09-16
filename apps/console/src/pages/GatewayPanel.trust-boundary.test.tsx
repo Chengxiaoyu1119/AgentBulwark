@@ -35,6 +35,26 @@ describe('GatewayPanel trust boundary', () => {
     expect(screen.queryByRole('button', { name: '验证防护' })).not.toBeInTheDocument();
   });
 
+  it('本地模式允许调用方回执兼容，不把可选服务端观察标成阻断', async () => {
+    vi.mocked(request).mockImplementation(async (path) => {
+      if (path === '/api/runtime_status') {
+        return {
+          backend: { security_profile: 'local' },
+          models: { target: [{ configured: true, mode: 'real-api' }] },
+          proxy: { enabled: true, tool_receipts_required: true, server_observed_receipts_required: false },
+          gateway_evidence: { fingerprint: 'local-fingerprint' },
+          mcp: { configured: false, enabled: false, guard_enabled: true }
+        };
+      }
+      return { traces: [], summary: {}, total_available: 0 };
+    });
+
+    render(<GatewayPanel />);
+    expect(await screen.findByText('边界运行中')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'MCP 工具' }));
+    expect(await screen.findByText('MCP 未配置（按需）')).toBeInTheDocument();
+  });
+
   it('MCP 未启用时显示待启用状态并保持只读', async () => {
     vi.mocked(request).mockImplementation(async (path) => {
       if (path === '/api/runtime_status') {
