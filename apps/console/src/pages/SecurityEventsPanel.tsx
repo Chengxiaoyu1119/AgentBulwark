@@ -161,7 +161,7 @@ export function SecurityEventsPanel({
           },
           {
             key: 'audit',
-            label: `执行审计（${logs.length}${unknownExecutionCount ? ` · 待核查 ${unknownExecutionCount}` : ''}）`,
+            label: unknownExecutionCount ? `执行审计（待核查 ${unknownExecutionCount}）` : '执行审计',
             children: (
               <UiStack gap="lg">
                 {authContext.permissions.can_review_approval ? (

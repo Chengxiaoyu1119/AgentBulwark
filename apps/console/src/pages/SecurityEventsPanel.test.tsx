@@ -205,19 +205,19 @@ describe('SecurityEventsPanel', () => {
     vi.mocked(fetchAuditLogs).mockResolvedValueOnce([{} as AuditLog]);
     render(<SecurityEventsPanel authContext={authContext} />);
 
-    expect(await screen.findByRole('tab', { name: '执行审计（1）' })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: '执行审计' })).toBeInTheDocument();
     vi.mocked(fetchAuditLogs).mockRejectedValueOnce(new Error('审计服务暂时不可用'));
     await userEvent.click(screen.getByRole('button', { name: '刷新事件' }));
 
     expect(await screen.findByText('审计服务暂时不可用')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '执行审计（0）' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '执行审计' })).toBeInTheDocument();
   });
 
   it('surfaces unknown side-effect claims as operator reconciliation work', async () => {
     vi.mocked(fetchExecutionInventory).mockResolvedValue(executionInventory('unknown'));
     render(<SecurityEventsPanel authContext={authContext} />);
 
-    const auditTab = await screen.findByRole('tab', { name: '执行审计（0 · 待核查 1）' });
+    const auditTab = await screen.findByRole('tab', { name: '执行审计（待核查 1）' });
     await userEvent.click(auditTab);
 
     expect(await screen.findByText('工具副作用状态不确定，禁止自动重试')).toBeInTheDocument();

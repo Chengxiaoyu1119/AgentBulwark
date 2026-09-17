@@ -14,7 +14,7 @@ import {
   UiTypography
 } from '../components/ui';
 import type { AuthContext } from '../types';
-import { navItems, pageLabel, type ProductPageKey } from './navigation';
+import { navItems, type ProductPageKey } from './navigation';
 import type { OperationalConnection } from './useAppData';
 import type { AppTheme } from './themePreference';
 
@@ -164,9 +164,6 @@ export function AppShell({
                   className="mobile-menu-btn"
                   aria-label="打开导航菜单"
                 />
-                <UiTypography.Title level={3} className="zh-app-header-title">
-                  {pageLabel(page)}
-                </UiTypography.Title>
               </UiSpace>
               <UiSpace>
                 <div className="zh-app-identity" aria-label={`当前身份 ${authContext.role}`}>
