@@ -198,6 +198,7 @@ def require_openai_proxy_access(
     authorization: str | None = Header(default=None),
     x_agent_supervisor_api_token: str | None = Header(default=None, alias="X-Agent-Supervisor-Api-Token"),
     x_agent_session_id: str | None = Header(default=None, alias="X-Agent-Session-ID"),
+    x_agent_task_id: str | None = Header(default=None, alias="X-Agent-Task-ID"),
 ) -> dict:
     if not _env_bool("AGENT_SUPERVISOR_PROXY_ENABLED", True):
         raise HTTPException(status_code=404, detail="OpenAI 兼容代理未启用。")
@@ -223,6 +224,7 @@ def require_openai_proxy_access(
         "authenticated": bool(token) and not _env_bool("AGENT_SUPERVISOR_AUTH_DISABLED"),
         "agent_id": agent_id_for_token(token) or "",
         "session_id": x_agent_session_id.strip() if isinstance(x_agent_session_id, str) else "",
+        "task_id": x_agent_task_id.strip() if isinstance(x_agent_task_id, str) else "",
         "role": current_security_role(
             authorization=authorization,
             x_agent_supervisor_api_token=x_agent_supervisor_api_token,
@@ -235,6 +237,7 @@ def require_openai_proxy_generation(
     authorization: str | None = Header(default=None),
     x_agent_supervisor_api_token: str | None = Header(default=None, alias="X-Agent-Supervisor-Api-Token"),
     x_agent_session_id: str | None = Header(default=None, alias="X-Agent-Session-ID"),
+    x_agent_task_id: str | None = Header(default=None, alias="X-Agent-Task-ID"),
 ) -> dict:
     """Require a role that may create model traffic through the proxy.
 
@@ -249,6 +252,7 @@ def require_openai_proxy_generation(
         authorization=authorization,
         x_agent_supervisor_api_token=x_agent_supervisor_api_token,
         x_agent_session_id=x_agent_session_id,
+        x_agent_task_id=x_agent_task_id,
     )
     role = str(context.get("role") or "observer")
     if role not in {"executor", "analyst", "admin"}:

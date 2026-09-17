@@ -20,6 +20,11 @@ from apps.api.agent_supervisor.auth import (
     require_any_role,
     require_api_token,
 )
+from apps.api.agent_supervisor.domains.governance.task_profiles import (
+    evaluate_task_scope,
+    normalize_task_id,
+    resolve_task_profile,
+)
 from apps.api.agent_supervisor.domains.runtime.mcp_access import mcp_access_capabilities
 from apps.api.agent_supervisor.mcp_gateway.config import gateway_max_message_bytes, gateway_max_subscriptions, gateway_mrtr_timeout_seconds
 from apps.api.agent_supervisor.mcp_gateway.gateway import _normalize_session_id, _project_notification, get_gateway
@@ -225,11 +230,16 @@ async def mcp_message(
     role: str = Depends(current_security_role),
     x_agent_session_id: str | None = Header(default=None, alias="X-Agent-Session-ID"),
     mcp_session_id: str | None = Header(default=None, alias="Mcp-Session-Id"),
+    x_agent_task_id: str | None = Header(default=None, alias="X-Agent-Task-ID"),
 ) -> Any:
     # X-Agent-Session-ID is the historical supervisor correlation key while
     # Mcp-Session-Id is the standard MCP protocol key. Resolve both once at the
     # HTTP boundary so a request can never accidentally select two children.
     resolved_session_id = _resolve_session_headers(x_agent_session_id, mcp_session_id)
+    try:
+        task_id = normalize_task_id(x_agent_task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         request_size = len(json.dumps(request, ensure_ascii=False, default=str, separators=(",", ":")).encode("utf-8"))
     except (TypeError, ValueError, RecursionError) as exc:
@@ -282,6 +292,7 @@ async def mcp_message(
                     message,
                     agent_id=authenticated_agent_id or "mcp-gateway",
                     session_id=batch_session_id,
+                    task_id=task_id,
                 )
             )
         payload = [item for item in responses if item is not None]
@@ -325,6 +336,53 @@ async def mcp_message(
     if not transport_context.modern and method == "initialize" and not session_id:
         session_id = _new_legacy_session_id()
     if transport_context.modern:
+        task_binding = resolve_task_profile(authenticated_agent_id or "mcp-gateway", task_id)
+        if task_binding.required and not task_binding.valid:
+            response = await asyncio.to_thread(
+                _handle_one,
+                gateway,
+                request,
+                agent_id=authenticated_agent_id or "mcp-gateway",
+                session_id=session_id,
+                task_id=task_id,
+                modern=True,
+                client_capabilities=transport_context.client_capabilities,
+            )
+            projected = project_modern_response(
+                method,
+                response,
+                server_name=gateway.server_name,
+                server_version=gateway.server_version,
+            )
+            return JSONResponse(projected or {"jsonrpc": "2.0", "id": request.get("id"), "result": {}})
+        if method == "tools/call":
+            raw_params = request.get("params")
+            task_scope = evaluate_task_scope(
+                task_binding,
+                {
+                    "tool": (raw_params or {}).get("name") if isinstance(raw_params, dict) else "",
+                    "arguments": (raw_params or {}).get("arguments", {}) if isinstance(raw_params, dict) else {},
+                },
+                agent_id=authenticated_agent_id or "mcp-gateway",
+            )
+            if task_binding.required and not task_scope.allowed:
+                response = await asyncio.to_thread(
+                    _handle_one,
+                    gateway,
+                    request,
+                    agent_id=authenticated_agent_id or "mcp-gateway",
+                    session_id=session_id,
+                    task_id=task_id,
+                    modern=True,
+                    client_capabilities=transport_context.client_capabilities,
+                )
+                projected = project_modern_response(
+                    method,
+                    response,
+                    server_name=gateway.server_name,
+                    server_version=gateway.server_version,
+                )
+                return JSONResponse(projected or {"jsonrpc": "2.0", "id": request.get("id"), "result": {}})
         if method == "server/discover":
             return JSONResponse(
                 build_modern_discover_response(
@@ -417,6 +475,7 @@ async def mcp_message(
                     request,
                     agent_id=authenticated_agent_id or "mcp-gateway",
                     session_id=session_id,
+                    task_id=task_id,
                     client_capabilities=transport_context.client_capabilities,
                     log_level=transport_context.log_level,
                 ),
@@ -434,6 +493,7 @@ async def mcp_message(
             request,
             agent_id=authenticated_agent_id or "mcp-gateway",
             session_id=session_id,
+            task_id=task_id,
             client_capabilities=transport_context.client_capabilities,
         )
     else:
@@ -443,6 +503,7 @@ async def mcp_message(
             request,
             agent_id=authenticated_agent_id or "mcp-gateway",
             session_id=session_id,
+            task_id=task_id,
         )
     if transport_context.modern:
         response = project_modern_response(
@@ -602,6 +663,7 @@ def _handle_one(
     *,
     agent_id: str = "mcp-gateway",
     session_id: str | None = None,
+    task_id: str = "",
     modern: bool = False,
     client_capabilities: dict[str, Any] | None = None,
     progress_callback: Any = None,
@@ -612,6 +674,7 @@ def _handle_one(
             message,
             agent_id=agent_id,
             session_id=session_id,
+            task_id=task_id,
             modern=modern,
             client_capabilities=client_capabilities,
             progress_callback=progress_callback,
@@ -642,6 +705,7 @@ async def _handle_one_until_disconnect(
     *,
     agent_id: str,
     session_id: str | None,
+    task_id: str,
     client_capabilities: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Run blocking MCP I/O off-loop and cancel it when its HTTP owner leaves."""
@@ -654,6 +718,7 @@ async def _handle_one_until_disconnect(
             message,
             agent_id=agent_id,
             session_id=session_id,
+            task_id=task_id,
             modern=True,
             client_capabilities=client_capabilities,
             cancel_event=cancel_event,
@@ -685,6 +750,7 @@ def _stream_modern_request(
     *,
     agent_id: str,
     session_id: str | None,
+    task_id: str,
     client_capabilities: dict[str, Any],
     log_level: str | None,
 ) -> Any:
@@ -734,6 +800,7 @@ def _stream_modern_request(
                 message,
                 agent_id=agent_id,
                 session_id=session_id,
+                task_id=task_id,
                 modern=True,
                 client_capabilities=client_capabilities,
                 progress_callback=on_notification,

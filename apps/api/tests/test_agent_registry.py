@@ -39,6 +39,7 @@ class AgentRegistryApiTests(unittest.TestCase):
             return_value={"agent_tool_allowlists": {"partial-agent": ["file.read"]}},
         ):
             view = _agent_view({"agent_id": "partial-agent", "status": "active"})
+        self.assertEqual(view["task_profile_count"], 0)
         self.assertEqual(view["policy_binding"], {"tools": True, "models": False, "context": False, "api": False, "ready": False})
 
     def test_create_list_rotate_and_revoke_token(self) -> None:

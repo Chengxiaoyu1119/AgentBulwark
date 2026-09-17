@@ -100,6 +100,46 @@ class ExecutionReceiptTests(unittest.TestCase):
         )["receipt"]
         self.assertFalse(verify_execution_receipt({**receipt, "receipt_signature": ""}))
 
+    def test_tampered_receipt_blocks_gateway_replay(self) -> None:
+        event = {
+            **self._event(),
+            "source_app": "openai-compatible-proxy",
+            "stage_context": {
+                "session_id": "tampered-receipt-session",
+                "provider_call_id": "tampered-receipt-call",
+                "provider_called": True,
+            },
+        }
+        decision = evaluate_agent_event(event, guard_enabled=True)
+        receipt = complete_execution(
+            decision["audit_id"],
+            {
+                "receipt_id": "tampered-receipt-source",
+                "agent_id": "receipt-agent",
+                "tool_call": event["tool_call"],
+                "status": "completed",
+                "execution_target": "real",
+                "result_hash": _result_hash({"status": "ok"}),
+            },
+        )["receipt"]
+        tampered = {**receipt, "receipt_hash": "0" * 64}
+        self.assertFalse(verify_execution_receipt(tampered))
+        with (
+            patch(
+                "apps.api.agent_supervisor.domains.runtime.gateway_execution.load_execution_receipt",
+                return_value=tampered,
+            ),
+            patch("apps.api.agent_supervisor.domains.runtime.gateway_execution.execute_tool") as execute,
+        ):
+            with self.assertRaisesRegex(ValueError, "完整性校验失败"):
+                execute_gateway_tool_call(
+                    decision["audit_id"],
+                    agent_id="receipt-agent",
+                    session_id="tampered-receipt-session",
+                    provider_call_id="tampered-receipt-call",
+                )
+        execute.assert_not_called()
+
     def test_conflicting_retry_and_tool_mismatch_are_rejected(self) -> None:
         decision = evaluate_agent_event(self._event(), guard_enabled=True)
         request = {
@@ -178,6 +218,32 @@ class ExecutionReceiptTests(unittest.TestCase):
         self.assertTrue(second["idempotent"])
         self.assertEqual(second["tool_result_hash"], first["tool_result_hash"])
         self.assertEqual(tool_result_hash(second["tool_result"]), second["tool_result_hash"])
+
+    def test_server_observed_receipt_is_projected_into_audit_reader(self) -> None:
+        event = {
+            **self._event(tool="file.read", arguments={"path": "public/项目说明.md"}),
+            "source_app": "openai-compatible-proxy",
+            "stage_context": {
+                "session_id": "audit-projection-session",
+                "provider_call_id": "audit-projection-call",
+                "provider_called": True,
+            },
+        }
+        with patch.dict(os.environ, {"AGENT_SUPERVISOR_AUDIT_HMAC_KEY": ""}, clear=False):
+            decision = evaluate_agent_event(event, guard_enabled=True)
+            execute_gateway_tool_call(
+                decision["audit_id"],
+                agent_id="receipt-agent",
+                session_id="audit-projection-session",
+                provider_call_id="audit-projection-call",
+            )
+            audit = next(item for item in database.latest_audit_logs(20) if item["id"] == decision["audit_id"])
+
+        self.assertEqual(audit["execution_evidence"], "server-observed")
+        self.assertTrue(audit["execution_observed_by_server"])
+        self.assertTrue(audit["tool_output"]["executed"])
+        self.assertEqual(audit["execution_target"], "local-runtime")
+        self.assertEqual(audit["evidence_status"], "verified")
 
     def test_gateway_execution_rejects_caller_declared_receipt(self) -> None:
         event = {

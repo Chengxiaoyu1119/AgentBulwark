@@ -58,6 +58,10 @@ export function GatewayTraceDetails({
               { key: 'time', label: '最后时间', value: formatTraceTime(trace.last_seen) },
               { key: 'agent', label: 'Agent', value: traceLabel(trace.agent_id, '未绑定') },
               { key: 'session', label: '会话', value: traceLabel(trace.session_id) },
+              { key: 'task', label: '任务', value: traceLabel(trace.task_id, '未绑定') },
+              { key: 'task-scope', label: '任务范围', value: traceLabel(trace.task_scope, '未启用') },
+              { key: 'task-fingerprint', label: '任务配置指纹', value: shortTraceHash(trace.task_profile_fingerprint) },
+              { key: 'revision', label: '策略版本', value: traceLabel(trace.policy_revision, '—') },
               { key: 'provider', label: 'Provider', value: traceLabel(trace.provider, '未调用') },
               { key: 'model', label: '模型', value: traceLabel(trace.model) },
               { key: 'policy', label: '主要策略', value: traceLabel(trace.primary_policy_id) },
@@ -99,6 +103,7 @@ export function GatewayTraceDetails({
                       {stage.policy_id ? <LabelTag>{stage.policy_id}</LabelTag> : null}
                       {stage.tool ? <LabelTag>{stage.tool}</LabelTag> : null}
                       {stage.execution_status ? <LabelTag>{stage.execution_status}</LabelTag> : null}
+                      {stage.task_scope ? <LabelTag>{stage.task_scope}</LabelTag> : null}
                     </UiSpace>
                   </div>
                 </li>

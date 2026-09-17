@@ -651,6 +651,41 @@ def endpoint_matches_allowlist(value: Any, allowed_targets: list[str] | None) ->
     return endpoint_allowlist_reason(value, allowed_targets) is None
 
 
+def endpoint_allowlist_target_is_valid(value: Any) -> bool:
+    """Validate an operator-provided allowlist target without exposing its parser."""
+
+    return _parse_allowlist_target(value) is not None
+
+
+def endpoint_allowlist_target_within_scope(value: Any, allowed_targets: list[str] | None) -> bool:
+    """Return whether one allowlist target can only narrow a parent scope."""
+
+    candidate = _parse_allowlist_target(value)
+    if candidate is None or not allowed_targets:
+        return False
+    candidate_scheme, candidate_host, candidate_port = candidate
+    for raw_parent in allowed_targets:
+        parent = _parse_allowlist_target(raw_parent)
+        if parent is None:
+            continue
+        parent_scheme, parent_host, parent_port = parent
+        if parent_scheme is not None and candidate_scheme != parent_scheme:
+            continue
+        if parent_port is not None and candidate_port != parent_port:
+            continue
+        if _allowlist_host_within_scope(candidate_host, parent_host):
+            return True
+    return False
+
+
+def _allowlist_host_within_scope(candidate: str, parent: str) -> bool:
+    if parent.startswith("*."):
+        parent_base = parent[2:]
+        candidate_base = candidate[2:] if candidate.startswith("*.") else candidate
+        return candidate_base.endswith(f".{parent_base}") and candidate_base != parent_base
+    return not candidate.startswith("*.") and candidate == parent
+
+
 def _endpoint_matches_allowlist(endpoint: str, allowed_targets: list[str]) -> bool:
     parsed = urlsplit(endpoint)
     hostname = (parsed.hostname or "").rstrip(".").lower()

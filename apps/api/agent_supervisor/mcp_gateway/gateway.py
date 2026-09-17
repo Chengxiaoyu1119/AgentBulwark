@@ -25,6 +25,13 @@ from apps.api.agent_supervisor.domains.governance.skill_scanner import (
     skill_scan_enabled,
 )
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision
+from apps.api.agent_supervisor.domains.governance.task_profiles import (
+    TASK_CONTEXT_KEY,
+    evaluate_task_scope,
+    resolve_task_profile,
+    task_audit_context,
+    task_binding_mismatch_reason,
+)
 from apps.api.agent_supervisor.domains.governance.tool_contract import (
     get_agent_api_allowlist,
     normalize_tool_call,
@@ -950,6 +957,7 @@ class McpGateway:
         *,
         agent_id: str = "mcp-gateway",
         session_id: str | None = None,
+        task_id: str = "",
         modern: bool = False,
         client_capabilities: dict[str, Any] | None = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
@@ -981,6 +989,7 @@ class McpGateway:
                     message,
                     agent_id=agent_id,
                     session_id=session_id,
+                    task_id=task_id,
                     modern=modern,
                     client_capabilities=client_capabilities,
                     progress_callback=progress_callback,
@@ -1004,6 +1013,33 @@ class McpGateway:
         if not isinstance(params, dict):
             params = {}
         client_id = _normalize_mcp_client_id(message)
+        task_binding = resolve_task_profile(agent_id, task_id)
+        task_context = task_audit_context(task_binding)
+        if task_binding.required and not task_binding.valid:
+            task_decision = GuardDecision(
+                decision="拒绝",
+                risk_level="high",
+                policy_id="task-profile",
+                reason=task_binding.reason or "任务授权无效。",
+                recommendation="由宿主应用在模型上下文外提供当前 Agent 的有效 X-Agent-Task-ID。",
+                risk_score=88,
+            )
+            with self._stats_lock:
+                self._stats["blocked"] += 1
+            audit_ref = self._audit(
+                params={"name": f"mcp:{method}", "arguments": {}, TASK_CONTEXT_KEY: task_context},
+                decision=task_decision,
+                forwarded=False,
+                detection_latency_ms=0.0,
+                agent_id=agent_id or "mcp-gateway",
+                session_id=session_id,
+                client_request_id=client_id,
+                upstream_route=DEFAULT_ROUTE,
+            )
+            response = build_blocked_response(client_id, task_decision)
+            if audit_ref:
+                self._embed_audit_ref(response, audit_ref)
+            return None if "id" not in message else response
         if modern:
             try:
                 validate_mrtr_retry_fields(method, params)
@@ -1023,6 +1059,7 @@ class McpGateway:
                 client_id,
                 agent_id=agent_id,
                 session_id=session_id,
+                task_id=task_id,
                 notification=is_notification,
                 modern=modern,
                 input_responses=params.get("inputResponses") if modern else None,
@@ -1078,7 +1115,11 @@ class McpGateway:
             return {
                 "jsonrpc": "2.0",
                 "id": client_id,
-                "result": self._router.list_tools(agent_id=agent_id, cancel_event=cancel_event),
+                "result": self._router.list_tools(
+                    agent_id=agent_id,
+                    task_allowed_tools=(task_binding.profile or {}).get("allowed_capabilities") if task_binding.required else None,
+                    cancel_event=cancel_event,
+                ),
             }
 
         if method in CONTEXT_LIST_METHODS:
@@ -1317,6 +1358,7 @@ class McpGateway:
         *,
         agent_id: str,
         session_id: str,
+        task_id: str = "",
         notification: bool = False,
         modern: bool = False,
         input_responses: Any = None,
@@ -1328,13 +1370,47 @@ class McpGateway:
         with self._stats_lock:
             self._stats["tool_calls"] += 1
 
+        params = dict(params)
         tool_name = str(params.get("name") or "")
+        task_binding = resolve_task_profile(agent_id, task_id)
+        task_context = task_audit_context(task_binding)
+        params[TASK_CONTEXT_KEY] = task_context
+        task_scope = evaluate_task_scope(
+            task_binding,
+            {"tool": tool_name, "arguments": params.get("arguments", {})},
+            agent_id=agent_id,
+        )
+        if task_binding.required and (not task_binding.valid or not task_scope.allowed):
+            task_decision = GuardDecision(
+                decision="拒绝",
+                risk_level="high",
+                policy_id="task-profile",
+                reason=task_binding.reason if not task_binding.valid else task_scope.reason,
+                recommendation="将调用收窄到当前任务已发布的能力和目标范围内。",
+                risk_score=88,
+            )
+            with self._stats_lock:
+                self._stats["blocked"] += 1
+            audit_ref = self._audit(
+                params=params,
+                decision=task_decision,
+                forwarded=False,
+                detection_latency_ms=0.0,
+                agent_id=agent_id or "mcp-gateway",
+                session_id=session_id,
+                client_request_id=client_id,
+                upstream_route=DEFAULT_ROUTE,
+            )
+            blocked_response = build_blocked_response(client_id, task_decision)
+            if audit_ref:
+                self._embed_audit_ref(blocked_response, audit_ref)
+            return None if notification else blocked_response
         # A client may call tools/call before tools/list.  Load the catalog
         # before selecting the upstream so first-use calls cannot silently fall
         # back to the default route in a multi-server gateway.
         self._router.ensure_catalog()
         route_name, upstream = self._router.route_for_tool(tool_name)
-        decision = None
+        decision: GuardDecision | None = None
         detection_latency_ms = 0.0
         response: dict[str, Any] | None = None
 
@@ -1463,6 +1539,15 @@ class McpGateway:
             started = perf_counter()
             decision = evaluate_tools_call(params, agent_id=agent_id or "mcp-gateway")
             detection_latency_ms = round((perf_counter() - started) * 1000, 3)
+            if task_binding.require_approval and decision.decision == "允许":
+                decision = GuardDecision(
+                    decision="询问",
+                    risk_level="medium",
+                    policy_id="task-profile-approval",
+                    reason="当前任务要求在执行已允许工具前完成人工复核。",
+                    recommendation="确认任务范围、目标和业务目的后，再由原始 Agent 领取一次审批调用。",
+                    risk_score=max(decision.risk_score, 55),
+                )
             if decision.decision in BLOCKED_DECISIONS:
                 with self._stats_lock:
                     self._stats["blocked"] += 1
@@ -1569,6 +1654,37 @@ class McpGateway:
                 self._embed_audit_ref(response, audit_ref)
             return None if notification else response
 
+        task_recheck_reason = task_binding_mismatch_reason(
+            task_context,
+            agent_id=agent_id,
+            raw_tool_call={"tool": tool_name, "arguments": params.get("arguments", {})},
+        )
+        if task_recheck_reason:
+            decision = GuardDecision(
+                decision="拒绝",
+                risk_level="high",
+                policy_id="task-profile",
+                reason=task_recheck_reason,
+                recommendation="重新获取当前任务授权后再发起新的工具调用。",
+                risk_score=88,
+            )
+            with self._stats_lock:
+                self._stats["blocked"] += 1
+            audit_ref = self._audit(
+                params=params,
+                decision=decision,
+                forwarded=False,
+                detection_latency_ms=detection_latency_ms,
+                agent_id=agent_id or "mcp-gateway",
+                session_id=session_id,
+                client_request_id=client_id,
+                upstream_route=route_name,
+            )
+            response = build_blocked_response(client_id, decision)
+            if audit_ref:
+                self._embed_audit_ref(response, audit_ref)
+            return None if notification else response
+
         # Persist an intent before the MCP child can perform a side effect.
         # The later result record is deliberately append-only; if that second
         # write fails, operators still see this pending intent and can
@@ -1615,7 +1731,11 @@ class McpGateway:
 
         with self._stats_lock:
             self._stats["forwarded_tool_calls"] += 1
-        upstream_params = {key: value for key, value in params.items() if key not in {"_meta", "inputResponses", "requestState"}}
+        upstream_params = {
+            key: value
+            for key, value in params.items()
+            if key not in {"_meta", "inputResponses", "requestState", TASK_CONTEXT_KEY}
+        }
         # Only request-scoped progress/log controls cross the compatibility
         # bridge. Modern client identity and capability declarations remain at
         # the authenticated HTTP boundary.

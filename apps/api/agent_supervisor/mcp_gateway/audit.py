@@ -20,9 +20,11 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+from apps.api.agent_supervisor.domains.governance.approvals import create_approval_review
 from apps.api.agent_supervisor.domains.governance.integrity import attach_audit_hashes
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision
+from apps.api.agent_supervisor.domains.governance.task_profiles import TASK_CONTEXT_KEY
 from apps.api.agent_supervisor.domains.runtime.execution_receipts import (
     complete_execution,
     tool_call_hash,
@@ -108,6 +110,13 @@ def record_gateway_tool_call(
     tool_name = str(params.get("name") or "")
     raw_arguments = params.get("arguments")
     arguments = raw_arguments if isinstance(raw_arguments, dict) else {"_raw_arguments": raw_arguments}
+    raw_task_context = params.get(TASK_CONTEXT_KEY)
+    task_context = raw_task_context if isinstance(raw_task_context, dict) else {}
+    task_context = {
+        key: task_context[key]
+        for key in ("task_id", "task_profile_fingerprint", "policy_revision", "task_scope", "task_profile_required")
+        if key in task_context
+    }
     audit_arguments = redact_sensitive(arguments)
     run_id = str(uuid4())
     audit_id = str(uuid4())
@@ -210,6 +219,7 @@ def record_gateway_tool_call(
             "upstream_error": upstream_error or "",
             "result_quarantined": result_quarantined,
             "result_context_hash": str(scan.get("context_hash") or ""),
+            **task_context,
         },
         "timestamp": created_at,
         "source_app": SOURCE_APP,
@@ -313,6 +323,28 @@ def record_gateway_tool_call(
     }
     write_run(result)
 
+    approval_review = create_approval_review(
+        {
+            "conversation_id": audit_log["conversation_id"],
+            "agent_id": agent_id,
+            "source_app": SOURCE_APP,
+            "tool_call": {"tool": tool_name, "arguments": arguments},
+        },
+        {
+            "decision": decision.decision,
+            "risk_level": decision.risk_level,
+            "policy_id": decision.policy_id,
+            "risk_score": decision.risk_score,
+            "risk_factors": decision.risk_factors,
+            "anomaly_score": decision.anomaly_score,
+            "anomaly_signals": decision.anomaly_signals,
+            "reason": decision.reason,
+            "recommendation": decision.recommendation,
+            "run_id": run_id,
+            "audit_log": audit_log,
+        },
+    )
+
     receipt: dict[str, Any] | None = None
     if execution_phase == "result" and forwarded:
         receipt_status = "failed" if upstream_error else "completed"
@@ -346,6 +378,7 @@ def record_gateway_tool_call(
         "receipt_id": str(receipt.get("receipt_id") or "") if receipt else "",
         "receipt_hash": str(receipt.get("receipt_hash") or "") if receipt else "",
         "receipt_signature": str(receipt.get("receipt_signature") or "") if receipt else "",
+        "approval_review_id": str((approval_review or {}).get("id") or ""),
     }
 
 

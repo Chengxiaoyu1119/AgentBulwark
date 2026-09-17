@@ -633,7 +633,13 @@ class UpstreamRouter:
                 return route, self._upstreams[route]
         return None
 
-    def list_tools(self, *, agent_id: str = "", cancel_event: Any = None) -> dict[str, Any]:
+    def list_tools(
+        self,
+        *,
+        agent_id: str = "",
+        task_allowed_tools: list[str] | None = None,
+        cancel_event: Any = None,
+    ) -> dict[str, Any]:
         """聚合可交给模型的工具清单。
 
         ``tools/list`` is a model-context boundary, not an operator report.
@@ -676,6 +682,13 @@ class UpstreamRouter:
             else:
                 scan_summary["clean_tool_count"] += 1
         allowed_tools = get_agent_tool_allowlist(get_policy_settings(), agent_id)
+        if task_allowed_tools is not None:
+            task_allowed = [str(item).strip().lower() for item in task_allowed_tools if str(item).strip()]
+            allowed_tools = (
+                task_allowed
+                if allowed_tools is None
+                else [item for item in task_allowed if item in {str(value).strip().lower() for value in allowed_tools}]
+            )
         for name, route in catalog.items():
             tool = definitions.get(name)
             if not isinstance(tool, dict):

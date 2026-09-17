@@ -311,9 +311,13 @@ class Handler(BaseHTTPRequestHandler):
         payload: dict[str, Any] = {}
         try:
             payload = json.loads(raw.decode("utf-8"))
-            provider_response = _response(payload)
-            body = json.dumps(provider_response, ensure_ascii=False).encode("utf-8")
-            status = 200
+            if "fixture provider failure" in str(payload.get("messages") or ""):
+                body = json.dumps({"error": {"message": "fixture provider forced failure"}}).encode("utf-8")
+                status = 503
+            else:
+                provider_response = _response(payload)
+                body = json.dumps(provider_response, ensure_ascii=False).encode("utf-8")
+                status = 200
         except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
             body = json.dumps({"error": {"message": "invalid fixture request"}}).encode("utf-8")
             status = 400

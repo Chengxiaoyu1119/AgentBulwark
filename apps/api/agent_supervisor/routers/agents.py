@@ -25,8 +25,15 @@ def _agent_view(item: dict[str, Any]) -> dict[str, Any]:
     model_bound = agent_id in (settings.get("agent_model_allowlists") or {})
     context_bound = agent_id in (settings.get("agent_context_allowlists") or {})
     api_bound = agent_id in (settings.get("agent_api_allowlists") or {})
+    task_profiles = settings.get("task_profiles")
+    task_profile_count = sum(
+        1
+        for profile in (task_profiles.values() if isinstance(task_profiles, dict) else [])
+        if isinstance(profile, dict) and str(profile.get("agent_id") or "") == agent_id
+    )
     return {
         **item,
+        "task_profile_count": task_profile_count,
         "policy_binding": {
             "tools": tool_bound,
             "models": model_bound,

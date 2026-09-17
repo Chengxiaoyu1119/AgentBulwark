@@ -13,6 +13,10 @@ export type GatewayTraceStage = {
   execution_evidence?: string;
   execution_observed_by_server?: boolean;
   execution_receipt_present?: boolean;
+  task_id?: string;
+  task_profile_fingerprint?: string;
+  policy_revision?: string;
+  task_scope?: string;
 };
 
 export type GatewayTrace = {
@@ -20,6 +24,10 @@ export type GatewayTrace = {
   request_id?: string;
   session_id?: string;
   agent_id?: string;
+  task_id?: string;
+  task_profile_fingerprint?: string;
+  policy_revision?: string;
+  task_scope?: string;
   status?: string;
   decision?: string;
   provider_called?: boolean | null;

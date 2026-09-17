@@ -115,6 +115,13 @@ def complete_execution(
         raise ValueError("receipt_id 不能为空")
     created_at = datetime.now(timezone.utc).isoformat()
     sanitized_error = str(redact_sensitive(str(request.get("error", ""))))[:2000]
+    stage_context = audit_log.get("stage_context")
+    stage_context = stage_context if isinstance(stage_context, dict) else {}
+    task_binding = {
+        key: stage_context.get(key)
+        for key in ("task_id", "task_profile_fingerprint", "policy_revision", "task_scope")
+        if stage_context.get(key) not in {None, ""}
+    }
     request_fingerprint = {
         "audit_id": audit_id,
         "receipt_id": receipt_id,
@@ -126,6 +133,7 @@ def complete_execution(
         "result_content": result_content,
         "duration_ms": duration_ms,
         "error": sanitized_error,
+        "task_binding": task_binding,
     }
     receipt = {
         **request_fingerprint,
@@ -133,6 +141,7 @@ def complete_execution(
         "decision": decision,
         "policy_id": str(audit_log.get("policy_id", "")),
         "audit_hash": str(audit_log.get("audit_hash", "")),
+        "task_binding": task_binding,
         "created_at": created_at,
         "request_hash": _sha256_payload(request_fingerprint),
         "agent_followed_decision": _agent_followed_decision(decision, status, execution_target),

@@ -94,6 +94,20 @@ export interface PolicySettings {
   agent_model_allowlists?: Record<string, string[]>;
   agent_context_allowlists?: Record<string, Record<string, string[]>>;
   agent_tool_mappings?: Record<string, Record<string, AgentToolMappingConfig>>;
+  task_profiles?: Record<string, TaskProfileConfig>;
+  policy_revision?: string;
+}
+
+export interface TaskProfileConfig {
+  agent_id: string;
+  name: string;
+  enabled: boolean;
+  allowed_capabilities: string[];
+  allowed_file_paths: string[];
+  allowed_api_origins: string[];
+  allowed_email_domains: string[];
+  require_approval: boolean;
+  expires_at: string;
 }
 
 export interface AgentToolMappingConfig {
@@ -130,6 +144,7 @@ export interface AgentRegistration {
   revoked_at?: string | null;
   created_by?: string;
   last_request_at?: string | null;
+  task_profile_count?: number;
   policy_binding?: {
     tools: boolean;
     models: boolean;

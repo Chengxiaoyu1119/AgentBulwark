@@ -203,6 +203,7 @@ def _redact_observer_policy_settings(settings: dict[str, Any]) -> dict[str, Any]
             "agent_model_allowlists",
             "agent_context_allowlists",
             "agent_tool_mappings",
+            "task_profiles",
         }
     }
     safe["agent_boundary_counts"] = {
@@ -222,6 +223,9 @@ def _redact_observer_policy_settings(settings: dict[str, Any]) -> dict[str, Any]
             len(value) for value in settings.get("agent_tool_mappings", {}).values() if isinstance(value, dict)
         )
         if isinstance(settings.get("agent_tool_mappings"), dict)
+        else 0,
+        "task_profiles": len(settings.get("task_profiles", {}))
+        if isinstance(settings.get("task_profiles"), dict)
         else 0,
     }
     safe["access_scope"] = "summary-redacted"
@@ -367,17 +371,27 @@ def _policy_lifecycle_candidate(request: PolicyLifecycleRequest) -> tuple[str, s
 def _policy_impact(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
     changed = sorted(key for key in set(before) | set(after) if before.get(key) != after.get(key))
     agent_keys = {"agent_tool_allowlists", "agent_api_allowlists", "agent_model_allowlists", "agent_context_allowlists"}
-    affected_agents = sorted(
-        {
+    affected_agents = {
             str(agent_id)
             for key in agent_keys
             for agent_id in set((before.get(key) or {}) if isinstance(before.get(key), dict) else {})
             | set((after.get(key) or {}) if isinstance(after.get(key), dict) else {})
         }
-    )
     affected_tools: set[str] = set()
     affected_models: set[str] = set()
     for snapshot in (before, after):
+        task_profiles = snapshot.get("task_profiles")
+        if isinstance(task_profiles, dict):
+            affected_agents.update(
+                str(profile.get("agent_id") or "")
+                for profile in task_profiles.values()
+                if isinstance(profile, dict) and str(profile.get("agent_id") or "")
+            )
+            for profile in task_profiles.values():
+                if isinstance(profile, dict):
+                    affected_tools.update(
+                        str(tool) for tool in profile.get("allowed_capabilities", []) if str(tool).strip()
+                    )
         tools = snapshot.get("tools")
         if isinstance(tools, list):
             affected_tools.update(str(tool) for tool in tools if str(tool).strip())
@@ -396,7 +410,7 @@ def _policy_impact(before: dict[str, Any], after: dict[str, Any]) -> dict[str, A
                 affected_models.update(str(model) for model in model_list if str(model).strip())
     return {
         "changed_fields": changed,
-        "affected_agents": affected_agents,
+        "affected_agents": sorted(affected_agents),
         "affected_tools": sorted(affected_tools),
         "affected_models": sorted(affected_models),
         "possible_request_types": ["tool_call", "model_request"] if changed else [],
@@ -468,6 +482,8 @@ def tool_registry(role: str = Depends(current_security_role)) -> dict:
         "agent_tool_allowlists": settings.get("agent_tool_allowlists", {}),
         "agent_api_allowlists": settings.get("agent_api_allowlists", {}),
         "agent_model_allowlists": settings.get("agent_model_allowlists", {}),
+        "task_profiles": settings.get("task_profiles", {}),
+        "policy_revision": settings.get("policy_revision", ""),
         "mapping_contract": {
             "original_tool": "外部 Agent 的真实工具名称，例如 browser.open 或 database.query",
                 "capability": "file.read、api.call 等标准能力之一",

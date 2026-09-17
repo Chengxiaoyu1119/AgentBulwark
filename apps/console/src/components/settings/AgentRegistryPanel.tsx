@@ -141,6 +141,7 @@ export function AgentRegistryPanel({ canEdit, onConfigurePolicy, onAgentsChange 
               <LabelTag color={agent.policy_binding?.ready ? 'green' : 'warning'}>
                 {agent.policy_binding?.ready ? '已绑定策略' : '待绑定策略'}
               </LabelTag>
+              {agent.task_profile_count ? <LabelTag>任务 {agent.task_profile_count}</LabelTag> : null}
               {canEdit && onConfigurePolicy && agent.status === 'active' ? (
                 <UiButton size="small" onClick={() => onConfigurePolicy(agent.agent_id)}>
                   {agent.policy_binding?.ready ? '编辑策略' : '配置策略'}

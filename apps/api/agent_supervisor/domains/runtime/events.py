@@ -13,6 +13,11 @@ from apps.api.agent_supervisor.domains.governance.effect import evaluate_tool_ef
 from apps.api.agent_supervisor.domains.governance.integrity import attach_audit_hashes
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision, decide
+from apps.api.agent_supervisor.domains.governance.task_profiles import (
+    evaluate_task_scope,
+    resolve_task_profile,
+    task_audit_context,
+)
 from apps.api.agent_supervisor.domains.governance.tool_contract import (
     normalize_tool_call,
     resolve_public_endpoint,
@@ -61,6 +66,10 @@ def evaluate_agent_event(
     tool_resolution = resolve_tool_call(raw_tool_call, agent_id=agent_id)
     original_tool_call = tool_resolution.original_tool_call
     tool_call = normalize_tool_call(tool_resolution.effective_tool_call)
+    raw_stage_context = event.get("stage_context")
+    raw_stage_context = raw_stage_context if isinstance(raw_stage_context, dict) else {}
+    task_binding = resolve_task_profile(agent_id, raw_stage_context.get("task_id"))
+    task_scope = evaluate_task_scope(task_binding, raw_tool_call, agent_id=agent_id)
 
     # The supervisor-owned HTTP execution endpoint derives this key from the
     # complete request.  Reusing it makes an exact retry address the same
@@ -126,6 +135,34 @@ def evaluate_agent_event(
             decision.policy_id = "cross-agent-chain"
             decision.reason = "同一会话内出现敏感读取、批量导出或记忆访问后继续发送结果，疑似跨 Agent 分步外泄链。"
             decision.recommendation = "暂停自动执行，人工确认前序数据来源、当前收件人和业务授权。"
+    if task_binding.required:
+        if not task_binding.valid:
+            decision = GuardDecision(
+                decision="拒绝",
+                risk_level="high",
+                policy_id="task-profile",
+                reason=task_binding.reason or "任务授权无效。",
+                recommendation="由宿主应用在模型上下文外传入当前 Agent 的有效 X-Agent-Task-ID。",
+                risk_score=max(decision.risk_score, 88),
+            )
+        elif not task_scope.allowed:
+            decision = GuardDecision(
+                decision="拒绝",
+                risk_level="high",
+                policy_id="task-profile",
+                reason=task_scope.reason,
+                recommendation="将工具能力和目标收窄到已发布的任务授权范围内。",
+                risk_score=max(decision.risk_score, 88),
+            )
+        elif task_binding.require_approval and tool_call["tool"] != "model.respond" and decision.decision == "允许":
+            decision = GuardDecision(
+                decision="询问",
+                risk_level="medium",
+                policy_id="task-profile-approval",
+                reason="当前任务要求在执行已允许工具前完成人工复核。",
+                recommendation="确认任务范围、目标和业务目的后，再由原始 Agent 领取一次审批调用。",
+                risk_score=max(decision.risk_score, 55),
+            )
     detection_latency_ms = round((perf_counter() - decision_started) * 1000, 3)
     should_execute = execute_managed and decision.decision in {"允许", "隔离"}
     external_receipt_required = receipt_required and decision.decision in {"允许", "隔离"}
@@ -186,6 +223,7 @@ def evaluate_agent_event(
     stage_context = redact_sensitive(event.get("stage_context", {}))
     if not isinstance(stage_context, dict):
         stage_context = {}
+    stage_context.update(task_audit_context(task_binding, task_scope.scope))
     if network_addresses:
         stage_context["resolved_network_addresses"] = list(network_addresses)
 

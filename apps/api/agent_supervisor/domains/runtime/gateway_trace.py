@@ -118,6 +118,10 @@ def _build_trace(request_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     provider_response_id = _last_non_empty(stages, "provider_response_id")
     session_id = _first_non_empty(stages, "session_id")
     agent_id = _first_non_empty(stages, "agent_id")
+    task_id = _first_non_empty(stages, "task_id")
+    task_profile_fingerprint = _last_non_empty(stages, "task_profile_fingerprint")
+    policy_revision = _last_non_empty(stages, "policy_revision")
+    task_scope = _last_non_empty(stages, "task_scope")
     provider = str(provider_anchor.get("provider") or first.get("provider") or "unknown")[:120]
     provider_profile = _first_non_empty(provider_stages or stages, "provider_profile")
     model = _first_non_empty(provider_stages or stages, "model")
@@ -140,6 +144,10 @@ def _build_trace(request_id: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
         "request_id": _safe_identifier(request_id),
         "session_id": _safe_identifier(session_id),
         "agent_id": _safe_identifier(agent_id),
+        "task_id": _safe_identifier(task_id),
+        "task_profile_fingerprint": _safe_hash(task_profile_fingerprint),
+        "policy_revision": _safe_identifier(policy_revision),
+        "task_scope": _safe_identifier(task_scope),
         "status": status,
         "decision": decision,
         "provider_called": provider_called,
@@ -188,6 +196,10 @@ def _safe_stage(row: dict[str, Any]) -> dict[str, Any]:
         "decision": str(row.get("decision") or "未知")[:16],
         "session_id": str(context.get("session_id") or row.get("conversation_id") or "")[:160],
         "agent_id": str(row.get("agent_id") or context.get("agent_id") or "")[:160],
+        "task_id": _safe_identifier(str(context.get("task_id") or "")),
+        "task_profile_fingerprint": _safe_hash(context.get("task_profile_fingerprint")),
+        "policy_revision": _safe_identifier(str(context.get("policy_revision") or "")),
+        "task_scope": _safe_identifier(str(context.get("task_scope") or "")),
         "policy_id": _safe_identifier(str(row.get("policy_id") or "")),
         "risk_score": _bounded_score(row.get("risk_score")),
         "tool": _safe_identifier(str(row.get("tool") or "")),

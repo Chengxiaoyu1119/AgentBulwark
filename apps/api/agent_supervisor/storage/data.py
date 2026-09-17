@@ -67,6 +67,10 @@ DEFAULT_POLICY_SETTINGS: dict[str, Any] = {
     # Resource URI/template and prompt-name scopes for MCP context reads.
     "agent_context_allowlists": {},
     "agent_tool_mappings": {},
+    # Every published settings snapshot receives a new opaque revision. It is
+    # later bound to task approvals and server-owned execution evidence.
+    "policy_revision": "bootstrap",
+    "task_profiles": {},
 }
 
 
@@ -249,6 +253,10 @@ def _normalize_policy_settings(settings: dict[str, Any]) -> dict[str, Any]:
     settings["agent_model_allowlists"] = _model_allowlists(settings.get("agent_model_allowlists"))
     settings["agent_context_allowlists"] = _context_allowlists(settings.get("agent_context_allowlists"))
     settings["agent_tool_mappings"] = _tool_mappings(settings.get("agent_tool_mappings"))
+    raw_profiles = settings.get("task_profiles")
+    settings["task_profiles"] = deepcopy(raw_profiles) if isinstance(raw_profiles, dict) else {}
+    revision = str(settings.get("policy_revision") or "bootstrap").strip()
+    settings["policy_revision"] = revision if revision else "bootstrap"
     return settings
 
 
@@ -693,6 +701,12 @@ def _update_policy_settings_unlocked(updates: dict[str, Any]) -> dict[str, Any]:
     settings = _normalize_policy_settings(
         {**before, **{key: value for key, value in updates.items() if key in DEFAULT_POLICY_SETTINGS}}
     )
+    # Keep task profiles inside the existing settings snapshot, but reject a
+    # publish that would make a task wider than its Agent's established scope.
+    from apps.api.agent_supervisor.domains.governance.task_profiles import validate_task_profiles_config
+
+    validate_task_profiles_config(settings)
+    settings["policy_revision"] = uuid.uuid4().hex
     if production_security_profile():
         settings["require_agent_capability_registration"] = True
         settings["require_agent_model_registration"] = True

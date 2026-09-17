@@ -1,4 +1,6 @@
 import json
+import re
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -66,6 +68,34 @@ class AgentToolMappingConfig(BaseModel):
     description: str = Field(default="", max_length=500)
 
 
+class TaskProfileConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(..., min_length=1, max_length=160, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
+    name: str = Field(..., min_length=1, max_length=120)
+    enabled: bool = True
+    allowed_capabilities: list[ToolCapability] = Field(default_factory=list, max_length=20)
+    allowed_file_paths: list[str] = Field(default_factory=list, max_length=100)
+    allowed_api_origins: list[str] = Field(default_factory=list, max_length=100)
+    allowed_email_domains: list[str] = Field(default_factory=list, max_length=100)
+    require_approval: bool = False
+    expires_at: str = Field(default="", max_length=64)
+
+    @field_validator("expires_at")
+    @classmethod
+    def _validate_expiry(cls, value: str) -> str:
+        candidate = value.strip()
+        if not candidate:
+            return ""
+        try:
+            parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("expires_at 必须是 ISO-8601 时间") from exc
+        if parsed.tzinfo is None:
+            raise ValueError("expires_at 必须包含时区")
+        return candidate
+
+
 class PolicySettingsUpdate(BaseModel):
     anomaly_review_threshold: int | None = Field(default=None, ge=1, le=100)
     anomaly_reject_threshold: int | None = Field(default=None, ge=1, le=100)
@@ -82,8 +112,19 @@ class PolicySettingsUpdate(BaseModel):
     agent_model_allowlists: dict[str, list[str]] | None = None
     agent_context_allowlists: dict[str, dict[str, list[str]]] | None = None
     agent_tool_mappings: dict[str, dict[str, AgentToolMappingConfig]] | None = None
+    task_profiles: dict[str, TaskProfileConfig] | None = Field(default=None, max_length=100)
     operator: str = Field(default="security-admin", max_length=80)
     comment: str = Field(default="", max_length=500)
+
+    @field_validator("task_profiles")
+    @classmethod
+    def _validate_task_profile_ids(cls, value: dict[str, TaskProfileConfig] | None) -> dict[str, TaskProfileConfig] | None:
+        if value is None:
+            return value
+        for task_id in value:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,159}", task_id):
+                raise ValueError("task_profiles 中的 task_id 长度或格式无效")
+        return value
 
 
 class AgentRegistrationCreate(BaseModel):

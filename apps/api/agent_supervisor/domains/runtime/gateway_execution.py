@@ -20,6 +20,7 @@ from apps.api.agent_supervisor.domains.governance.integrity import (
     verify_audit_signature,
 )
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
+from apps.api.agent_supervisor.domains.governance.task_profiles import task_binding_mismatch_reason
 from apps.api.agent_supervisor.domains.runtime.execution_receipts import (
     complete_execution,
     tool_call_hash,
@@ -124,6 +125,9 @@ def execute_gateway_tool_call(
     expected_tool_hash = str(audit_log.get("tool_call_hash") or "")
     if not expected_tool_hash or tool_call_hash(original_tool_call) != expected_tool_hash:
         raise ValueError("网关审计参数已脱敏或发生变化，拒绝自动执行")
+    task_reason = task_binding_mismatch_reason(stage_context, agent_id=agent_id, raw_tool_call=original_tool_call)
+    if task_reason:
+        raise ValueError(task_reason)
 
     claim_id = f"gateway-claim-{uuid4().hex}"
     claim = claim_gateway_execution(

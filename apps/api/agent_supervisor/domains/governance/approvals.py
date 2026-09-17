@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 from apps.api.agent_supervisor.domains.governance.redaction import redact_sensitive
+from apps.api.agent_supervisor.domains.governance.task_profiles import task_binding_mismatch_reason
 from apps.api.agent_supervisor.domains.governance.tool_contract import normalize_tool_call
 from apps.api.agent_supervisor.domains.runtime.event_stream import publish_runtime_event
 from apps.api.agent_supervisor.paths import RUNTIME_DIR
@@ -47,6 +48,8 @@ def create_approval_review(
         return existing
 
     tool_call = event.get("tool_call") or {}
+    stage_context = audit_log.get("stage_context")
+    stage_context = stage_context if isinstance(stage_context, dict) else {}
     created_at = _now()
     settings = get_policy_settings()
     sla_minutes = int(settings.get("approval_sla_minutes", 30))
@@ -90,6 +93,10 @@ def create_approval_review(
             )
         ),
         "conversation_id": str(event.get("conversation_id", audit_log.get("conversation_id", "external-conversation"))),
+        "task_id": str(stage_context.get("task_id") or ""),
+        "task_profile_fingerprint": str(stage_context.get("task_profile_fingerprint") or ""),
+        "policy_revision": str(stage_context.get("policy_revision") or ""),
+        "task_scope": str(stage_context.get("task_scope") or ""),
         "model_input_excerpt": str(redact_sensitive(str(event.get("model_input", ""))))[:360],
         "model_output_excerpt": str(redact_sensitive(str(event.get("model_output", ""))))[:360],
         "audit_hash": str(audit_log.get("audit_hash", "")),
@@ -266,6 +273,19 @@ def claim_approval_execution(review_id: str, agent_id: str, tool_call: dict[str,
             raise ValueError("仅原始Agent可以领取该审批调用")
         if review.get("tool_call_hash") != _tool_call_hash(tool_call):
             raise ValueError("恢复执行的工具调用与原始待审批调用不一致")
+        task_context = {
+            "task_id": review.get("task_id"),
+            "task_profile_fingerprint": review.get("task_profile_fingerprint"),
+            "policy_revision": review.get("policy_revision"),
+            "task_scope": review.get("task_scope"),
+        }
+        task_reason = task_binding_mismatch_reason(task_context, agent_id=agent_id, raw_tool_call=tool_call)
+        if task_reason:
+            return {
+                "granted": False,
+                "reason": task_reason,
+                "review": review,
+            }
         if review.get("execution_status") != "ready_to_resume":
             return {
                 "granted": False,

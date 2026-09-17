@@ -1066,6 +1066,19 @@ def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> lis
         receipt = receipts.get(audit_id)
         claim = claims.get(audit_id)
         copy["execution_receipt"] = receipt
+        if receipt:
+            copy["execution_evidence"] = str(
+                receipt.get("execution_evidence") or log.get("execution_evidence") or ""
+            )
+            copy["execution_observed_by_server"] = receipt.get("execution_observed_by_server") is True
+            if copy["execution_observed_by_server"] and isinstance(copy.get("tool_output"), dict):
+                tool_output = dict(copy["tool_output"])
+                tool_output["executed"] = True
+                tool_output["execution_target"] = str(receipt.get("execution_target") or "unknown")
+                tool_output["executor"] = "gateway"
+                if tool_output.get("output") == "监督已完成，等待外部 Agent 按决策执行并提交回执。":
+                    tool_output["output"] = "服务端已完成受控执行，结果通过回执 Hash 绑定。"
+                copy["tool_output"] = tool_output
         if claim and str(claim.get("status") or "") == "unknown":
             # An uncertain execution claim means the side effect may already
             # have happened even when a receipt row exists.  Reconciliation
@@ -1103,8 +1116,6 @@ def enrich_audit_logs_with_execution_receipts(logs: list[dict[str, Any]]) -> lis
             copy["evidence_status"] = "invalid"
         elif log.get("execution_receipt_expected") and not receipt:
             copy["evidence_status"] = "pending"
-        elif receipt and receipt.get("control_verified") is False:
-            copy["evidence_status"] = "invalid"
         elif hash_valid and signature_valid:
             copy["evidence_status"] = "verified"
         else:

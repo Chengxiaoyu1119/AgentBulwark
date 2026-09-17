@@ -46,6 +46,11 @@ from apps.api.agent_supervisor.domains.governance.skill_scanner import (
     skill_scan_enabled,
 )
 from apps.api.agent_supervisor.domains.governance.supervisor import GuardDecision, decide
+from apps.api.agent_supervisor.domains.governance.task_profiles import (
+    normalize_task_id,
+    resolve_task_profile,
+    task_audit_context,
+)
 from apps.api.agent_supervisor.domains.governance.tool_contract import (
     get_agent_model_allowlist,
     get_agent_tool_allowlist,
@@ -1438,7 +1443,7 @@ def _validate_supervisor_extension(options: dict[str, Any]) -> None:
 
     if "mode" in options:
         _validated_proxy_mode(options)
-    for field_name in ("agent_id", "session_id"):
+    for field_name in ("agent_id", "session_id", "task_id"):
         value = options.get(field_name)
         if value is None:
             continue
@@ -1622,6 +1627,37 @@ def _proxy_session_id(
         raise ValueError("代理请求头与请求体中的 session_id 不一致")
     candidate = context_value or body_value
     return candidate or request_id, bool(candidate)
+
+
+def _proxy_task_id(
+    options: dict[str, Any],
+    security_context: dict[str, Any] | None,
+) -> tuple[str, bool]:
+    """Resolve an out-of-model task identifier without forwarding it upstream."""
+
+    header_value = security_context.get("task_id") if isinstance(security_context, dict) else ""
+    body_value = options.get("task_id")
+    try:
+        header_task_id = normalize_task_id(header_value)
+        body_task_id = normalize_task_id(body_value)
+    except ValueError as exc:
+        raise ValueError(f"代理 task_id（请求头或请求体）{exc}") from exc
+    if header_task_id and body_task_id and header_task_id != body_task_id:
+        raise ValueError("X-Agent-Task-ID 与 agent_supervisor.task_id 不一致")
+    task_id = header_task_id or body_task_id
+    return task_id, bool(task_id)
+
+
+def _task_response_metadata(binding: Any, *, provided: bool) -> dict[str, Any]:
+    context = task_audit_context(binding)
+    return {
+        "task_id": context["task_id"],
+        "task_profile_fingerprint": context["task_profile_fingerprint"],
+        "policy_revision": context["policy_revision"],
+        "task_scope": context["task_scope"],
+        "task_profile_enforced": bool(context["task_profile_required"]),
+        "task_id_provided": provided,
+    }
 
 
 def _validate_proxy_tool_receipts(
@@ -1822,6 +1858,7 @@ def _proxy_request_guard(
     conversation_id: str,
     agent_id: str,
     request_hash: str,
+    task_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Inspect untrusted conversation content before sending it to a provider."""
     messages = payload.get("messages")
@@ -1859,6 +1896,7 @@ def _proxy_request_guard(
                 "request_id": request_id,
                 "request_hash": request_hash,
                 "provider_called": False,
+                **(task_context or {}),
             },
         },
         guard_enabled=True,
@@ -1887,6 +1925,7 @@ def _proxy_tool_result_guard(
     conversation_id: str,
     agent_id: str,
     request_hash: str,
+    task_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """隔离 OpenAI ``role=tool``/``function`` 返回值中的间接提示注入。
 
@@ -1941,6 +1980,7 @@ def _proxy_tool_result_guard(
                 "request_hash": request_hash,
                 "provider_called": False,
                 "tool_result_findings": findings,
+                **(task_context or {}),
             },
         },
         guard_enabled=True,
@@ -2012,6 +2052,7 @@ def _record_gateway_response_audit(
     response: dict[str, Any],
     provider_result: dict[str, Any],
     provider_profile: str = "",
+    task_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist a gateway decision even when the model returned plain text.
 
@@ -2046,6 +2087,7 @@ def _record_gateway_response_audit(
                 "provider_request_hash": provider_result.get("request_hash", ""),
                 "provider_response_hash": provider_result.get("provider_response_hash", ""),
                 "provider_called": True,
+                **(task_context or {}),
             },
         },
         guard_enabled=True,
@@ -2070,6 +2112,7 @@ def _record_gateway_provider_failure_audit(
     provider_output_exposed: bool = False,
     stream_released_char_count: int = 0,
     related_audit_id: str = "",
+    task_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist a non-reflective audit when the Provider path cannot complete.
 
@@ -2117,6 +2160,7 @@ def _record_gateway_provider_failure_audit(
                     "provider_failure_kind": failure_kind,
                     "provider_failures": safe_failures,
                     "related_audit_id": _safe_protocol_identifier(related_audit_id),
+                    **(task_context or {}),
                 },
             },
             guard_enabled=True,
@@ -2162,6 +2206,7 @@ def _raise_provider_response_contract_failure(
     provider_profile: str,
     model: str,
     provider_result: dict[str, Any],
+    task_context: dict[str, Any] | None = None,
 ) -> None:
     """Raise a stable 502-class error for a malformed Provider envelope.
 
@@ -2192,6 +2237,7 @@ def _raise_provider_response_contract_failure(
         failure_kind="provider-response-contract",
         provider_called=True,
         provider_attempted=True,
+        task_context=task_context,
     )
     raise ModelProviderUnavailableError(
         "模型供应商响应未通过网关协议校验。",
@@ -2208,6 +2254,7 @@ def _record_proxy_model_allowlist_audit(
     request_hash: str,
     model: str,
     reason: str,
+    task_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist the model-selection denial before any Provider request."""
 
@@ -2234,6 +2281,45 @@ def _record_proxy_model_allowlist_audit(
                     "model_name_hash": hashlib.sha256(model.encode("utf-8")).hexdigest(),
                     "model_allowlist_rejected": True,
                     "policy_reason_hash": hashlib.sha256(reason.encode("utf-8")).hexdigest(),
+                    **(task_context or {}),
+                },
+            },
+            guard_enabled=True,
+            execute_managed=False,
+            receipt_required=False,
+        )
+    except Exception:
+        return {}
+
+
+def _record_proxy_task_profile_audit(
+    *,
+    session_id: str,
+    agent_id: str,
+    request_id: str,
+    request_hash: str,
+    task_context: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist a task-binding rejection before a Provider receives the request."""
+
+    try:
+        return evaluate_agent_event(
+            {
+                "conversation_id": session_id,
+                "agent_id": agent_id,
+                "agent_role": "openai-compatible-agent",
+                "source_app": "openai-compatible-proxy",
+                "model_input": "task authorization",
+                "model_output": "",
+                "context_sources": ["openai-compatible-client", "task-profile"],
+                "tool_call": {"tool": "model.respond", "arguments": {"topic": "task-authorization"}},
+                "stage_context": {
+                    "session_id": session_id,
+                    "request_id": request_id,
+                    "request_hash": request_hash,
+                    "provider_called": False,
+                    "task_profile_rejected": True,
+                    **task_context,
                 },
             },
             guard_enabled=True,
@@ -3284,8 +3370,27 @@ def _run_transparent_proxy_completion(
         raise ValueError("当前凭证不能覆盖透明代理的目标模型")
     model = model_override or request_model
     policy_settings = get_policy_settings()
+    task_id, task_id_provided = _proxy_task_id(options, security_context)
+    task_binding = resolve_task_profile(agent_id, task_id, settings=policy_settings)
+    task_context = task_audit_context(task_binding)
+    task_metadata = _task_response_metadata(task_binding, provided=task_id_provided)
+    if task_binding.required and not task_binding.valid:
+        task_audit = _record_proxy_task_profile_audit(
+            session_id=session_id,
+            agent_id=agent_id,
+            request_id=request_id,
+            request_hash=request_hash,
+            task_context=task_context,
+        )
+        raise ProxyPolicyRejectionError(task_binding.reason or "任务授权无效。", gateway_audit=task_audit)
     model_allowlist = get_agent_model_allowlist(policy_settings, agent_id) if context.get("agent_id") else None
     tool_allowlist = get_agent_tool_allowlist(policy_settings, agent_id) if context.get("agent_id") else None
+    task_tool_allowlist = (
+        [str(item).strip().lower() for item in (task_binding.profile or {}).get("allowed_capabilities", []) if str(item).strip()]
+        if task_binding.required
+        else None
+    )
+    provider_tool_allowlist = task_tool_allowlist if task_tool_allowlist is not None else tool_allowlist
     model_allowlist_issue = model_allowlist_reason(model, model_allowlist)
     if model_allowlist_issue and context_role not in {"admin"}:
         model_audit = _record_proxy_model_allowlist_audit(
@@ -3295,6 +3400,7 @@ def _run_transparent_proxy_completion(
             request_hash=request_hash,
             model=model,
             reason=model_allowlist_issue,
+            task_context=task_context,
         )
         raise ProxyPolicyRejectionError(model_allowlist_issue, gateway_audit=model_audit)
     request_guard = _proxy_request_guard(
@@ -3303,6 +3409,7 @@ def _run_transparent_proxy_completion(
         conversation_id=session_id,
         agent_id=agent_id,
         request_hash=request_hash,
+        task_context=task_context,
     )
     if request_guard is None and isinstance(messages, list):
         request_guard = _proxy_tool_result_guard(
@@ -3311,6 +3418,7 @@ def _run_transparent_proxy_completion(
             conversation_id=session_id,
             agent_id=agent_id,
             request_hash=request_hash,
+            task_context=task_context,
         )
     if request_guard:
         response: dict[str, Any] = {
@@ -3336,7 +3444,7 @@ def _run_transparent_proxy_completion(
              "provider_profile": provider_profile,
              "model": _safe_model_label(model),
              "model_allowlist_enforced": model_allowlist is not None and context_role not in {"admin"},
-             "tool_allowlist_enforced": tool_allowlist is not None,
+            "tool_allowlist_enforced": provider_tool_allowlist is not None,
             "request_hash": request_hash,
             "provider_request_hash": "",
             "provider_response_hash": "",
@@ -3363,6 +3471,7 @@ def _run_transparent_proxy_completion(
             "evidence_scope": "gateway-contract",
             "gateway_contract_evidence": "pre-provider-block",
             "decision_source": "gateway-request-policy",
+            **task_metadata,
             **receipt_metadata,
             "stream_buffered": True,
         }
@@ -3374,7 +3483,7 @@ def _run_transparent_proxy_completion(
     tool_allowlist_scan = _proxy_tool_allowlist_scan(
         payload,
         agent_id=agent_id,
-        allowed_tools=tool_allowlist,
+        allowed_tools=provider_tool_allowlist,
     )
     if tool_allowlist_scan["blocked"] and not tool_scan["blocked"]:
         first_allowlist_finding = tool_allowlist_scan["findings"][0]
@@ -3384,6 +3493,7 @@ def _run_transparent_proxy_completion(
             request_id=request_id,
             request_hash=request_hash,
             finding=first_allowlist_finding,
+            task_context=task_context,
         )
         tool_scan = {
             "blocked": True,
@@ -3411,6 +3521,7 @@ def _run_transparent_proxy_completion(
                     "request_id": request_id,
                     "request_hash": request_hash,
                     "provider_called": False,
+                    **task_context,
                 },
             },
             guard_enabled=True,
@@ -3449,7 +3560,7 @@ def _run_transparent_proxy_completion(
                  "provider_endpoint_scope": "not-called",
                  "provider_profile": provider_profile,
                  "model": model,
-                 "tool_allowlist_enforced": tool_allowlist is not None,
+                "tool_allowlist_enforced": provider_tool_allowlist is not None,
                  "request_hash": request_hash,
                 "provider_request_hash": "",
                 "provider_response_hash": "",
@@ -3483,7 +3594,8 @@ def _run_transparent_proxy_completion(
                 "evidence_scope": "gateway-contract",
                 "gateway_contract_evidence": "pre-provider-tool-definition-block",
                 "decision_source": "gateway-tool-definition-policy",
-                 **receipt_metadata,
+                **task_metadata,
+                **receipt_metadata,
                 "stream_buffered": True,
             },
         }
@@ -3526,6 +3638,7 @@ def _run_transparent_proxy_completion(
             provider_attempted=True,
             provider_output_exposed=released_char_count > 0,
             stream_released_char_count=released_char_count,
+            task_context=task_context,
         )
         exc.gateway_audit = audit
         raise
@@ -3545,6 +3658,7 @@ def _run_transparent_proxy_completion(
             provider_attempted=provider_called,
             provider_output_exposed=released_char_count > 0,
             stream_released_char_count=released_char_count,
+            task_context=task_context,
         )
         exc.gateway_audit = audit
         raise
@@ -3567,6 +3681,7 @@ def _run_transparent_proxy_completion(
             provider_attempted=True,
             provider_output_exposed=released_char_count > 0,
             stream_released_char_count=released_char_count,
+            task_context=task_context,
         )
         raise ModelProviderUnavailableError("模型供应商响应未通过网关协议校验。", [], gateway_audit=audit) from exc
     try:
@@ -3595,6 +3710,7 @@ def _run_transparent_proxy_completion(
             provider_profile=provider_profile,
             model=model,
             provider_result=provider_result if isinstance(provider_result, dict) else {},
+            task_context=task_context,
         )
         raise AssertionError("unreachable") from None
     requested_completions = payload.get("n", 1)
@@ -3646,6 +3762,7 @@ def _run_transparent_proxy_completion(
                         provider_profile=provider_profile,
                         model=model,
                         provider_result=provider_result,
+                        task_context=task_context,
                     )
                 output_scan = _scan_provider_visible_output(legacy_text)
                 output_findings.extend(output_scan["findings"])
@@ -3668,6 +3785,7 @@ def _run_transparent_proxy_completion(
                 provider_profile=provider_profile,
                 model=model,
                 provider_result=provider_result,
+                task_context=task_context,
             )
         message["content"] = normalized_content
         filtered = _scan_provider_visible_output(_provider_choice_security_text(choice))
@@ -3793,6 +3911,7 @@ def _run_transparent_proxy_completion(
                     "provider_response_hash": provider_result.get("provider_response_hash", ""),
                     "provider_response_id": provider_result.get("provider_response_id", ""),
                     "provider_called": True,
+                    **task_context,
                 },
             }
             try:
@@ -3905,6 +4024,7 @@ def _run_transparent_proxy_completion(
                     "provider_request_hash": provider_result.get("request_hash", ""),
                     "provider_response_hash": provider_result.get("provider_response_hash", ""),
                     "provider_called": True,
+                    **task_context,
                 },
             },
             guard_enabled=True,
@@ -3946,6 +4066,7 @@ def _run_transparent_proxy_completion(
             response=response,
             provider_result=provider_result,
             provider_profile=provider_profile,
+            task_context=task_context,
         )
 
     overall = _aggregate_proxy_decision(controlled)
@@ -3991,7 +4112,7 @@ def _run_transparent_proxy_completion(
         "provider_profile": provider_profile,
         "model": _safe_protocol_identifier(provider_result.get("model") or model, fallback="unknown-model"),
          "model_allowlist_enforced": model_allowlist is not None and context_role not in {"admin"},
-         "tool_allowlist_enforced": tool_allowlist is not None,
+         "tool_allowlist_enforced": provider_tool_allowlist is not None,
         "request_hash": request_hash,
         "provider_request_hash": provider_result.get("request_hash", ""),
         "provider_response_hash": provider_result.get("provider_response_hash", ""),
@@ -4062,6 +4183,7 @@ def _run_transparent_proxy_completion(
             "provider-output-block" if overall["decision"] in blocked_decisions else "provider-response-returned"
         ),
         "decision_source": "gateway-provider-response-policy",
+        **task_metadata,
         **receipt_metadata,
         "stream_buffered": provider_stream_callback is None,
         "provider_streamed": bool(provider_result.get("provider_streamed")),
@@ -4639,6 +4761,7 @@ def _record_proxy_tool_allowlist_audit(
     request_id: str,
     request_hash: str,
     finding: dict[str, Any],
+    task_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Persist the pre-Provider capability denial without reflecting tool text."""
     raw_name = str(finding.get("name") or "")
@@ -4658,6 +4781,7 @@ def _record_proxy_tool_allowlist_audit(
             "provider_called": False,
             "tool_definition_index": finding.get("index"),
             "tool_name_hash": hashlib.sha256(raw_name.encode("utf-8")).hexdigest() if raw_name else "",
+            **(task_context or {}),
         },
     }
     try:

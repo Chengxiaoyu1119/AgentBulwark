@@ -6,6 +6,7 @@ import { AgentContextAllowlistEditor } from './AgentContextAllowlistEditor';
 import { AgentModelAllowlistEditor } from './AgentModelAllowlistEditor';
 import { AgentToolAllowlistEditor } from './AgentToolAllowlistEditor';
 import { AgentToolMappingEditor } from './AgentToolMappingEditor';
+import { TaskProfileEditor } from './TaskProfileEditor';
 
 type Props = {
   policySettings: PolicySettings | null;
@@ -53,6 +54,7 @@ export function AgentBoundarySettingsPanel({
     (total, mappings) => total + Object.keys(mappings).length,
     0
   );
+  const taskProfileCount = Object.keys(policySettings.task_profiles ?? {}).length;
   const selectedBinding = selectedAgentId ? getAgentBinding(policySettings, selectedAgentId) : null;
 
   function establishSelectedBoundary() {
@@ -75,13 +77,15 @@ export function AgentBoundarySettingsPanel({
     });
   }
 
-  const knownAgentIds = new Set([
-    ...registeredAgentIds,
-    ...Object.keys(settings.agent_tool_allowlists ?? {}),
-    ...Object.keys(settings.agent_api_allowlists ?? {}),
-    ...Object.keys(settings.agent_model_allowlists ?? {}),
-    ...Object.keys(settings.agent_context_allowlists ?? {})
-  ]);
+  const knownAgentIds = new Set(
+    [
+      ...registeredAgentIds,
+      ...Object.keys(settings.agent_tool_allowlists ?? {}),
+      ...Object.keys(settings.agent_api_allowlists ?? {}),
+      ...Object.keys(settings.agent_model_allowlists ?? {}),
+      ...Object.keys(settings.agent_context_allowlists ?? {})
+    ].filter((agentId) => agentId !== '*')
+  );
   return (
     <PanelCard title="业务安全边界" subtitle="先关闭未登记能力，再按 Agent 精确放行。">
       <UiTypography.Paragraph type="secondary">
@@ -181,15 +185,28 @@ export function AgentBoundarySettingsPanel({
                 <AgentToolMappingEditor policySettings={policySettings} canEdit={canEdit} onPatch={onPatch} />
               </div>
             )
+          },
+          {
+            key: 'task-profiles',
+            label: `任务授权${taskProfileCount ? `（${taskProfileCount}）` : ''}`,
+            children: (
+              <TaskProfileEditor
+                policySettings={policySettings}
+                canEdit={canEdit}
+                agentIds={[...knownAgentIds].sort()}
+                onPatch={onPatch}
+              />
+            )
           }
         ]}
       />
       <UiFlex justify="space-between" align="center" wrap="wrap" gap={12} className="zh-mt-16">
         <UiTypography.Text type="secondary">
-          已登记 {Object.keys(policySettings?.agent_tool_allowlists ?? {}).length} 个 Agent，{mappingCount} 条工具映射。
+          已登记 {Object.keys(policySettings?.agent_tool_allowlists ?? {}).length} 个 Agent，{mappingCount} 条工具映射，
+          {taskProfileCount} 个任务授权；保存会先执行发布预检。
         </UiTypography.Text>
         <UiButton type="primary" loading={saving} disabled={!canEdit} onClick={() => void onSave()}>
-          保存业务边界
+          校验并发布业务边界
         </UiButton>
       </UiFlex>
       {versions.length ? (
