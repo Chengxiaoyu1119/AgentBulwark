@@ -9,7 +9,7 @@ export type MetricCardProps = {
 
 export function MetricCard({ label, value, tone = 'default', suffix }: MetricCardProps) {
   return (
-    <Card variant="borderless" hoverable className={`zh-metric-card zh-metric-card--${tone}`}>
+    <Card variant="borderless" className={`zh-metric-card zh-metric-card--${tone}`}>
       <Statistic title={label} value={value} suffix={suffix} />
     </Card>
   );

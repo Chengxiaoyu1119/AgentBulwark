@@ -405,6 +405,11 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   letter-spacing: -0.03em;
 }
 
+.zh-product-heading__description {
+  display: block;
+  margin-top: var(--zh-space-1);
+}
+
 .zh-product-heading__actions {
   display: flex;
   align-items: center;
@@ -598,7 +603,8 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   }
 
   .zh-product-tabs .ant-tabs-tab {
-    padding-inline: var(--zh-space-2);
+    margin-inline-start: var(--zh-space-3) !important;
+    padding-inline: 0;
   }
 }
 
@@ -760,12 +766,33 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.zh-ops-command-bar {
+  display: grid;
+  grid-template-columns: minmax(var(--zh-layout-action-min-width), 0.78fr) minmax(0, 2.22fr);
+  gap: var(--zh-panel-gap);
+  align-items: stretch;
+}
+
+.zh-ops-command-bar > * {
+  min-width: 0;
+}
+
+.zh-ops-command-bar .zh-ops-status-strip,
+.zh-ops-command-bar .zh-ops-metric-grid {
+  height: 100%;
+  margin: 0;
+}
+
 .zh-ops-dashboard .zh-panel-grid > * {
   min-width: 0;
 }
 
-.zh-ops-overview-grid {
+.zh-ops-priority-grid {
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+}
+
+.zh-ops-detail-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .zh-ops-decision-row {
@@ -947,6 +974,12 @@ html[data-theme='dark'] .zh-label-tag.ant-tag-purple {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
 }
 
+.zh-ops-priority-grid .zh-data-state,
+.zh-situation-grid .zh-data-state {
+  min-height: var(--zh-summary-min-height);
+  padding: var(--zh-space-4);
+}
+
 .zh-main-content--immersive {
   padding: var(--zh-space-5);
 }
@@ -956,7 +989,9 @@ html[data-theme='dark'] .zh-main-content--immersive {
 }
 
 @media (max-width: 900px) {
-  .zh-ops-overview-grid,
+  .zh-ops-command-bar,
+  .zh-ops-priority-grid,
+  .zh-ops-detail-grid,
   .zh-situation-grid {
     grid-template-columns: 1fr;
   }
@@ -1363,6 +1398,29 @@ html[data-theme='dark'] .zh-main-content--immersive {
   align-items: center;
   gap: var(--zh-space-3);
   min-height: var(--zh-control-min-height);
+}
+
+.zh-settings-agent-row {
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.zh-settings-agent-row__summary {
+  min-width: 0;
+  flex: 1 1 var(--zh-layout-action-min-width);
+}
+
+.zh-settings-agent-row__actions {
+  min-width: 0;
+  justify-content: flex-end;
+}
+
+@media (max-width: 768px) {
+  .zh-settings-agent-row__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 .zh-app-header.zh-app-header--light {

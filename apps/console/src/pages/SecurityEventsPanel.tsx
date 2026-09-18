@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { fetchAuditLogs, fetchExecutionInventory } from '../app/operationalApi';
 import { safeUiErrorSummary } from '../app/apiRequestSupport';
@@ -10,18 +10,18 @@ import { ExecutionReconciliationPanel } from '../components/audit/ExecutionRecon
 import { useAuditLogViewModel } from '../components/audit/useAuditLogViewModel';
 import { GatewayTracePanel } from '../components/gateway/GatewayTracePanel';
 import type { RuntimeEventConnection } from '../app/runtimeEventConnection';
-import {
-  PageHeader,
-  RuntimeConnectionBadge,
-  RuntimeConnectionNotice,
-  UiAlert,
-  UiButton,
-  UiStack,
-  UiTabs
-} from '../components/ui';
+import { PageHeader, RuntimeConnectionNotice, UiAlert, UiButton, UiStack, UiSelect, UiTabs } from '../components/ui';
 import type { AuthContext, AuditLog, ExecutionInventory } from '../types';
 
 type EventTab = 'events' | 'reviews' | 'audit';
+type EventWindowKey = '1h' | '6h' | '24h' | '7d' | 'all';
+
+const EVENT_WINDOW_SECONDS: Record<Exclude<EventWindowKey, 'all'>, number> = {
+  '1h': 60 * 60,
+  '6h': 6 * 60 * 60,
+  '24h': 24 * 60 * 60,
+  '7d': 7 * 24 * 60 * 60
+};
 
 export function SecurityEventsPanel({
   authContext,
@@ -33,6 +33,7 @@ export function SecurityEventsPanel({
   refreshSignal?: string;
 }) {
   const [activeTab, setActiveTab] = useState<EventTab>('events');
+  const [eventWindow, setEventWindow] = useState<EventWindowKey>('1h');
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -73,6 +74,14 @@ export function SecurityEventsPanel({
 
   const ownLiveConnection = useRuntimeEventRefresh(loadAuditLogs, { enabled: !externalLiveConnection });
   const liveConnection = externalLiveConnection ?? ownLiveConnection;
+  // The SSE revision intentionally invalidates this rolling window's end timestamp.
+  const eventTimeWindow = useMemo(() => {
+    if (eventWindow === 'all') return undefined;
+    const end = new Date();
+    const start = new Date(end.getTime() - EVENT_WINDOW_SECONDS[eventWindow] * 1000);
+    return { start_at: start.toISOString(), end_at: end.toISOString() };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshSignal rolls the window forward.
+  }, [eventWindow, refreshSignal]);
 
   const view = useAuditLogViewModel({ logs, refresh: loadAuditLogs });
   const operationalPendingCount = view.latestReviews.filter((review) => review.status === '待复核').length;
@@ -101,7 +110,21 @@ export function SecurityEventsPanel({
         description="处置风险请求、人工复核和工具执行回执。"
         actions={
           <UiStack direction="horizontal" align="center" gap="sm" wrap>
-            <RuntimeConnectionBadge connection={liveConnection} />
+            {activeTab === 'events' ? (
+              <UiSelect
+                aria-label="事件时间范围"
+                size="small"
+                value={eventWindow}
+                onChange={(value) => setEventWindow(value as EventWindowKey)}
+                options={[
+                  { value: '1h', label: '近 1 小时' },
+                  { value: '6h', label: '近 6 小时' },
+                  { value: '24h', label: '近 24 小时' },
+                  { value: '7d', label: '近 7 天' },
+                  { value: 'all', label: '全部历史' }
+                ]}
+              />
+            ) : null}
             <UiButton icon={<RefreshCw size={16} />} loading={loading} onClick={() => void loadAuditLogs()}>
               刷新事件
             </UiButton>
@@ -124,6 +147,7 @@ export function SecurityEventsPanel({
               <GatewayTracePanel
                 mode="events"
                 refreshSignal={refreshSignal}
+                timeWindow={eventTimeWindow}
                 liveConnection={liveConnection}
                 pendingApprovalCount={view.approvalError ? '—' : view.approvalQueue.summary.pending_count}
                 onOpenApproval={openApproval}

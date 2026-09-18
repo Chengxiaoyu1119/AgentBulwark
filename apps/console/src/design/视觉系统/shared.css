@@ -66,8 +66,8 @@
 }
 
 .zh-soft-surface {
-  background: var(--zh-visual-soft-surface);
-  border: var(--zh-border-width-hairline) solid var(--zh-visual-subtle-border);
+  background: var(--ant-color-fill-quaternary);
+  border: var(--zh-border-width-hairline) solid var(--ant-color-border-secondary);
   border-radius: var(--zh-radius-panel);
 }
 

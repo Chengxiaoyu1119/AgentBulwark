@@ -153,7 +153,7 @@ describe('SecurityEventsPanel', () => {
     let approvalStatus: ApprovalReview['status'] = '待复核';
     vi.mocked(request).mockReset();
     vi.mocked(request).mockImplementation(async (path) => {
-      if (path === '/api/gateway/traces?limit=50') {
+      if (path === '/api/gateway/traces?limit=50' || path.startsWith('/api/gateway/traces?limit=50&start_at=')) {
         return { traces: [trace], summary: { controlled_count: 1 }, count: 1, total_available: 1 };
       }
       if (path === '/api/gateway/traces/gateway-review-request') return trace;
@@ -178,6 +178,10 @@ describe('SecurityEventsPanel', () => {
 
     expect(await screen.findByRole('tab', { name: '风险事件' })).toHaveAttribute('aria-selected', 'true');
     expect(await screen.findByRole('tab', { name: '待人工复核（1）' })).toBeInTheDocument();
+    const traceRequest = vi
+      .mocked(request)
+      .mock.calls.find(([path]) => path.startsWith('/api/gateway/traces?limit=50&start_at='));
+    expect(traceRequest?.[0]).toMatch(/&end_at=/);
     await user.click(await screen.findByRole('button', { name: /gateway-review-request/ }));
     await user.click(await screen.findByRole('button', { name: '处理人工复核' }));
 

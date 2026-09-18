@@ -64,6 +64,7 @@ describe('Agent policy onboarding', () => {
 
     await user.click(await screen.findByRole('tab', { name: 'Agent 接入' }));
     expect(await screen.findByText('Support Agent')).toBeInTheDocument();
+    expect(screen.getByText('任务 0')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '配置策略' }));
     expect(await screen.findByText('正在配置 Agent support-agent。')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '建立空权限边界' }));

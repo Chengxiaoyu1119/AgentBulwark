@@ -126,22 +126,22 @@ export function AgentRegistryPanel({ canEdit, onConfigurePolicy, onAgentsChange 
       ) : null}
       <UiSpace orientation="vertical" size={10} className="zh-full-width">
         {agents.map((agent) => (
-          <div key={agent.agent_id} className="zh-settings-switch-row">
-            <div>
+          <div key={agent.agent_id} className="zh-settings-switch-row zh-settings-agent-row">
+            <div className="zh-settings-agent-row__summary">
               <UiTypography.Text strong>{agent.display_name}</UiTypography.Text>
               <UiTypography.Paragraph type="secondary" className="zh-mb-0">
                 {agent.agent_id} · Token {agent.token_prefix}… · 最近请求{' '}
                 {agent.last_request_at ? agent.last_request_at.slice(0, 19).replace('T', ' ') : '暂无'}
               </UiTypography.Paragraph>
             </div>
-            <UiFlex gap={8} align="center" wrap="wrap">
+            <UiFlex gap={8} align="center" wrap="wrap" className="zh-settings-agent-row__actions">
               <LabelTag color={agent.status === 'active' ? 'green' : 'default'}>
                 {agent.status === 'active' ? '启用' : '已撤销'}
               </LabelTag>
               <LabelTag color={agent.policy_binding?.ready ? 'green' : 'warning'}>
                 {agent.policy_binding?.ready ? '已绑定策略' : '待绑定策略'}
               </LabelTag>
-              {agent.task_profile_count ? <LabelTag>任务 {agent.task_profile_count}</LabelTag> : null}
+              <LabelTag>任务 {agent.task_profile_count ?? 0}</LabelTag>
               {canEdit && onConfigurePolicy && agent.status === 'active' ? (
                 <UiButton size="small" onClick={() => onConfigurePolicy(agent.agent_id)}>
                   {agent.policy_binding?.ready ? '编辑策略' : '配置策略'}

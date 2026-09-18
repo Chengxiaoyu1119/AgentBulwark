@@ -18,7 +18,11 @@ export function PageHeader({ title, description, badge, actions, className }: Pa
           <Typography.Title level={1}>{title}</Typography.Title>
           {badge}
         </Space>
-        {description ? <Typography.Text type="secondary">{description}</Typography.Text> : null}
+        {description ? (
+          <Typography.Text className="zh-product-heading__description" type="secondary">
+            {description}
+          </Typography.Text>
+        ) : null}
       </div>
       {actions ? <div className="zh-product-heading__actions">{actions}</div> : null}
     </header>

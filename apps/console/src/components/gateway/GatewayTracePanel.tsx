@@ -1,19 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { UiFlex, UiSpace, UiTypography } from '../ui';
+import { UiFlex, UiTypography } from '../ui';
 import { RefreshCw, Search } from 'lucide-react';
 import { request } from '../../app/apiRequest';
 import { safeUiErrorSummary } from '../../app/apiRequestSupport';
 import { useRuntimeEventRefresh } from '../../app/useRuntimeEventRefresh';
 import type { RuntimeEventConnection } from '../../app/runtimeEventConnection';
-import {
-  PanelCard,
-  RuntimeConnectionBadge,
-  RuntimeConnectionNotice,
-  UiDataState,
-  UiButton,
-  UiInput,
-  UiSelect
-} from '../ui';
+import { PanelCard, RuntimeConnectionNotice, UiDataState, UiButton, UiInput, UiSelect } from '../ui';
 import { GatewayTraceDetails } from './GatewayTraceDetails';
 import { GatewayTraceTable } from './GatewayTraceTable';
 import {
@@ -175,12 +167,9 @@ export function GatewayTracePanel({
         }
         className="zh-traffic-panel"
         extra={
-          <UiSpace>
-            <RuntimeConnectionBadge connection={liveConnection} />
-            <UiButton size="small" icon={<RefreshCw size={14} />} loading={loading} onClick={() => void loadTraces()}>
-              刷新
-            </UiButton>
-          </UiSpace>
+          <UiButton size="small" icon={<RefreshCw size={14} />} loading={loading} onClick={() => void loadTraces()}>
+            刷新
+          </UiButton>
         }
       >
         <RuntimeConnectionNotice connection={liveConnection} />

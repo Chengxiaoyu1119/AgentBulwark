@@ -56,25 +56,6 @@ export function OperationalDashboard({ overview, connection, liveConnection, onO
 
   return (
     <div className="zh-page-stack zh-ops-dashboard">
-      <div className="zh-soft-surface zh-action-row zh-ops-status-strip" role="status">
-        <div className="zh-ui-stack zh-ui-stack--align-center zh-ui-stack--gap-sm zh-flex-min zh-ops-status-strip__main">
-          <span className={`zh-ops-live-dot zh-ops-live-dot--${dataStatus}`} aria-hidden="true" />
-          <div className="zh-flex-min">
-            <UiTypography.Text strong>{statusMeta.title}</UiTypography.Text>
-            <UiTypography.Text type="secondary" className="zh-text-meta zh-text-block zh-ops-status-strip__meta">
-              窗口 {overview.window?.key ?? '1h'} · 最近活动 {lastUpdated}
-            </UiTypography.Text>
-          </div>
-        </div>
-        <UiSpace wrap size={8}>
-          {liveConnection ? <RuntimeConnectionBadge connection={liveConnection} /> : null}
-          <LabelTag color={statusMeta.color}>{statusMeta.label}</LabelTag>
-          <UiTypography.Text type="secondary" className="zh-text-meta">
-            数据来自真实网关审计与运行回执
-          </UiTypography.Text>
-        </UiSpace>
-      </div>
-
       {hasSourceErrors ? (
         <UiAlert
           type="warning"
@@ -84,22 +65,43 @@ export function OperationalDashboard({ overview, connection, liveConnection, onO
         />
       ) : null}
 
-      <div className="zh-meta-grid zh-ops-metric-grid">
-        <MetricCard label="请求量" value={metricValue(summary.request_count)} tone="cyan" />
-        <MetricCard
-          label="控制率"
-          value={
-            summary.control_rate === null || summary.control_rate === undefined
-              ? metricValue(summary.block_rate)
-              : `${summary.control_rate}%`
-          }
-          tone="amber"
-        />
-        <MetricCard label="待人工复核" value={metricValue(summary.pending_review_count)} tone="red" />
-        <MetricCard label="未确认执行" value={metricValue(summary.execution_unconfirmed_count)} tone="red" />
+      <div className="zh-ops-command-bar">
+        <div className="zh-soft-surface zh-action-row zh-ops-status-strip" role="status">
+          <div className="zh-ui-stack zh-ui-stack--align-center zh-ui-stack--gap-sm zh-flex-min zh-ops-status-strip__main">
+            <span className={`zh-ops-live-dot zh-ops-live-dot--${dataStatus}`} aria-hidden="true" />
+            <div className="zh-flex-min">
+              <UiTypography.Text strong>{statusMeta.title}</UiTypography.Text>
+              <UiTypography.Text type="secondary" className="zh-text-meta zh-text-block zh-ops-status-strip__meta">
+                窗口 {overview.window?.key ?? '1h'} · 最近活动 {lastUpdated}
+              </UiTypography.Text>
+            </div>
+          </div>
+          <UiSpace wrap size={8}>
+            {liveConnection ? <RuntimeConnectionBadge connection={liveConnection} /> : null}
+            <LabelTag color={statusMeta.color}>{statusMeta.label}</LabelTag>
+            <UiTypography.Text type="secondary" className="zh-text-meta">
+              数据来自真实网关审计与运行回执
+            </UiTypography.Text>
+          </UiSpace>
+        </div>
+
+        <div className="zh-meta-grid zh-ops-metric-grid">
+          <MetricCard label="请求量" value={metricValue(summary.request_count)} tone="cyan" />
+          <MetricCard
+            label="控制率"
+            value={
+              summary.control_rate === null || summary.control_rate === undefined
+                ? metricValue(summary.block_rate)
+                : `${summary.control_rate}%`
+            }
+            tone="amber"
+          />
+          <MetricCard label="待人工复核" value={metricValue(summary.pending_review_count)} tone="red" />
+          <MetricCard label="未确认执行" value={metricValue(summary.execution_unconfirmed_count)} tone="red" />
+        </div>
       </div>
 
-      <div className="zh-panel-grid zh-ops-overview-grid">
+      <div className="zh-panel-grid zh-ops-priority-grid">
         <PanelCard
           title="实时请求流"
           subtitle="按最新时间显示真实请求；点击记录查看原始 Trace。"
@@ -193,7 +195,7 @@ export function OperationalDashboard({ overview, connection, liveConnection, onO
         </PanelCard>
       </div>
 
-      <div className="zh-panel-grid zh-ops-overview-grid">
+      <div className="zh-panel-grid zh-ops-detail-grid">
         <PanelCard
           title="处置态势"
           subtitle="按请求级最终决策统计，重复审计阶段不会重复计数。"
