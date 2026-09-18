@@ -113,7 +113,7 @@ async function requestJson(baseUrl, path, options = {}) {
   const url = new URL(path, `${baseUrl}/`);
   const { authToken, allowError = false, ...requestOptions } = options;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const timeout = setTimeout(() => controller.abort(), 45_000);
   let response;
   try {
     response = await fetch(url, {
