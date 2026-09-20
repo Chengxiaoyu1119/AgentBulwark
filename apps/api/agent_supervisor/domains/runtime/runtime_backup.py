@@ -342,12 +342,13 @@ def mark_runtime_active(runtime_root: Path = RUNTIME_DIR) -> Path:
     active_dir.mkdir(parents=True, exist_ok=True)
     marker = active_dir / f"{os.getpid()}-{uuid4().hex}.json"
     try:
+        payload: dict[str, int | str] = {"pid": os.getpid(), "started_at": datetime.now(timezone.utc).isoformat()}
+        if os.name == "nt":
+            process_creation_filetime = _windows_process_creation_filetime(os.getpid())
+            if process_creation_filetime is not None:
+                payload["process_creation_filetime"] = process_creation_filetime
         marker.write_text(
-            json.dumps(
-                {"pid": os.getpid(), "started_at": datetime.now(timezone.utc).isoformat()},
-                ensure_ascii=False,
-                sort_keys=True,
-            ),
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
             encoding="utf-8",
         )
     except BaseException as exc:
@@ -381,8 +382,9 @@ def _assert_runtime_offline(runtime_root: Path) -> None:
             payload = json.loads(marker.read_text(encoding="utf-8"))
             pid = int(payload.get("pid", 0))
         except (OSError, ValueError, json.JSONDecodeError, AttributeError):
+            payload = {}
             pid = 0
-        if pid > 0 and _pid_is_alive(pid):
+        if pid > 0 and _runtime_marker_is_active(pid, payload):
             active_pids.append(pid)
         else:
             marker.unlink(missing_ok=True)
@@ -392,6 +394,37 @@ def _assert_runtime_offline(runtime_root: Path) -> None:
         active_dir.rmdir()
     except OSError:
         pass
+
+
+def _runtime_marker_is_active(pid: int, payload: dict[str, Any]) -> bool:
+    is_alive = _pid_is_alive(pid)
+    if not is_alive or os.name != "nt":
+        return is_alive
+    current_filetime = _windows_process_creation_filetime(pid)
+    if current_filetime is None:
+        return True
+    recorded_filetime = payload.get("process_creation_filetime")
+    if isinstance(recorded_filetime, str) and recorded_filetime.isdigit():
+        return recorded_filetime == current_filetime
+    recorded_started_at = _iso8601_to_windows_filetime(payload.get("started_at"))
+    if recorded_started_at is None:
+        return True
+    return int(current_filetime) <= recorded_started_at
+
+
+def _iso8601_to_windows_filetime(value: object) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if instant.tzinfo is None:
+        return None
+    utc_instant = instant.astimezone(timezone.utc)
+    epoch = datetime(1601, 1, 1, tzinfo=timezone.utc)
+    delta = utc_instant - epoch
+    return (delta.days * 86_400 + delta.seconds) * 10_000_000 + delta.microseconds * 10
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -447,6 +480,46 @@ def _windows_pid_is_alive(pid: int) -> bool:
         if not get_exit_code_process(handle, ctypes.byref(exit_code)):
             return True
         return exit_code.value == still_active
+    finally:
+        close_handle(handle)
+
+
+def _windows_process_creation_filetime(pid: int) -> str | None:
+    """Return the Windows creation FILETIME for a live process when queryable."""
+
+    import ctypes
+    from ctypes import wintypes
+
+    ctypes_api = cast(Any, ctypes)
+    process_query_limited_information = 0x1000
+    kernel32 = ctypes_api.WinDLL("kernel32", use_last_error=True)
+    open_process = kernel32.OpenProcess
+    open_process.argtypes = (ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32)
+    open_process.restype = ctypes.c_void_p
+    get_process_times = kernel32.GetProcessTimes
+    get_process_times.argtypes = (
+        ctypes.c_void_p,
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+        ctypes.POINTER(wintypes.FILETIME),
+    )
+    get_process_times.restype = ctypes.c_int
+    close_handle = kernel32.CloseHandle
+    close_handle.argtypes = (ctypes.c_void_p,)
+    close_handle.restype = ctypes.c_int
+
+    handle = open_process(process_query_limited_information, 0, pid)
+    if not handle:
+        return None
+    try:
+        creation = wintypes.FILETIME()
+        exit_time = wintypes.FILETIME()
+        kernel_time = wintypes.FILETIME()
+        user_time = wintypes.FILETIME()
+        if not get_process_times(handle, ctypes.byref(creation), ctypes.byref(exit_time), ctypes.byref(kernel_time), ctypes.byref(user_time)):
+            return None
+        return str((creation.dwHighDateTime << 32) | creation.dwLowDateTime)
     finally:
         close_handle(handle)
 

@@ -390,6 +390,109 @@ class RuntimeBackupTests(unittest.TestCase):
             clear_runtime_active(marker)
             self.assertFalse((runtime / ACTIVE_RUNTIME_DIR).exists())
 
+    @unittest.skipUnless(os.name == "nt", "Windows process-identity regression")
+    def test_windows_runtime_active_marker_records_process_identity(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-backup-marker-identity-") as temporary:
+            runtime = Path(temporary)
+            marker = mark_runtime_active(runtime)
+            try:
+                payload = json.loads(marker.read_text(encoding="utf-8"))
+                self.assertEqual(payload["pid"], os.getpid())
+                self.assertEqual(
+                    payload["process_creation_filetime"],
+                    runtime_backup._windows_process_creation_filetime(os.getpid()),
+                )
+            finally:
+                clear_runtime_active(marker)
+
+    @unittest.skipUnless(os.name == "nt", "Windows process-identity regression")
+    def test_windows_pid_reuse_marker_is_pruned_before_restore(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-backup-pid-reuse-") as temporary:
+            runtime = Path(temporary)
+            active_dir = runtime / ACTIVE_RUNTIME_DIR
+            active_dir.mkdir()
+            marker = active_dir / "8116-stale.json"
+            marker.write_text(
+                json.dumps({"pid": 8116, "started_at": "2026-08-27T00:09:36+00:00"}), encoding="utf-8"
+            )
+            with (
+                mock.patch.object(runtime_backup, "_pid_is_alive", return_value=True),
+                mock.patch.object(
+                    runtime_backup,
+                    "_windows_process_creation_filetime",
+                    return_value="134343353061943185",
+                ),
+            ):
+                runtime_backup._assert_runtime_offline(runtime)
+
+            self.assertFalse(marker.exists())
+            self.assertFalse(active_dir.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process-identity regression")
+    def test_windows_matching_process_identity_blocks_restore(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-backup-process-identity-") as temporary:
+            runtime = Path(temporary)
+            active_dir = runtime / ACTIVE_RUNTIME_DIR
+            active_dir.mkdir()
+            marker = active_dir / "8116-active.json"
+            marker.write_text(
+                json.dumps({"pid": 8116, "process_creation_filetime": "134343353061943185"}), encoding="utf-8"
+            )
+            with (
+                mock.patch.object(runtime_backup, "_pid_is_alive", return_value=True),
+                mock.patch.object(
+                    runtime_backup,
+                    "_windows_process_creation_filetime",
+                    return_value="134343353061943185",
+                ),
+            ):
+                with self.assertRaisesRegex(RuntimeBackupError, "8116"):
+                    runtime_backup._assert_runtime_offline(runtime)
+
+            self.assertTrue(marker.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process-identity regression")
+    def test_windows_mismatched_process_identity_is_pruned_before_restore(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-backup-process-identity-") as temporary:
+            runtime = Path(temporary)
+            active_dir = runtime / ACTIVE_RUNTIME_DIR
+            active_dir.mkdir()
+            marker = active_dir / "8116-reused.json"
+            marker.write_text(
+                json.dumps({"pid": 8116, "process_creation_filetime": "134343353061943184"}), encoding="utf-8"
+            )
+            with (
+                mock.patch.object(runtime_backup, "_pid_is_alive", return_value=True),
+                mock.patch.object(
+                    runtime_backup,
+                    "_windows_process_creation_filetime",
+                    return_value="134343353061943185",
+                ),
+            ):
+                runtime_backup._assert_runtime_offline(runtime)
+
+            self.assertFalse(marker.exists())
+            self.assertFalse(active_dir.exists())
+
+    @unittest.skipUnless(os.name == "nt", "Windows process-identity regression")
+    def test_windows_unknown_process_identity_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="runtime-backup-process-query-") as temporary:
+            runtime = Path(temporary)
+            active_dir = runtime / ACTIVE_RUNTIME_DIR
+            active_dir.mkdir()
+            marker = active_dir / "8116-unknown.json"
+            marker.write_text(
+                json.dumps({"pid": 8116, "process_creation_filetime": "134343353061943185"}), encoding="utf-8"
+            )
+            with (
+                mock.patch.object(runtime_backup, "_pid_is_alive", return_value=True),
+                mock.patch.object(runtime_backup, "_windows_process_creation_filetime", return_value=None),
+            ):
+                with self.assertRaisesRegex(RuntimeBackupError, "8116"):
+                    runtime_backup._assert_runtime_offline(runtime)
+
+            self.assertTrue(marker.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
