@@ -24,7 +24,7 @@ AgentBulwark/
 ## 请求生命周期
 
 ```text
-Agent
+OpenAI 客户端
   -> POST /v1/chat/completions 或 /v1/responses
   -> 请求身份、Session、Provider 路由绑定
   -> 输入与外部上下文检查
@@ -32,9 +32,21 @@ Agent
   -> 模型响应标准化
   -> Tool Call 注册、Schema、目标与策略检查
   -> ALLOW / DENY / ASK / ISOLATE
+
+透明模式
+  -> 返回受检查的 Tool Call 契约，由调用方按其边界处置
+
+托管模式
+  -> POST /api/gateway/tool_calls/{audit_id}/execute
+  -> 从不可变审计记录进入 Agent 作用域本地运行时
+  -> 服务端观察的执行回执
+
+独立 MCP 客户端
   -> POST /api/mcp
   -> MCP initialize / tools/list / tools/call
   -> 执行回执
+
+已执行的路径
   -> Trace、Hash、HMAC 证据
 ```
 
@@ -60,7 +72,7 @@ DENY > ISOLATE > ASK > ALLOW
 ## Provider 与 MCP 边界
 
 - Provider 目标由主机、协议、端口和路径组成固定路由。
-- Provider 与 MCP 凭证只从后端环境或系统密钥环读取。
+- Provider 与 MCP 凭证只从后端 `.env` 或进程环境读取。
 - MCP stdio 上游以真实子进程运行，Streamable HTTP 通过会话标识隔离状态。
 - 工具 Schema 发生漂移时需要重新审核，不能自动扩大权限。
 

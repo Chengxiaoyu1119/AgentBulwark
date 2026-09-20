@@ -19,7 +19,6 @@ const config: Config = {
   baseUrl: '/',
   organizationName: 'Chengxiaoyu1119',
   projectName: 'AgentBulwark',
-  scripts: [{ src: '/js/silence-react-devtools-prompt.js', async: false }],
   onBrokenLinks: 'throw',
   markdown: {
     hooks: {

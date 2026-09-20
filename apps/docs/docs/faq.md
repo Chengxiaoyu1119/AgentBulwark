@@ -15,7 +15,7 @@ AgentBulwark（智垒）是 AI Agent 防火墙。它保护模型请求、外部�
 
 ## 项目需要什么运行环境
 
-Node.js 22+、npm 9.6.5+ 和 Python 3.10+。本地使用 `npm run install:all` 安装控制台、官网、文档站和后端开发依赖。
+Node.js 22+、npm 9.6.5+ 和 Python 3.11。本地使用 `npm run install:all` 安装控制台、官网、文档站和后端开发依赖。
 
 ## 如何接入模型
 
@@ -35,7 +35,7 @@ Node.js 22+、npm 9.6.5+ 和 Python 3.10+。本地使用 `npm run install:all` �
 
 ## 凭证会进入浏览器吗
 
-不会。Provider、MCP 和 API 凭证由后端环境或系统密钥环管理，前端只显示脱敏状态和引用。
+不会。Provider、MCP 和 API 凭证由后端 `.env` 或进程环境管理，前端只显示脱敏状态和引用。
 
 ## 如何查看一次完整行动
 

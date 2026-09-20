@@ -13,7 +13,7 @@ AgentBulwark 是单机本地项目。第一次运行只需要准备 Node.js、Py
 | --- | --- | --- |
 | Node.js | 22 或更高 | 运行 React、Vite、Docusaurus 和启动脚本 |
 | npm | 9.6.5 或更高 | 安装 JavaScript 依赖 |
-| Python | 3.10 或更高 | 运行 FastAPI 和后端测试 |
+| Python | 3.11 | 运行 FastAPI 和后端测试 |
 
 ## 安装
 
@@ -24,7 +24,7 @@ npm run install:all
 Copy-Item .env.example .env
 ```
 
-Provider、MCP 和鉴权配置只放在后端环境或系统密钥环中。浏览器只接收脱敏后的状态和引用。
+Provider、MCP 和鉴权配置只从根目录 `.env` 或进程环境变量读取。浏览器只接收脱敏后的状态和引用。
 
 ## 启动 API
 
@@ -56,8 +56,17 @@ npm run console:dev
 
 ## 启动官网与文档站
 
+分别在两个独立终端运行；两条命令都会持续占用当前终端。
+
+官网终端：
+
 ```powershell
 npm run www:dev
+```
+
+文档站终端：
+
+```powershell
 npm run docs:dev
 ```
 
@@ -74,7 +83,7 @@ AGENT_SUPERVISOR_DOCS_SITE_URL
 
 ## 发送第一条请求
 
-将 Agent 的 OpenAI Base URL 指向 `http://127.0.0.1:8012/v1`，使用已登记的模型和 Provider。请求会先经过输入检查和固定出口，模型返回的 Tool Call 还要经过策略与 MCP 闸门。
+将 Agent 的 OpenAI Base URL 指向 `http://127.0.0.1:8012/v1`，使用已登记的模型和 Provider。请求会先经过输入检查和固定出口；模型返回的 Tool Call 会接受策略检查，随后按透明调用契约或服务端托管执行契约处置。独立 MCP 调用由 `/api/mcp` 处理。
 
 ## 验证
 
@@ -94,5 +103,5 @@ npm run verify:live:fixture
 | --- | --- |
 | 页面可打开但没有数据 | 访问 `/api/health`，确认 API 进程运行 |
 | Provider 请求被拒绝 | 检查 Provider 路由、模型登记、身份和策略版本 |
-| Tool Call 没有执行 | 在事件页查看决策、审批、MCP 会话和执行回执 |
+| Tool Call 没有执行 | 在事件页查看决策、审批、执行模式与执行回执；MCP 调用再检查 MCP 会话 |
 | 文档构建失败 | 运行 `npm --prefix apps/docs run clear` 后重新执行 `npm run docs:build` |

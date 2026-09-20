@@ -11,15 +11,22 @@ AgentBulwark（智垒）是一个本地优先的 **AI Agent 防火墙**。它把
 ## 防护链路
 
 ```text
-Agent
-  -> OpenAI Gateway
-  -> Request / Context Guard
+OpenAI 客户端
+  -> OpenAI 网关
+  -> 请求 / 上下文检查
   -> Provider
-  -> Model Response / Tool Call
-  -> Policy Decision
-  -> MCP Gateway
-  -> Execution Receipt
-  -> Hash / HMAC Evidence
+  -> 模型响应 / Tool Call
+  -> 策略决策
+  -> 透明模式：将受检查的 Tool Call 契约返回给调用方
+  -> 托管模式：不可变审计 -> 服务端运行时 -> 执行回执
+
+独立 MCP 客户端
+  -> MCP 网关
+  -> initialize / tools/list / tools/call
+  -> 执行回执
+
+两条路径
+  -> Hash / HMAC 证据
 ```
 
 ## 核心能力
@@ -40,8 +47,8 @@ Agent
 2. 输入和外部上下文接受风险检查；不满足策略时，请求不会到达 Provider。
 3. Provider 响应被标准化，未知工具、漂移的 Schema 和畸形参数不能直接进入执行阶段。
 4. 策略输出四态决策；需要人工判断时生成带精确参数 Hash 的审批。
-5. MCP Gateway 再次检查会话、工具注册、Schema、目标和权限，允许后才执行。
-6. 服务端写入执行回执，并把 Trace、Hash、HMAC 和状态绑定为可离线核验的证据链。
+5. Provider Tool Call 在透明模式下只返回受检查的调用契约；托管模式从不可变审计记录进入服务端本地运行时。独立 MCP 调用由 MCP Gateway 检查会话、工具注册、Schema、目标和权限。
+6. 已执行的路径写入执行回执，并把 Trace、Hash、HMAC 和状态绑定为可离线核验的证据链。
 
 ## 运行界面
 

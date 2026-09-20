@@ -14,13 +14,14 @@ AgentBulwark API 默认监听 `127.0.0.1:8012`。本地控制台通过 Vite 代�
 | 公共服务状态 | GET | `/api/public/status` |
 | 健康检查 | GET | `/api/health` |
 | 当前鉴权上下文 | GET | `/api/auth/context` |
-| 运行总览 | GET | `/api/overview` |
+| 当前运行总览 | GET | `/api/observability/overview` |
+| 历史总览兼容接口 | GET | `/api/overview` |
 | 模型列表 | GET | `/api/models` |
 | 模型配置 | GET / PATCH | `/api/model_config` |
 | 运行状态 | GET | `/api/runtime_status` |
 | 观测指标 | GET | `/api/observability/metrics` |
 | 审计事件 | GET | `/api/audit_logs` |
-| 风险告警 | GET | `/api/alerts` |
+| 历史告警兼容接口 | GET | `/api/alerts` |
 | 实时事件流 | GET | `/api/events/stream` |
 
 ## OpenAI 兼容网关
@@ -45,12 +46,15 @@ AgentBulwark API 默认监听 `127.0.0.1:8012`。本地控制台通过 Vite 代�
 
 `/api/mcp` 处理 `initialize`、`tools/list` 和 `tools/call`。网关支持 stdio 与 Streamable HTTP 上游，并用 Agent 与 Session 绑定跨请求状态。
 
-## 策略与审批
+## 策略、审批与管理接口
 
 | 能力 | 方法 | 路径 |
 | --- | --- | --- |
 | 策略列表 | GET | `/api/policies` |
 | 更新策略 | PATCH | `/api/policies/{policy_id}` |
+| 校验策略变更 | POST | `/api/policies/validate` |
+| 发布策略变更 | POST | `/api/policies/publish` |
+| 回滚策略版本 | POST | `/api/policies/{version}/rollback` |
 | 策略配置 | GET | `/api/policy_config` |
 | 策略设置 | PATCH | `/api/policy_settings` |
 | 策略版本 | GET | `/api/policies/versions` |
@@ -61,6 +65,13 @@ AgentBulwark API 默认监听 `127.0.0.1:8012`。本地控制台通过 Vite 代�
 | 批准行动 | POST | `/api/approvals/{review_id}/approve` |
 | 拒绝行动 | POST | `/api/approvals/{review_id}/deny` |
 | 完成审批 | POST | `/api/approvals/{review_id}/complete` |
+| Agent 列表 | GET | `/api/agents` |
+| 注册 Agent | POST | `/api/agents` |
+| 轮换 Agent Token | POST | `/api/agents/{agent_id}/rotate-token` |
+| 撤销 Agent Token | POST | `/api/agents/{agent_id}/revoke` |
+| 记忆治理列表 | GET | `/api/memory_governance` |
+| 更新记忆治理状态 | PATCH | `/api/memory_governance/{memory_id}` |
+| 回滚最近记忆治理记录 | POST | `/api/memory_governance/rollback_latest` |
 
 审批凭证绑定参数 Hash、Agent、Session、策略版本、目标、有效期和一次性消费状态。修改任一绑定字段、过期或重复提交都会失败。
 

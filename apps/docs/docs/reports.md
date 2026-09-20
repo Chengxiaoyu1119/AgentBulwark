@@ -12,7 +12,7 @@ AgentBulwark 把运行结果拆成三个相互关联的对象：Trace 记录请�
 | 对象 | 记录内容 | 核验重点 |
 | --- | --- | --- |
 | Trace | 请求、Provider、模型响应、Tool Call、决策和状态 | 请求链标识在各阶段保持一致 |
-| 执行回执 | 工具、标准化参数、目标、开始/结束时间和结果状态 | 只有通过 MCP 闸门的行动才有真实回执 |
+| 执行回执 | 工具、标准化参数、目标、开始/结束时间和结果状态 | 只有通过对应执行边界的行动才有真实回执 |
 | Hash/HMAC | 请求/响应 Hash、参数 Hash、策略版本和链式签名 | 内容或顺序被修改时核验失败 |
 
 ## 证据状态
@@ -35,7 +35,7 @@ AgentBulwark 把运行结果拆成三个相互关联的对象：Trace 记录请�
 | Trace 详情 | GET | `/api/gateway/traces/{request_id}` |
 | 执行回执列表 | GET | `/api/runtime/executions` |
 | 执行回执详情 | GET | `/api/runtime/executions/{audit_id}` |
-| 回执核验 | POST | `/api/runtime/executions/{audit_id}/complete` |
+| 提交外部执行回执 | POST | `/api/runtime/executions/{audit_id}/complete` |
 | 证据详情 | GET | `/api/evidence/{id}` |
 | 证据核验 | POST | `/api/evidence/{id}/verify` |
 
@@ -46,7 +46,7 @@ AgentBulwark 把运行结果拆成三个相互关联的对象：Trace 记录请�
 - Provider 是否被调用以及请求/响应 Hash 是否一致；
 - Tool Call 是否命中登记、Schema、目标和策略；
 - 审批是否绑定当前参数、策略版本、Agent、Session 和有效期；
-- MCP 是否产生执行回执，以及回执是否属于同一请求链；
+- 托管网关或 MCP 是否产生执行回执，以及回执是否属于同一请求链；
 - 重启后证据链是否仍能离线核验。
 
 不能从一条 Trace 推断：

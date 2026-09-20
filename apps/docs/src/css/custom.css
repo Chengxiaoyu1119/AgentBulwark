@@ -37,17 +37,6 @@
   display: none;
 }
 
-.hero {
-  background:
-    linear-gradient(90deg, rgba(15, 23, 42, 0.94), rgba(15, 23, 42, 0.78)),
-    linear-gradient(135deg, #0f172a, #153c3a);
-}
-
-.hero__title,
-.hero__subtitle {
-  color: #fff;
-}
-
 .theme-doc-markdown h1,
 .theme-doc-markdown h2,
 .theme-doc-markdown h3 {

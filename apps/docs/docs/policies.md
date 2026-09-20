@@ -28,13 +28,18 @@ DENY > ISOLATE > ASK > ALLOW
 | --- | --- | --- |
 | `path-boundary` | 文件路径、路径穿越和敏感目录 | DENY |
 | `dangerous-command` | 删除、格式化、下载和提权等命令 | DENY |
+| `external-mail` | 向外部收件人发送邮件 | ASK |
+| `sensitive-egress` | 含凭据或敏感数据特征的外发 | ASK |
 | `sensitive-api` | 未登记的高敏 API 目标 | DENY |
 | `external-api-allowlist` | Agent 外部 API 主机白名单 | ASK |
 | `memory-write` | 含权限覆盖或隐藏动作的记忆写入 | ISOLATE |
+| `memory-read-sensitive` | 敏感记忆检索词 | DENY |
 | `jailbreak-filter` | 忽略系统规则的提示输入 | DENY |
+| `jailbreak-semantic` | 规则未命中时的语义越狱意图 | DENY |
 | `model-output-filter` | 高风险模型输出和敏感内容复述 | DENY |
 | `tool-description-scan` | MCP 工具描述中的可疑指令 | ISOLATE |
 | `tool-return-trust` | 工具返回内容的低信任状态 | ISOLATE |
+| `environment-trust` | 环境变量与配置的低信任状态 | ISOLATE |
 | `bulk-action-review` | 批量外发、批量导出和异常用途 | ASK |
 | `anomaly-detection` | 工具、参数和上下文组合异常 | ASK |
 
