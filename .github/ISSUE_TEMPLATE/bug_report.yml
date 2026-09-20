@@ -1,0 +1,64 @@
+name: 缺陷报告
+description: 提交可复现的产品、API、策略或控制台问题
+title: "[缺陷]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿粘贴 API Key、Bearer Token、真实审计内容或任何生产数据。最小复现信息足以定位问题。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题摘要
+      description: 一句话说明异常行为和受影响能力。
+      placeholder: 例如：策略审批后，控制台未刷新对应审计记录。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 最小复现步骤
+      description: 请按顺序给出输入、操作和必要配置。
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果与日志摘录
+      description: 请脱敏后提供错误信息、请求标识或截图。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交
+      placeholder: 例如：main @ 0123abc
+  - type: dropdown
+    id: area
+    attributes:
+      label: 受影响区域
+      options:
+        - FastAPI / OpenAI 兼容接口
+        - MCP 工具执行
+        - 策略与审批
+        - 审计与证据
+        - React 控制台
+        - 官网或文档
+        - CI / 脚本
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已移除凭证、真实审计数据和其他敏感内容。
+          required: true
