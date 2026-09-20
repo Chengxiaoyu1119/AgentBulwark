@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 35
     steps:
       - name: 检出源码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 配置 Node.js
         uses: actions/setup-node@v4
@@ -63,7 +63,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: 检出源码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: 配置 Python
         uses: actions/setup-python@v5
