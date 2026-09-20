@@ -100,28 +100,6 @@ export interface ExecutionInventory {
   gateway_execution_claims: GatewayExecutionClaim[];
 }
 
-export interface GatewayToolExecutionResult {
-  audit_id: string;
-  idempotent: boolean;
-  provider_call_id?: string;
-  execution_evidence: string;
-  execution_observed_by_server: boolean;
-  execution_result: Record<string, unknown>;
-  tool_result: string;
-  tool_result_hash: string;
-  receipt?: ExecutionReceipt | null;
-}
-
-export interface AuditHashVerification {
-  run_id?: string;
-  created_at?: string;
-  valid: boolean;
-  checked: number;
-  failures: Array<{ step?: number; reason: string }>;
-  first_hash?: string;
-  last_hash?: string;
-}
-
 export interface EvidenceVerification {
   schema_version: string;
   evidence_id: string;

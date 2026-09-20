@@ -19,7 +19,6 @@
     "verify": "npm run lint:strict && npm run format:check && npm run ui:audit && npm run test && npm run build"
   },
   "dependencies": {
-    "@ant-design/icons": "^6.2.5",
     "antd": "^6.4.3",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",

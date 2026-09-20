@@ -6,9 +6,6 @@
 
 - `UiButton`：统一按钮，不再手写 `primary-button`、`ghost-button`、`mini-action`。
 - `MetricCard`：统一指标卡，替代页面内重复的指标块。
-- `StatusPill`：统一状态标签，适合允许、拒绝、询问、隔离等状态。
-- `DecisionPill`：统一安全决策标签，避免在页面里反复拼 `decision ${value}`。
-- `RiskTag`：统一风险等级标签，避免各业务组件重复维护风险文案和颜色。
 - `PanelCard`：统一基础业务卡片标题、副标题和默认边框风格。
 - `CopyButton`：统一复制按钮和复制成功状态，避免重复写剪贴板兜底逻辑。
 - `EmptyState`：统一空状态展示。

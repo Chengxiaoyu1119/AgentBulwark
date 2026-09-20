@@ -2,12 +2,6 @@ export { UiButton } from './Button';
 export type { UiButtonProps } from './Button';
 export { MetricCard } from './MetricCard';
 export type { MetricCardProps } from './MetricCard';
-export { DecisionPill } from './DecisionPill';
-export type { DecisionPillProps } from './DecisionPill';
-export { StatusPill } from './StatusPill';
-export type { StatusPillProps } from './StatusPill';
-export { RiskTag } from './RiskTag';
-export type { RiskTagProps } from './RiskTag';
 export { LabelTag } from './LabelTag';
 export type { LabelTagProps } from './LabelTag';
 export { PanelCard } from './PanelCard';
@@ -24,8 +18,6 @@ export { SectionTitle } from './SectionTitle';
 export type { SectionTitleProps } from './SectionTitle';
 export { UiFieldLabel } from './FieldLabel';
 export type { UiFieldLabelProps } from './FieldLabel';
-export { ActionRow } from './ActionRow';
-export type { ActionRowProps } from './ActionRow';
 export { UiConfirmButton } from './ConfirmButton';
 export type { UiConfirmButtonProps } from './ConfirmButton';
 export { MetaGrid } from './MetaGrid';
@@ -40,8 +32,6 @@ export { RuntimeConnectionBadge } from './RuntimeConnectionBadge';
 export type { RuntimeConnectionBadgeProps } from './RuntimeConnectionBadge';
 export { RuntimeConnectionNotice } from './RuntimeConnectionNotice';
 export type { RuntimeConnectionNoticeProps } from './RuntimeConnectionNotice';
-export { OperationalConnectionBadge } from './OperationalConnectionBadge';
-export type { OperationalConnectionBadgeProps } from './OperationalConnectionBadge';
 export {
   UiCol,
   UiCollapse,

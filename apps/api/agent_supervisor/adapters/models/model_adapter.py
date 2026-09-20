@@ -776,19 +776,6 @@ def _first_provider_chat_choice(parsed: Any) -> tuple[dict[str, Any], dict[str, 
     return choice, message
 
 
-def _provider_message_text(message: dict[str, Any], *, required: bool = False) -> str:
-    content = message.get("content")
-    if content is None:
-        text = ""
-    elif isinstance(content, str):
-        text = content.strip()
-    else:
-        raise ValueError("模型供应商响应 message.content 必须是字符串或 null")
-    if required and not text:
-        raise ValueError("模型供应商响应未返回文本内容")
-    return text
-
-
 def _profile_env(profile: str, name: str, default: str = "") -> str:
     normalized = profile.strip().upper().replace("-", "_")
     if normalized:
