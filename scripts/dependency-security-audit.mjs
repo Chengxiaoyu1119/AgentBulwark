@@ -17,6 +17,20 @@ const PROJECTS = [
     accepted: { low: 0, moderate: 0, high: 0, critical: 0 },
     note: "控制台依赖应保持 0 个已知漏洞。",
   },
+  {
+    id: "www",
+    name: "官网",
+    path: "apps/www",
+    accepted: { low: 0, moderate: 0, high: 0, critical: 0 },
+    note: "官网依赖应保持 0 个已知漏洞。",
+  },
+  {
+    id: "docs",
+    name: "文档站",
+    path: "apps/docs",
+    accepted: { low: 0, moderate: 0, high: 0, critical: 0 },
+    note: "文档站依赖应保持 0 个已知漏洞。",
+  },
 ];
 
 function runAudit(project) {
@@ -296,7 +310,7 @@ function buildMarkdown(report) {
     "## 使用方式",
     "",
     "- `npm run audit:security`：生成本报告；高危/严重或超出已接受阈值会失败。",
-    "- `npm run audit:raw:console`：查看控制台 npm 原始审计结果。",
+    "- `npm run audit:raw:console`、`npm run audit:raw:www`、`npm run audit:raw:docs`：查看各站点 npm 原始审计结果。",
     "",
     "## 当前处理原则",
     "",

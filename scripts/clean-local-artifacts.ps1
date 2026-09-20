@@ -65,6 +65,7 @@ Get-ChildItem -LiteralPath $repoRoot -Force |
 # operational database and backups. Only named generated directories are eligible.
 @(
     "apps\api\runtime\quality\mypy",
+    "apps\api\runtime\quality\mypy-linux",
     "apps\api\runtime\quality\ruff",
     "apps\api\runtime\quality\pytest",
     "apps\api\runtime\quality\.coverage",
@@ -81,6 +82,18 @@ Get-ChildItem -LiteralPath $repoRoot -Force |
 
 Get-ChildItem -LiteralPath (Join-Path $repoRoot "apps\api\runtime\quality") -Directory -Filter "preview-*" -Force -ErrorAction SilentlyContinue |
     ForEach-Object { $candidates.Add($_) }
+
+foreach ($fixtureOutputRoot in @(
+    "apps\api\runtime\quality\live-closure-fixture",
+    "apps\api\runtime\quality"
+)) {
+    $path = Join-Path $repoRoot $fixtureOutputRoot
+    if (Test-Path -LiteralPath $path) {
+        Get-ChildItem -LiteralPath $path -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "run-*" -or $_.Name -like "agent-security-supervisor-e2e-*" } |
+            ForEach-Object { $candidates.Add($_) }
+    }
+}
 
 foreach ($sourceRoot in @("apps\api\agent_supervisor", "apps\api\tests")) {
     $sourcePath = Join-Path $repoRoot $sourceRoot
