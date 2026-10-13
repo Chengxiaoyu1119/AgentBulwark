@@ -54,7 +54,9 @@ apps/apps/
 .agents/
 .codex-ui.log
 .playwright-mcp/
-.vscode/
+!.vscode/
+.vscode/*
+!.vscode/tasks.json
 .trae/
 .DS_Store
 Thumbs.db
@@ -75,3 +77,4 @@ up.zip
 
 # 历史训练产生的不可复现大文件
 docs/training
+docs/作品赛
